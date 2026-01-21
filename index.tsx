@@ -247,12 +247,19 @@ const parsePositions = (data: any[]): Position[] => {
 
     const processBlock = (text: string, type: 'essential' | 'desirable') => {
       let cleanText = text.replace(/^(?:ESSENTIAL|ESSENZIALE|ESSENZIALI|DESIRABLE|AUSPICABILE|AUSPICABILI)(?:[\s\w]*)(?:[:\.-]?)/i, '');
-      cleanText = cleanText.replace(/([•\-➢])/g, '\n$1');
-      const lines = cleanText.split('\n');
+      
+      // OLD LOGIC (CAUSED ISSUE): cleanText = cleanText.replace(/([•\-➢])/g, '\n$1');
+      
+      // NEW LOGIC: Split by existing newlines. 
+      // Excel often includes \r\n or \n for multi-line cells.
+      const lines = cleanText.split(/\r?\n/);
 
       lines.forEach((line, i) => {
         let content = line.trim();
-        content = content.replace(/^[-•➢\s]+/, '');
+        
+        // Remove leading bullet characters (hyphen, dot, square, arrow, asterisk) only at the start
+        content = content.replace(/^[\s]*[-•➢*][\s]*/, ''); 
+        
         if (content.length < 3) return;
 
         const isNumbered = /^(\d+\.|[A-Z]\.)\s/.test(content);
