@@ -19,7 +19,14 @@ import {
   ArrowUpDown,
   FileText,
   Eye,
-  EyeOff
+  EyeOff,
+  Globe,
+  Shield,
+  Building,
+  LayoutList,
+  Table as TableIcon,
+  AlertTriangle,
+  Ban
 } from "lucide-react";
 
 // --- Types ---
@@ -31,12 +38,19 @@ interface Language {
 
 interface Candidate {
   id: string; // Matricola
+  nominativo: string; // Full Name from "NOMINATIVO" or constructed
   firstName: string;
   lastName: string;
   rank: string;
-  role: string;      // New field
-  category: string;  // New field
-  specialty: string; // New field
+  role: string;
+  category: string;
+  specialty: string;
+  serviceEntity: string; // ENTE DI SERVIZIO
+  nosLevel: string; // LIVELLO NOS
+  nosQual: string; // QUALIFICA NOS
+  nosExpiry: string; // SCADENZA NOS
+  internationalMandates: string; // MANDATI INTERNAZIONALI
+  mixDescription: string; // DESCRIZIONE MIX
   languages: Language[];
   rawAppliedString: string;
   appliedPositionCodes: string[];
@@ -52,10 +66,20 @@ interface Requirement {
 
 interface Position {
   code: string;
-  entity: string; // Ente
+  entity: string; // Comes from SEDE now
   location: string;
-  title: string;
+  title: string; // JOB TITLE
   requirements: Requirement[];
+  
+  // New specific fields
+  englishReq: string;
+  nosReq: string;
+  rankReq: string;
+  catSpecQualReq: string;
+  ofcn: string;
+  poInterest: string;
+  incumbent: string; // TITOLARE
+
   originalData: any;
   jobDescriptionFileName?: string;
 }
@@ -65,7 +89,7 @@ interface Evaluation {
   positionId: string;
   reqEvaluations: Record<string, 'yes' | 'no' | 'partial' | 'pending'>; // Key is requirement text/id
   notes: string;
-  status: 'pending' | 'selected' | 'rejected' | 'reserve';
+  status: 'pending' | 'selected' | 'rejected' | 'reserve' | 'non-compatible';
   manualOrder?: number;
 }
 
@@ -76,54 +100,87 @@ interface AppData {
   lastUpdated: number;
 }
 
+type PositionStatus = 'todo' | 'inprogress' | 'completed';
+
 // --- Helper: Excel Parsing Logic ---
 
 const normalizeHeader = (h: string) => h?.toString().trim().toUpperCase() || "";
+
+const findKey = (keys: string[], ...searchTerms: string[]) => {
+  return keys.find(k => {
+    const normalized = normalizeHeader(k);
+    return searchTerms.some(term => normalized.includes(term));
+  });
+};
 
 const parseCandidates = (data: any[]): Candidate[] => {
   const map = new Map<string, Candidate>();
 
   data.forEach((row) => {
-    // Attempt to find keys with robust matching
     const keys = Object.keys(row);
-    const matricolaKey = keys.find(k => normalizeHeader(k).includes("MATRICOLA"));
-    const cognomeKey = keys.find(k => normalizeHeader(k).includes("COGNOME"));
-    const nomeKey = keys.find(k => normalizeHeader(k).includes("NOME"));
-    const gradoKey = keys.find(k => normalizeHeader(k).includes("GRADO"));
     
-    // New Fields
-    const ruoloKey = keys.find(k => normalizeHeader(k).includes("RUOLO"));
-    const catKey = keys.find(k => normalizeHeader(k).includes("CATEGORIA") || normalizeHeader(k) === "CAT" || normalizeHeader(k).startsWith("CAT."));
-    const specKey = keys.find(k => normalizeHeader(k).includes("SPECIALIT") || normalizeHeader(k).includes("SPEC"));
+    // Core Identity
+    const matricolaKey = findKey(keys, "MATRICOLA");
+    const nominativoKey = findKey(keys, "NOMINATIVO");
+    const cognomeKey = findKey(keys, "COGNOME");
+    const nomeKey = findKey(keys, "NOME");
+    const gradoKey = findKey(keys, "GRADO");
+    
+    // Professional Details
+    const ruoloKey = findKey(keys, "RUOLO");
+    const catKey = keys.find(k => normalizeHeader(k) === "CATEGORIA" || normalizeHeader(k) === "CAT" || normalizeHeader(k).startsWith("CAT."));
+    const specKey = findKey(keys, "SPECIALIT", "SPEC");
+    const enteServizioKey = findKey(keys, "ENTE DI SERVIZIO", "ENTE SERVIZIO", "REPARTO");
+    
+    // NOS Details
+    const nosLivelloKey = findKey(keys, "LIVELLO NOS");
+    const nosQualKey = findKey(keys, "QUALIFICA NOS");
+    const nosScadenzaKey = findKey(keys, "SCADENZA", "RILASCIO");
 
-    const linguaKey = keys.find(k => normalizeHeader(k).includes("LINGUA"));
-    const livelloKey = keys.find(k => normalizeHeader(k).includes("LIVELLO") || normalizeHeader(k).includes("ACCERT")); 
-    const poSegnalateKey = keys.find(k => normalizeHeader(k).includes("SEGNALATE") || normalizeHeader(k).includes("POSIZIONI"));
+    // History
+    const mandatiKey = findKey(keys, "MANDATI", "INTERNAZIONALI");
+    const mixKey = findKey(keys, "DESCRIZIONE MIX", "MIX", "IMPIEGO");
+
+    // Language & Applications
+    const linguaKey = findKey(keys, "LINGUA");
+    const livelloKey = findKey(keys, "LIVELLO", "ACCERT");
+    const poSegnalateKey = findKey(keys, "SEGNALATE", "POSIZIONI", "CANDIDATURE");
 
     if (!matricolaKey || !row[matricolaKey]) return;
 
     const id = String(row[matricolaKey]).trim();
     
     if (!map.has(id)) {
+      // Name Logic: Prefer NOMINATIVO, fallback to Cognome + Nome
+      const lastName = String(row[cognomeKey] || "").trim();
+      const firstName = String(row[nomeKey] || "").trim();
+      let nominativo = String(row[nominativoKey] || "").trim();
+      if (!nominativo && (lastName || firstName)) {
+        nominativo = `${lastName} ${firstName}`;
+      }
+
       // Parse Applied Positions
       const rawApplied = String(row[poSegnalateKey] || "");
-      // Strategy: Split by " - " then take the last word of each segment as the code
-      const codes = rawApplied.split(" - ").map((segment: string) => {
-        const parts = segment.trim().split(/\s+/);
-        return parts[parts.length - 1]; // Assume code is last
-      }).filter((c: string) => c.length > 3); // Basic filter
+      const codes = rawApplied.split(/[\s\-]+/).filter(s => s.length > 3 && /[A-Z0-9]/.test(s));
 
       map.set(id, {
         id,
-        firstName: String(row[nomeKey] || "").trim(),
-        lastName: String(row[cognomeKey] || "").trim(),
+        nominativo,
+        firstName,
+        lastName,
         rank: String(row[gradoKey] || "").trim(),
         role: String(row[ruoloKey] || "").trim(),
         category: String(row[catKey] || "").trim(),
         specialty: String(row[specKey] || "").trim(),
+        serviceEntity: String(row[enteServizioKey] || "").trim(),
+        nosLevel: String(row[nosLivelloKey] || "").trim(),
+        nosQual: String(row[nosQualKey] || "").trim(),
+        nosExpiry: String(row[nosScadenzaKey] || "").trim(),
+        internationalMandates: String(row[mandatiKey] || "").trim(),
+        mixDescription: String(row[mixKey] || "").trim(),
         languages: [],
         rawAppliedString: rawApplied,
-        appliedPositionCodes: [...new Set(codes)] as string[], // Dedup
+        appliedPositionCodes: [...new Set(codes)] as string[],
         originalData: row,
       });
     }
@@ -143,22 +200,26 @@ const parseCandidates = (data: any[]): Candidate[] => {
 const parsePositions = (data: any[]): Position[] => {
   return data.map((row) => {
     const keys = Object.keys(row);
-    const codeKey = keys.find(k => normalizeHeader(k).includes("CODICE") || normalizeHeader(k) === "POSIZIONE");
     
-    // Improved Entity Detection
-    const enteKey = keys.find(k => 
-      normalizeHeader(k).includes("ENTE") || 
-      normalizeHeader(k).includes("STRUTTURA") || 
-      normalizeHeader(k).includes("COMANDO") || 
-      normalizeHeader(k).includes("REPARTO")
-    );
+    const codeKey = findKey(keys, "CODICE", "POSIZIONE");
+    // SEDE corresponds to Entity
+    const sedeKey = findKey(keys, "SEDE", "ENTE", "STRUTTURA", "COMANDO");
+    const jobTitleKey = findKey(keys, "JOB TITLE", "TITOLO", "DENOMINAZIONE");
+    const locationKey = findKey(keys, "LUOGO", "LOCALITA", "NAZIONE");
+    const reqKey = findKey(keys, "REQUISITI", "CRITERIA", "COMPETENZE");
 
-    const locationKey = keys.find(k => normalizeHeader(k).includes("LUOGO") || normalizeHeader(k).includes("LOCALITA") || normalizeHeader(k).includes("SEDE"));
-    const reqKey = keys.find(k => normalizeHeader(k).includes("REQUISITI") || normalizeHeader(k).includes("CRITERIA"));
+    // Specific Fields
+    const ingleseKey = findKey(keys, "INGLESE", "ENGLISH");
+    const nosKey = keys.find(k => normalizeHeader(k) === "NOS"); // Exact match preferred
+    const gradoKey = findKey(keys, "GRADO", "RANK");
+    const catSpecKey = findKey(keys, "CAT", "SPEC", "QUAL", "CATEGORIA");
+    const ofcnKey = findKey(keys, "OFCN");
+    const interesseKey = findKey(keys, "INTERESSE");
+    const titolareKey = findKey(keys, "TITOLARE");
 
     if (!codeKey || !row[codeKey]) return null;
 
-    // Parse Requirements
+    // Parse Requirements (Same logic as before)
     const rawReqs = String(row[reqKey] || "");
     const requirements: Requirement[] = [];
     
@@ -192,13 +253,11 @@ const parsePositions = (data: any[]): Position[] => {
         const isNumbered = /^(\d+\.|[A-Z]\.)\s/.test(content);
         const isCapsHeader = (content === content.toUpperCase()) && (content.length < 60) && /[A-Z]/.test(content);
         
-        const isHeader = isNumbered || isCapsHeader;
-
         requirements.push({
           id: `${type}-${Math.random().toString(36).substr(2,9)}`,
           text: content,
           type,
-          hidden: isHeader
+          hidden: isNumbered || isCapsHeader
         });
       });
     };
@@ -207,16 +266,60 @@ const parsePositions = (data: any[]): Position[] => {
     if (desirableText) processBlock(desirableText, 'desirable');
 
     const codeStr = String(row[codeKey]).trim();
+    const titleStr = String(row[jobTitleKey] || codeStr).trim();
 
     return {
       code: codeStr,
-      entity: String(row[enteKey] || "Unknown Entity").trim(),
+      entity: String(row[sedeKey] || "Unknown Entity").trim(),
       location: String(row[locationKey] || "").trim(),
-      title: codeStr, 
+      title: titleStr === codeStr ? `Position ${codeStr}` : titleStr,
       requirements,
+      
+      englishReq: String(row[ingleseKey] || "").trim(),
+      nosReq: String(row[nosKey] || "").trim(),
+      rankReq: String(row[gradoKey] || "").trim(),
+      catSpecQualReq: String(row[catSpecKey] || "").trim(),
+      ofcn: String(row[ofcnKey] || "").trim(),
+      poInterest: String(row[interesseKey] || "").trim(),
+      incumbent: String(row[titolareKey] || "").trim(),
+
       originalData: row,
     };
   }).filter(Boolean) as Position[];
+};
+
+const getPositionStatus = (position: Position, evaluations: Record<string, Evaluation>): PositionStatus => {
+  const positionEvals = Object.values(evaluations).filter(ev => ev.positionId === position.code);
+  
+  if (positionEvals.some(ev => ev.status === 'selected')) {
+    return 'completed';
+  }
+
+  const hasActivity = positionEvals.some(ev => {
+    const statusChanged = ev.status !== 'pending';
+    const reqsChecked = Object.keys(ev.reqEvaluations).length > 0;
+    return statusChanged || reqsChecked;
+  });
+
+  if (hasActivity) {
+    return 'inprogress';
+  }
+
+  return 'todo';
+};
+
+const getOtherSelectionInfo = (candidateId: string, currentPositionId: string, evaluations: Record<string, Evaluation>, positions: Position[]) => {
+  const otherSelection = Object.values(evaluations).find(ev => 
+    ev.candidateId === candidateId && 
+    ev.status === 'selected' && 
+    ev.positionId !== currentPositionId
+  );
+
+  if (otherSelection) {
+    const pos = positions.find(p => p.code === otherSelection.positionId);
+    return pos;
+  }
+  return null;
 };
 
 // --- Components ---
@@ -241,147 +344,540 @@ const Badge = ({ children, color = 'blue' }: any) => {
     blue: "bg-blue-100 text-blue-800",
     green: "bg-green-100 text-green-800",
     amber: "bg-amber-100 text-amber-800",
-    slate: "bg-slate-100 text-slate-800"
+    slate: "bg-slate-100 text-slate-800",
+    purple: "bg-purple-100 text-purple-800"
   };
   return <span className={`px-2 py-0.5 rounded text-xs font-semibold ${colors[color]}`}>{children}</span>;
 };
 
-// --- Main Views ---
+// --- Matrix View Component ---
+const CandidatesMatrixView = ({
+  candidates,
+  position,
+  evaluations,
+  positions, // Need full list for checking other selections
+  onUpdate
+}: {
+  candidates: Candidate[];
+  position: Position;
+  evaluations: Record<string, Evaluation>;
+  positions: Position[];
+  onUpdate: (e: Evaluation) => void;
+}) => {
+  const activeReqs = position.requirements.filter(r => !r.hidden);
 
-const FileUploadView = ({ onDataLoaded }: { onDataLoaded: (c: Candidate[], p: Position[]) => void }) => {
-  const [candidatesFile, setCandidatesFile] = useState<File | null>(null);
-  const [positionsFile, setPositionsFile] = useState<File | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-
-  const processFiles = async () => {
-    if (!candidatesFile || !positionsFile) return;
-    setLoading(true);
-    setError("");
-    
-    try {
-      // @ts-ignore
-      if (!window.XLSX) throw new Error("Excel library not loaded");
-      const XLSX = (window as any).XLSX;
-
-      const readExcel = (file: File) => new Promise<any[]>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          try {
-            const data = new Uint8Array(e.target?.result as ArrayBuffer);
-            const workbook = XLSX.read(data, { type: 'array' });
-            const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-            const json = XLSX.utils.sheet_to_json(firstSheet);
-            resolve(json);
-          } catch (err) { reject(err); }
-        };
-        reader.readAsArrayBuffer(file);
-      });
-
-      const [candRaw, posRaw] = await Promise.all([
-        readExcel(candidatesFile),
-        readExcel(positionsFile)
-      ]);
-
-      const candidates = parseCandidates(candRaw);
-      const positions = parsePositions(posRaw);
-
-      if (candidates.length === 0 || positions.length === 0) {
-        throw new Error("Found 0 records. Please check file formats.");
-      }
-
-      onDataLoaded(candidates, positions);
-
-    } catch (e: any) {
-      setError(e.message || "Failed to process files");
-    } finally {
-      setLoading(false);
+  const getStatusColor = (s: string) => {
+    switch(s) {
+      case 'selected': return 'bg-green-100 text-green-800 border-green-200';
+      case 'rejected': return 'bg-red-100 text-red-800 border-red-200';
+      case 'reserve': return 'bg-amber-100 text-amber-800 border-amber-200';
+      case 'non-compatible': return 'bg-gray-200 text-gray-800 border-gray-300';
+      default: return 'bg-white text-slate-600 border-slate-200';
     }
   };
 
+  const handleReqToggle = (evaluation: Evaluation, reqId: string) => {
+    if (evaluation.status === 'non-compatible') return; // Read-only if non-compatible
+    const current = evaluation.reqEvaluations[reqId] || 'pending';
+    const next = current === 'pending' ? 'yes' : current === 'yes' ? 'no' : current === 'no' ? 'partial' : 'pending';
+    
+    onUpdate({
+      ...evaluation,
+      reqEvaluations: {
+        ...evaluation.reqEvaluations,
+        [reqId]: next
+      }
+    });
+  };
+
   return (
-    <div className="flex flex-col items-center justify-center h-full p-8 max-w-2xl mx-auto text-center">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-slate-900 mb-2">Import Data</h1>
-        <p className="text-slate-500">Upload your Excel files to start the automated matching process.</p>
-        <div className="mt-2 text-xs text-amber-600 bg-amber-50 p-2 rounded border border-amber-200 inline-block">
-          <AlertCircle className="w-3 h-3 inline mr-1"/>
-          Privacy First: Data is processed locally in your browser.
-        </div>
-      </div>
+    <div className="overflow-x-auto pb-4">
+      <table className="w-full border-collapse text-xs">
+        <thead>
+          <tr>
+            <th className="sticky left-0 bg-slate-50 border border-slate-200 p-2 z-20 w-80 text-left shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+              Candidate
+            </th>
+            <th className="bg-slate-50 border border-slate-200 p-2 min-w-[140px] z-10 sticky left-80 shadow-md">
+              Status
+            </th>
+            {activeReqs.map((req, i) => (
+              <th key={req.id} className="bg-slate-50 border border-slate-200 p-2 min-w-[120px] font-medium text-slate-600 relative group">
+                <div className="line-clamp-3" title={req.text}>
+                  {req.type === 'essential' && <span className="text-red-500 font-bold mr-1">*</span>}
+                  {req.text}
+                </div>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {candidates.map(c => {
+            const ev = evaluations[`${position.code}_${c.id}`];
+            if (!ev) return null;
+            const isNonCompatible = ev.status === 'non-compatible';
+            const otherSelection = getOtherSelectionInfo(c.id, position.code, evaluations, positions);
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full mb-8">
-        <div className={`border-2 border-dashed rounded-xl p-8 transition-colors ${candidatesFile ? 'border-blue-500 bg-blue-50' : 'border-slate-300 hover:border-slate-400'}`}>
-          <Users className={`w-10 h-10 mx-auto mb-4 ${candidatesFile ? 'text-blue-600' : 'text-slate-400'}`} />
-          <h3 className="font-semibold text-slate-700">Personal Data</h3>
-          <p className="text-xs text-slate-500 mb-4">Upload the candidates excel</p>
-          <input 
-            type="file" 
-            accept=".xlsx, .xls"
-            onChange={(e) => setCandidatesFile(e.target.files?.[0] || null)}
-            className="hidden" 
-            id="cand-upload"
-          />
-          <label htmlFor="cand-upload" className="cursor-pointer text-sm text-blue-600 font-medium hover:underline">
-            {candidatesFile ? candidatesFile.name : "Choose File"}
-          </label>
-        </div>
-
-        <div className={`border-2 border-dashed rounded-xl p-8 transition-colors ${positionsFile ? 'border-blue-500 bg-blue-50' : 'border-slate-300 hover:border-slate-400'}`}>
-          <Briefcase className={`w-10 h-10 mx-auto mb-4 ${positionsFile ? 'text-blue-600' : 'text-slate-400'}`} />
-          <h3 className="font-semibold text-slate-700">Position Data</h3>
-          <p className="text-xs text-slate-500 mb-4">Upload the positions excel</p>
-          <input 
-            type="file" 
-            accept=".xlsx, .xls"
-            onChange={(e) => setPositionsFile(e.target.files?.[0] || null)}
-            className="hidden" 
-            id="pos-upload"
-          />
-          <label htmlFor="pos-upload" className="cursor-pointer text-sm text-blue-600 font-medium hover:underline">
-            {positionsFile ? positionsFile.name : "Choose File"}
-          </label>
-        </div>
-      </div>
-
-      {error && (
-        <div className="bg-red-50 text-red-600 p-4 rounded-md mb-6 flex items-center">
-          <AlertCircle className="w-5 h-5 mr-2" />
-          {error}
-        </div>
-      )}
-
-      <Button onClick={processFiles} disabled={!candidatesFile || !positionsFile || loading} className="w-full justify-center py-3 text-lg">
-        {loading ? "Processing..." : "Start System"}
-      </Button>
+            return (
+              <tr key={c.id} className={`hover:bg-slate-50 ${isNonCompatible ? 'bg-gray-100 opacity-60 grayscale' : ''}`}>
+                <td className={`sticky left-0 border border-slate-200 p-2 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] ${isNonCompatible ? 'bg-gray-100' : 'bg-white hover:bg-slate-50'}`}>
+                  <div className="text-[10px] text-slate-500 font-mono uppercase truncate mb-1" title={`${c.rank} ${c.role} ${c.category} ${c.specialty}`}>
+                     {c.rank} {c.role} {c.category} {c.specialty}
+                  </div>
+                  <div className="font-bold text-slate-800 flex items-center gap-2">
+                    {c.nominativo}
+                    {otherSelection && (
+                      <div className="text-amber-500" title={`Selected for: ${otherSelection.code}`}>
+                        <AlertTriangle className="w-3 h-3" />
+                      </div>
+                    )}
+                  </div>
+                  {isNonCompatible && <div className="text-[10px] text-red-600 font-bold mt-1">PROFILO NON COMPATIBILE</div>}
+                </td>
+                <td className={`border border-slate-200 p-2 sticky left-80 shadow-md ${isNonCompatible ? 'bg-gray-100' : 'bg-white'}`}>
+                   <select 
+                      value={ev.status}
+                      onChange={(e) => onUpdate({...ev, status: e.target.value as any})}
+                      className={`w-full text-[10px] font-bold uppercase px-1 py-1 rounded border appearance-none cursor-pointer focus:outline-none ${getStatusColor(ev.status)}`}
+                     >
+                       <option value="pending">PENDING</option>
+                       <option value="selected" disabled={!!otherSelection && ev.status !== 'selected'}>
+                          {!!otherSelection && ev.status !== 'selected' ? 'GIÀ SELEZIONATO' : 'SELECTED'}
+                       </option>
+                       <option value="reserve">RESERVE</option>
+                       <option value="rejected">REJECTED</option>
+                       <option value="non-compatible">NON COMPATIBILE</option>
+                     </select>
+                </td>
+                {activeReqs.map(req => {
+                  const status = ev.reqEvaluations[req.id] || 'pending';
+                  return (
+                    <td 
+                      key={req.id} 
+                      onClick={() => handleReqToggle(ev, req.id)}
+                      className={`border border-slate-200 p-1 text-center select-none transition-colors ${!isNonCompatible && 'cursor-pointer hover:bg-slate-100'}`}
+                    >
+                      {!isNonCompatible && (
+                        <div className={`w-full h-8 rounded flex items-center justify-center
+                          ${status === 'yes' ? 'bg-green-100 text-green-700' : 
+                            status === 'no' ? 'bg-red-50 text-red-300' : 
+                            status === 'partial' ? 'bg-amber-100 text-amber-600' : ''}`}
+                        >
+                           {status === 'yes' && <Check className="w-4 h-4" />}
+                           {status === 'no' && <X className="w-4 h-4" />}
+                           {status === 'partial' && <div className="w-2 h-2 bg-amber-400 rounded-full" />}
+                        </div>
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
     </div>
   );
 };
 
-const PositionCard: React.FC<{ position: Position; candidateCount: number; onClick: () => void }> = ({ position, candidateCount, onClick }) => {
+
+// --- Candidates List View ---
+
+const WorksheetRow: React.FC<{ 
+  candidate: Candidate; 
+  evaluation: Evaluation; 
+  position: Position; 
+  otherSelection: Position | null;
+  onUpdate: (e: Evaluation) => void; 
+}> = ({ 
+  candidate, 
+  evaluation, 
+  position, 
+  otherSelection,
+  onUpdate 
+}) => {
+  const [expanded, setExpanded] = useState(false);
+  const isNonCompatible = evaluation.status === 'non-compatible';
+
+  // Only count non-hidden requirements
+  const activeReqs = position.requirements.filter(r => !r.hidden);
+  const reqScore = activeReqs.filter(r => evaluation.reqEvaluations[r.id] === 'yes').length;
+  const totalReqs = activeReqs.length;
+
+  const handleReqToggle = (reqId: string) => {
+    if (isNonCompatible) return;
+    const current = evaluation.reqEvaluations[reqId] || 'pending';
+    const next = current === 'pending' ? 'yes' : current === 'yes' ? 'no' : current === 'no' ? 'partial' : 'pending';
+    
+    onUpdate({
+      ...evaluation,
+      reqEvaluations: {
+        ...evaluation.reqEvaluations,
+        [reqId]: next
+      }
+    });
+  };
+
+  const getStatusColor = (s: string) => {
+    switch(s) {
+      case 'selected': return 'bg-green-100 text-green-800 border-green-200';
+      case 'rejected': return 'bg-red-100 text-red-800 border-red-200';
+      case 'reserve': return 'bg-amber-100 text-amber-800 border-amber-200';
+      case 'non-compatible': return 'bg-gray-200 text-gray-800 border-gray-300';
+      default: return 'bg-slate-100 text-slate-600 border-slate-200';
+    }
+  };
+
   return (
-    <div 
-      onClick={onClick}
-      className="bg-white border border-slate-200 rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer flex flex-col justify-between h-full group"
-    >
-      <div>
-        <div className="flex justify-between items-start mb-2">
-          <Badge color="slate">{position.entity}</Badge>
-          <span className="text-xs font-mono text-slate-400">{position.code}</span>
+    <div className={`border rounded-lg mb-2 shadow-sm overflow-hidden transition-all ${isNonCompatible ? 'bg-gray-50 border-gray-200 opacity-75' : 'bg-white border-slate-200'}`}>
+      <div className="flex items-center p-3 gap-4 hover:bg-slate-50 transition-colors">
+        <button onClick={() => setExpanded(!expanded)} className="text-slate-400 hover:text-slate-600">
+          {expanded ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
+        </button>
+        
+        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${isNonCompatible ? 'bg-gray-200 text-gray-500' : 'bg-slate-200 text-slate-600'}`}>
+          {candidate.firstName[0]}{candidate.lastName[0]}
         </div>
-        <h3 className="font-semibold text-slate-800 mb-1 group-hover:text-blue-600 transition-colors line-clamp-2">{position.title || position.code}</h3>
-        <div className="text-xs text-slate-500 flex items-center gap-1 mb-3">
-          <Briefcase className="w-3 h-3" />
-          {position.location}
+
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className={`font-medium truncate ${isNonCompatible ? 'text-gray-500 line-through' : 'text-slate-900'}`}>{candidate.nominativo}</span>
+            <span className="text-xs px-1.5 py-0.5 bg-slate-100 rounded text-slate-600">{candidate.rank}</span>
+            {otherSelection && (
+              <span className="text-xs px-1.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded flex items-center gap-1">
+                 <AlertTriangle className="w-3 h-3" /> Selected Elsewhere
+              </span>
+            )}
+          </div>
+          <div className="text-xs text-slate-500 flex gap-2 mt-0.5 items-center">
+             {isNonCompatible ? (
+                <span className="font-bold text-red-600 flex items-center gap-1"><Ban className="w-3 h-3" /> PROFILO NON COMPATIBILE CON LA PERSONA</span>
+             ) : (
+               <>
+                <span className="font-mono">{candidate.id}</span>
+                <span className="text-slate-300">|</span>
+                <span className="truncate max-w-[200px]">{candidate.serviceEntity}</span>
+                 <span className="text-slate-300">|</span>
+                 <span>{candidate.languages.map(l => `${l.language} (${l.level})`).join(', ')}</span>
+               </>
+             )}
+          </div>
+        </div>
+
+        {/* Mini Score Dashboard */}
+        <div className="flex gap-2 mr-4">
+           {!isNonCompatible && (
+             <div className="flex flex-col items-center px-3 border-l border-slate-100">
+                <span className="text-xs text-slate-400 uppercase font-bold">Match</span>
+                <span className={`font-bold text-sm ${reqScore === totalReqs && totalReqs > 0 ? 'text-green-600' : 'text-slate-700'}`}>
+                  {reqScore}/{totalReqs}
+                </span>
+             </div>
+           )}
+           
+           <select 
+            value={evaluation.status}
+            onChange={(e) => onUpdate({...evaluation, status: e.target.value as any})}
+            className={`text-xs font-semibold px-2 py-1 rounded border appearance-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-offset-1 ${getStatusColor(evaluation.status)}`}
+           >
+             <option value="pending">PENDING</option>
+             <option value="selected" disabled={!!otherSelection && evaluation.status !== 'selected'}>
+               {!!otherSelection && evaluation.status !== 'selected' ? 'GIÀ SELEZIONATO' : 'SELECTED'}
+             </option>
+             <option value="reserve">RESERVE</option>
+             <option value="rejected">REJECTED</option>
+             <option value="non-compatible">NON COMPATIBILE</option>
+           </select>
         </div>
       </div>
-      <div className="flex justify-between items-center pt-3 border-t border-slate-100">
-        <div className="text-xs text-slate-500">
-          <span className="font-medium text-slate-900">{candidateCount}</span> candidates
+
+      {expanded && (
+        <div className="bg-slate-50 p-4 border-t border-slate-200 grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div>
+            <h4 className="text-xs font-bold text-slate-500 uppercase mb-3 flex items-center gap-2">
+              <Briefcase className="w-3 h-3"/> Requirements Evaluation
+            </h4>
+            {isNonCompatible ? (
+               <div className="p-4 bg-gray-100 rounded border border-gray-200 text-center text-gray-500 text-sm">
+                  Evaluation disabled for non-compatible profiles.
+               </div>
+            ) : (
+              <div className="space-y-2">
+                {activeReqs.length === 0 && <p className="text-xs text-slate-400 italic">No visible requirements.</p>}
+                {activeReqs.map(req => {
+                  const status = evaluation.reqEvaluations[req.id] || 'pending';
+                  return (
+                    <div key={req.id} 
+                      onClick={() => handleReqToggle(req.id)}
+                      className="flex items-start gap-3 p-2 rounded cursor-pointer hover:bg-white border border-transparent hover:border-slate-200 transition-all select-none group"
+                    >
+                      <div className={`mt-0.5 w-5 h-5 rounded flex items-center justify-center border transition-colors
+                        ${status === 'yes' ? 'bg-green-500 border-green-600 text-white' : 
+                          status === 'no' ? 'bg-red-500 border-red-600 text-white' : 
+                          status === 'partial' ? 'bg-amber-400 border-amber-500 text-white' : 'bg-white border-slate-300 text-transparent group-hover:border-slate-400'}`}
+                      >
+                        {status === 'yes' && <Check className="w-3.5 h-3.5" />}
+                        {status === 'no' && <X className="w-3.5 h-3.5" />}
+                        {status === 'partial' && <div className="w-2 h-2 rounded-full bg-white opacity-50" />}
+                      </div>
+                      <div className="flex-1">
+                        <p className={`text-sm ${status === 'no' ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
+                          {req.text}
+                        </p>
+                        {req.type === 'essential' && <span className="text-[10px] font-bold text-red-500 uppercase">Essential</span>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          
+          <div className="flex flex-col h-full">
+             <div className="mb-4 text-xs text-slate-600 bg-white p-3 rounded border border-slate-200 space-y-2">
+               {otherSelection && (
+                 <div className="p-2 bg-amber-50 text-amber-800 border border-amber-200 rounded mb-2">
+                    <strong>Individuato per altra posizione:</strong><br/>
+                    {otherSelection.code} - {otherSelection.title} ({otherSelection.entity})
+                 </div>
+               )}
+               <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                  <div><span className="font-semibold text-slate-400">Ruolo:</span> {candidate.role}</div>
+                  <div><span className="font-semibold text-slate-400">Cat/Spec:</span> {candidate.category} {candidate.specialty}</div>
+                  <div><span className="font-semibold text-slate-400">NOS:</span> {candidate.nosLevel} {candidate.nosQual && `(${candidate.nosQual})`}</div>
+                  <div><span className="font-semibold text-slate-400">Scadenza:</span> {candidate.nosExpiry}</div>
+               </div>
+               {candidate.mixDescription && (
+                 <div className="border-t border-slate-100 pt-2 mt-2">
+                    <span className="font-semibold text-slate-400 block mb-1">MIX Description:</span>
+                    <p className="text-slate-500 leading-relaxed">{candidate.mixDescription}</p>
+                 </div>
+               )}
+               {candidate.internationalMandates && (
+                 <div className="border-t border-slate-100 pt-2">
+                    <span className="font-semibold text-slate-400 block mb-1">Mandati Internazionali:</span>
+                    <p className="text-slate-500">{candidate.internationalMandates}</p>
+                 </div>
+               )}
+             </div>
+
+            <h4 className="text-xs font-bold text-slate-500 uppercase mb-3 flex items-center gap-2">
+              <FileText className="w-3 h-3"/> Notes
+            </h4>
+            <textarea
+              className="flex-1 w-full border border-slate-300 rounded p-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none"
+              placeholder="Add evaluation notes here..."
+              value={evaluation.notes}
+              onChange={(e) => onUpdate({...evaluation, notes: e.target.value})}
+              rows={5}
+            />
+          </div>
         </div>
-        <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-blue-500" />
-      </div>
+      )}
     </div>
+  );
+};
+
+// --- New Position Detail View Component ---
+
+const PositionDetailView = ({
+  position,
+  allCandidates,
+  evaluations,
+  allPositions,
+  onUpdate,
+  onBack,
+  onToggleReqVisibility,
+  onExport
+}: {
+  position: Position;
+  allCandidates: Candidate[];
+  evaluations: Record<string, Evaluation>;
+  allPositions: Position[];
+  onUpdate: (ev: Evaluation) => void;
+  onBack: () => void;
+  onToggleReqVisibility: (posCode: string, reqId: string) => void;
+  onExport: (pos: Position, cands: Candidate[], evals: Record<string, Evaluation>, allPos: Position[]) => void;
+}) => {
+  const [detailViewMode, setDetailViewMode] = useState<'list' | 'matrix'>('list');
+
+  // Logic previously inside the if block in RecruitmentApp
+  const relevantCandidates = useMemo(() => allCandidates.filter(c => {
+       return !!evaluations[`${position.code}_${c.id}`];
+  }), [allCandidates, evaluations, position.code]);
+
+  const candidatesForView = useMemo(() => {
+        if (detailViewMode === 'matrix') {
+             // Stable sort for Matrix
+             return [...relevantCandidates].sort((a, b) => a.nominativo.localeCompare(b.nominativo));
+        } else {
+             // Score/Status sort for List
+             return [...relevantCandidates].sort((a, b) => {
+                const evA = evaluations[`${position.code}_${a.id}`];
+                const evB = evaluations[`${position.code}_${b.id}`];
+                
+                const scoreStatus = (s: string) => {
+                    if (s === 'selected') return 3;
+                    if (s === 'reserve') return 2;
+                    if (s === 'pending') return 1;
+                    return 0; // rejected, non-compatible
+                };
+
+                const statusA = scoreStatus(evA.status);
+                const statusB = scoreStatus(evB.status);
+
+                if (statusA !== statusB) {
+                    return statusB - statusA;
+                }
+
+                // If status same, Sort by req match count
+                const activeReqs = position.requirements.filter(r => !r.hidden);
+                const scoreA = activeReqs.filter(r => evA.reqEvaluations[r.id] === 'yes').length;
+                const scoreB = activeReqs.filter(r => evB.reqEvaluations[r.id] === 'yes').length;
+                return scoreB - scoreA;
+             });
+        }
+    }, [relevantCandidates, evaluations, detailViewMode, position]);
+
+  return (
+      <div className="flex flex-col h-screen bg-white">
+        {/* Header */}
+        <header className="bg-white border-b border-slate-200 px-6 py-4 shadow-sm z-10">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-4">
+              <Button variant="secondary" onClick={onBack}>
+                <ChevronRight className="w-4 h-4 rotate-180 mr-1" /> Back
+              </Button>
+              <div>
+                <h1 className="text-xl font-bold text-slate-900">{position.title}</h1>
+                <div className="text-sm text-slate-500 flex gap-2">
+                  <span className="font-mono">{position.code}</span>
+                  <span>•</span>
+                  <span>{position.location}</span>
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-4">
+               {/* View Toggle */}
+               <div className="flex bg-slate-100 p-1 rounded-lg">
+                 <button 
+                    onClick={() => setDetailViewMode('list')}
+                    className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${detailViewMode === 'list' ? 'bg-white shadow text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
+                 >
+                   <LayoutList className="w-4 h-4" /> List
+                 </button>
+                 <button 
+                    onClick={() => setDetailViewMode('matrix')}
+                    className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${detailViewMode === 'matrix' ? 'bg-white shadow text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
+                 >
+                   <TableIcon className="w-4 h-4" /> Matrix
+                 </button>
+               </div>
+
+               <div className="flex gap-2">
+                  <Button variant="secondary">
+                    <Upload className="w-4 h-4 mr-2" /> Job Desc
+                  </Button>
+                  <Button variant="primary" onClick={() => onExport(position, candidatesForView, evaluations, allPositions)}>
+                    <Download className="w-4 h-4 mr-2" /> Export
+                  </Button>
+               </div>
+            </div>
+          </div>
+          
+          {/* Position Metadata Grid */}
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2 text-xs bg-slate-50 p-2 rounded border border-slate-200">
+             {position.rankReq && <div><span className="text-slate-400 font-semibold block">Grade</span>{position.rankReq}</div>}
+             {position.englishReq && <div><span className="text-slate-400 font-semibold block">English</span>{position.englishReq}</div>}
+             {position.nosReq && <div><span className="text-slate-400 font-semibold block">NOS</span>{position.nosReq}</div>}
+             {position.catSpecQualReq && <div><span className="text-slate-400 font-semibold block">Cat/Spec</span>{position.catSpecQualReq}</div>}
+             {position.ofcn && <div><span className="text-slate-400 font-semibold block">OFCN</span>{position.ofcn}</div>}
+             {position.poInterest && <div><span className="text-slate-400 font-semibold block">Interest</span>{position.poInterest}</div>}
+          </div>
+        </header>
+
+        <div className="flex-1 overflow-hidden flex">
+           {/* Sidebar Info */}
+           <div className="w-80 border-r border-slate-200 bg-slate-50 p-6 overflow-y-auto hidden lg:block shrink-0">
+              <h3 className="font-bold text-slate-700 mb-4 uppercase text-xs tracking-wide">Requirements Manager</h3>
+              <p className="text-[10px] text-slate-500 mb-4">Click the eye icon to hide headers or irrelevant lines from the evaluation worksheet.</p>
+              
+              <div className="space-y-6">
+                <div>
+                  <h4 className="text-sm font-semibold text-blue-800 mb-2">Essential</h4>
+                  <ul className="space-y-2">
+                    {position.requirements.filter(r => r.type === 'essential').map(r => (
+                      <li key={r.id} className={`flex items-start gap-2 group ${r.hidden ? 'opacity-50' : ''}`}>
+                         <button 
+                            onClick={() => onToggleReqVisibility(position.code, r.id)}
+                            className="mt-0.5 text-slate-400 hover:text-blue-600 focus:outline-none"
+                         >
+                            {r.hidden ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                         </button>
+                         <span className={`text-xs leading-relaxed ${r.hidden ? 'text-slate-400 line-through decoration-slate-300' : 'text-slate-600'}`}>
+                           {r.text}
+                         </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div>
+                  <h4 className="text-sm font-semibold text-slate-700 mb-2">Desirable</h4>
+                   <ul className="space-y-2">
+                    {position.requirements.filter(r => r.type === 'desirable').map(r => (
+                       <li key={r.id} className={`flex items-start gap-2 group ${r.hidden ? 'opacity-50' : ''}`}>
+                         <button 
+                            onClick={() => onToggleReqVisibility(position.code, r.id)}
+                            className="mt-0.5 text-slate-400 hover:text-blue-600 focus:outline-none"
+                         >
+                            {r.hidden ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                         </button>
+                         <span className={`text-xs leading-relaxed ${r.hidden ? 'text-slate-400 line-through decoration-slate-300' : 'text-slate-500'}`}>
+                           {r.text}
+                         </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+           </div>
+
+           {/* Main Work Area */}
+           <div className="flex-1 bg-slate-100 p-6 overflow-y-auto overflow-x-auto">
+              <div className={`${detailViewMode === 'list' ? 'max-w-4xl mx-auto' : 'min-w-[800px]'}`}>
+                {candidatesForView.length === 0 ? (
+                  <div className="text-center p-12 bg-white rounded-lg border border-slate-200 border-dashed text-slate-400">
+                    No candidates found for this position code.
+                  </div>
+                ) : (
+                  detailViewMode === 'list' ? (
+                    // List View: Use Ranked Candidates
+                    candidatesForView.map(c => (
+                      <WorksheetRow 
+                        key={c.id} 
+                        candidate={c} 
+                        position={position}
+                        evaluation={evaluations[`${position.code}_${c.id}`]!}
+                        otherSelection={getOtherSelectionInfo(c.id, position.code, evaluations, allPositions)}
+                        onUpdate={onUpdate}
+                      />
+                    ))
+                  ) : (
+                    // Matrix View: Use Stable Sorted Candidates
+                    <CandidatesMatrixView 
+                      candidates={candidatesForView}
+                      position={position}
+                      evaluations={evaluations}
+                      positions={allPositions}
+                      onUpdate={onUpdate}
+                    />
+                  )
+                )}
+              </div>
+           </div>
+        </div>
+      </div>
   );
 };
 
@@ -400,8 +896,7 @@ const CandidatesListView = ({
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const filtered = candidates.filter(c => 
-    c.lastName.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    c.firstName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    c.nominativo.toLowerCase().includes(searchTerm.toLowerCase()) || 
     c.id.includes(searchTerm)
   );
 
@@ -426,9 +921,9 @@ const CandidatesListView = ({
               <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-medium">
                 <tr>
                   <th className="px-6 py-3">Matricola</th>
-                  <th className="px-6 py-3">Rank/Name</th>
+                  <th className="px-6 py-3">Nominativo</th>
+                  <th className="px-6 py-3">Ente / NOS</th>
                   <th className="px-6 py-3">Role Info</th>
-                  <th className="px-6 py-3">Languages</th>
                   <th className="px-6 py-3">Applications</th>
                   <th className="px-6 py-3"></th>
                 </tr>
@@ -442,16 +937,20 @@ const CandidatesListView = ({
                     >
                       <td className="px-6 py-3 font-mono text-slate-500">{c.id}</td>
                       <td className="px-6 py-3">
-                        <div className="font-medium text-slate-900">{c.lastName} {c.firstName}</div>
+                        <div className="font-medium text-slate-900">{c.nominativo}</div>
                         <div className="text-xs text-slate-500">{c.rank}</div>
                       </td>
-                      <td className="px-6 py-3 text-xs text-slate-600">
-                        <div><span className="font-semibold text-slate-400">Role:</span> {c.role}</div>
-                        <div><span className="font-semibold text-slate-400">Cat:</span> {c.category}</div>
-                        <div><span className="font-semibold text-slate-400">Spec:</span> {c.specialty}</div>
+                      <td className="px-6 py-3 text-xs">
+                        <div className="font-semibold text-slate-700">{c.serviceEntity || '-'}</div>
+                        {c.nosLevel && (
+                          <div className="text-slate-500 flex items-center gap-1 mt-1">
+                            <Shield className="w-3 h-3" /> {c.nosLevel} ({c.nosExpiry})
+                          </div>
+                        )}
                       </td>
-                      <td className="px-6 py-3 text-slate-500">
-                        {c.languages.map(l => `${l.language} (${l.level})`).join(', ')}
+                      <td className="px-6 py-3 text-xs text-slate-600">
+                        <div>{c.role}</div>
+                        <div className="text-slate-400">{c.category} {c.specialty}</div>
                       </td>
                       <td className="px-6 py-3">
                          <Badge color="blue">{c.appliedPositionCodes.length} Positions</Badge>
@@ -463,42 +962,37 @@ const CandidatesListView = ({
                     {expandedId === c.id && (
                       <tr className="bg-slate-50/50">
                         <td colSpan={6} className="px-6 py-4">
-                           <div className="space-y-2 pl-4 border-l-2 border-blue-200">
-                              <h4 className="text-xs font-bold text-slate-500 uppercase">Applied Positions</h4>
-                              {c.appliedPositionCodes.length === 0 && <p className="text-slate-400 italic">No valid position codes found.</p>}
-                              {c.appliedPositionCodes.map(code => {
-                                const pos = positions.find(p => p.code.includes(code) || code.includes(p.code));
-                                const ev = pos ? evaluations[`${pos.code}_${c.id}`] : null;
-                                return (
-                                  <div key={code} className="flex items-center justify-between bg-white p-2 rounded border border-slate-200">
-                                    <div className="flex items-center gap-3">
-                                       <div className={`w-2 h-2 rounded-full ${pos ? 'bg-green-500' : 'bg-slate-300'}`}></div>
-                                       <div>
-                                         <p className="font-medium text-slate-700">{pos ? pos.title : `Unknown Position (${code})`}</p>
-                                         <p className="text-xs text-slate-500">{pos?.entity} {pos?.location && `• ${pos.location}`}</p>
-                                       </div>
-                                    </div>
-                                    <div className="flex items-center gap-4">
-                                       {ev && (
-                                         <span className={`text-xs px-2 py-0.5 rounded font-bold uppercase
-                                           ${ev.status === 'selected' ? 'bg-green-100 text-green-700' : 
-                                             ev.status === 'rejected' ? 'bg-red-100 text-red-700' : 
-                                             'bg-slate-100 text-slate-600'}`}>
-                                           {ev.status}
-                                         </span>
-                                       )}
-                                       {pos && (
-                                         <Button variant="ghost" className="h-6 text-xs" onClick={(e: any) => {
-                                           e.stopPropagation();
-                                           onNavigateToPosition(pos.code);
-                                         }}>
-                                           Go to Worksheet
-                                         </Button>
-                                       )}
-                                    </div>
-                                  </div>
-                                )
-                              })}
+                           <div className="flex gap-4">
+                              <div className="w-1/3 space-y-2 p-3 bg-white rounded border border-slate-200">
+                                <h4 className="text-xs font-bold text-slate-500 uppercase mb-2">Details</h4>
+                                <div className="text-xs space-y-1">
+                                  <p><span className="font-semibold">Mix:</span> {c.mixDescription}</p>
+                                  <p><span className="font-semibold">Mandati:</span> {c.internationalMandates}</p>
+                                  <p><span className="font-semibold">Languages:</span> {c.languages.map(l => `${l.language} (${l.level})`).join(', ')}</p>
+                                </div>
+                              </div>
+                              <div className="flex-1 space-y-2 pl-4 border-l-2 border-blue-200">
+                                  <h4 className="text-xs font-bold text-slate-500 uppercase">Applied Positions</h4>
+                                  {c.appliedPositionCodes.map(code => {
+                                    const pos = positions.find(p => p.code.includes(code) || code.includes(p.code));
+                                    const ev = pos ? evaluations[`${pos.code}_${c.id}`] : null;
+                                    return (
+                                      <div key={code} className="flex items-center justify-between bg-white p-2 rounded border border-slate-200">
+                                        <div className="flex items-center gap-3">
+                                          <div className={`w-2 h-2 rounded-full ${pos ? 'bg-green-500' : 'bg-slate-300'}`}></div>
+                                          <div>
+                                            <p className="font-medium text-slate-700">{pos ? pos.title : `Unknown (${code})`}</p>
+                                            <p className="text-xs text-slate-500">{pos?.entity}</p>
+                                          </div>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                          {ev && <span className="text-xs font-bold">{ev.status.toUpperCase()}</span>}
+                                          {pos && <Button variant="ghost" className="h-6 text-xs" onClick={(e: any) => { e.stopPropagation(); onNavigateToPosition(pos.code); }}>Go</Button>}
+                                        </div>
+                                      </div>
+                                    )
+                                  })}
+                              </div>
                            </div>
                         </td>
                       </tr>
@@ -513,163 +1007,185 @@ const CandidatesListView = ({
   )
 }
 
-const WorksheetRow: React.FC<{ 
-  candidate: Candidate; 
-  evaluation: Evaluation; 
-  position: Position; 
-  onUpdate: (e: Evaluation) => void; 
-}> = ({ 
-  candidate, 
-  evaluation, 
-  position, 
-  onUpdate 
-}) => {
-  const [expanded, setExpanded] = useState(false);
+// --- Missing Components ---
 
-  // Only count non-hidden requirements
-  const activeReqs = position.requirements.filter(r => !r.hidden);
-  const reqScore = activeReqs.filter(r => evaluation.reqEvaluations[r.id] === 'yes').length;
-  const totalReqs = activeReqs.length;
+const FileUploadView = ({ onDataLoaded }: { onDataLoaded: (candidates: Candidate[], positions: Position[]) => void }) => {
+  const [candidatesFile, setCandidatesFile] = useState<File | null>(null);
+  const [positionsFile, setPositionsFile] = useState<File | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleReqToggle = (reqId: string) => {
-    const current = evaluation.reqEvaluations[reqId] || 'pending';
-    const next = current === 'pending' ? 'yes' : current === 'yes' ? 'no' : current === 'no' ? 'partial' : 'pending';
+  const processFiles = async () => {
+    if (!candidatesFile || !positionsFile) return;
+    setIsProcessing(true);
+    setError(null);
     
-    onUpdate({
-      ...evaluation,
-      reqEvaluations: {
-        ...evaluation.reqEvaluations,
-        [reqId]: next
+    try {
+      // @ts-ignore
+      if (!window.XLSX) {
+        throw new Error("XLSX library not found. Please include it in your HTML.");
       }
-    });
-  };
+      const XLSX = (window as any).XLSX;
 
-  const getStatusColor = (s: string) => {
-    switch(s) {
-      case 'selected': return 'bg-green-100 text-green-800 border-green-200';
-      case 'rejected': return 'bg-red-100 text-red-800 border-red-200';
-      case 'reserve': return 'bg-amber-100 text-amber-800 border-amber-200';
-      default: return 'bg-slate-100 text-slate-600 border-slate-200';
+      const readFile = (file: File) => new Promise<any[]>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const data = new Uint8Array(e.target?.result as ArrayBuffer);
+            const workbook = XLSX.read(data, { type: 'array' });
+            const firstSheet = workbook.SheetNames[0];
+            const jsonData = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheet]);
+            resolve(jsonData);
+          } catch (err) {
+            reject(err);
+          }
+        };
+        reader.onerror = reject;
+        reader.readAsArrayBuffer(file);
+      });
+
+      const [candData, posData] = await Promise.all([
+        readFile(candidatesFile),
+        readFile(positionsFile)
+      ]);
+
+      const candidates = parseCandidates(candData);
+      const positions = parsePositions(posData);
+
+      onDataLoaded(candidates, positions);
+
+    } catch (err: any) {
+      setError(err.message || "Failed to process files");
+      setIsProcessing(false);
     }
   };
 
   return (
-    <div className="border border-slate-200 rounded-lg mb-2 bg-white shadow-sm overflow-hidden">
-      <div className="flex items-center p-3 gap-4 hover:bg-slate-50 transition-colors">
-        <button onClick={() => setExpanded(!expanded)} className="text-slate-400 hover:text-slate-600">
-          {expanded ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
-        </button>
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+      <div className="bg-white p-8 rounded-xl shadow-lg max-w-lg w-full border border-slate-200 text-center">
+        <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-6">
+          <Upload className="w-8 h-8" />
+        </div>
+        <h1 className="text-2xl font-bold text-slate-800 mb-2">Upload Data</h1>
+        <p className="text-slate-500 mb-8">Please upload both the Candidates and Positions Excel files to begin.</p>
         
-        <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-xs font-bold text-slate-600">
-          {candidate.firstName[0]}{candidate.lastName[0]}
-        </div>
-
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="font-medium text-slate-900 truncate">{candidate.lastName} {candidate.firstName}</span>
-            <span className="text-xs px-1.5 py-0.5 bg-slate-100 rounded text-slate-600">{candidate.rank}</span>
-          </div>
-          <div className="text-xs text-slate-500 flex gap-2 mt-0.5">
-            <span className="font-mono">{candidate.id}</span>
-            <span className="text-slate-300">|</span>
-            <span className="truncate max-w-[150px]" title={`${candidate.role} - ${candidate.category} - ${candidate.specialty}`}>
-               {candidate.role} {candidate.category} {candidate.specialty}
-            </span>
-             <span className="text-slate-300">|</span>
-            <span className="truncate">{candidate.languages.map(l => `${l.language} (${l.level})`).join(', ')}</span>
-          </div>
-        </div>
-
-        {/* Mini Score Dashboard */}
-        <div className="flex gap-2 mr-4">
-           <div className="flex flex-col items-center px-3 border-l border-slate-100">
-              <span className="text-xs text-slate-400 uppercase font-bold">Match</span>
-              <span className={`font-bold text-sm ${reqScore === totalReqs && totalReqs > 0 ? 'text-green-600' : 'text-slate-700'}`}>
-                {reqScore}/{totalReqs}
-              </span>
+        <div className="space-y-4 mb-8">
+           <div className={`border-2 border-dashed rounded-lg p-4 transition-colors ${candidatesFile ? 'border-green-500 bg-green-50' : 'border-slate-300 hover:border-blue-400'}`}>
+             <label className="flex items-center gap-3 cursor-pointer">
+               <FileSpreadsheet className={`w-6 h-6 ${candidatesFile ? 'text-green-600' : 'text-slate-400'}`} />
+               <div className="flex-1 text-left">
+                  <span className="block font-medium text-sm text-slate-700">{candidatesFile ? candidatesFile.name : "Select Candidates File"}</span>
+                  <span className="text-xs text-slate-400">.xlsx, .xls</span>
+               </div>
+               <input type="file" accept=".xlsx,.xls" className="hidden" onChange={(e) => setCandidatesFile(e.target.files?.[0] || null)} />
+               {candidatesFile && <Check className="w-5 h-5 text-green-600" />}
+             </label>
            </div>
-           
-           <select 
-            value={evaluation.status}
-            onChange={(e) => onUpdate({...evaluation, status: e.target.value as any})}
-            className={`text-xs font-semibold px-2 py-1 rounded border appearance-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-offset-1 ${getStatusColor(evaluation.status)}`}
-           >
-             <option value="pending">PENDING</option>
-             <option value="selected">SELECTED</option>
-             <option value="reserve">RESERVE</option>
-             <option value="rejected">REJECTED</option>
-           </select>
+
+           <div className={`border-2 border-dashed rounded-lg p-4 transition-colors ${positionsFile ? 'border-green-500 bg-green-50' : 'border-slate-300 hover:border-blue-400'}`}>
+             <label className="flex items-center gap-3 cursor-pointer">
+               <Briefcase className={`w-6 h-6 ${positionsFile ? 'text-green-600' : 'text-slate-400'}`} />
+               <div className="flex-1 text-left">
+                  <span className="block font-medium text-sm text-slate-700">{positionsFile ? positionsFile.name : "Select Positions File"}</span>
+                  <span className="text-xs text-slate-400">.xlsx, .xls</span>
+               </div>
+               <input type="file" accept=".xlsx,.xls" className="hidden" onChange={(e) => setPositionsFile(e.target.files?.[0] || null)} />
+               {positionsFile && <Check className="w-5 h-5 text-green-600" />}
+             </label>
+           </div>
+        </div>
+
+        {error && (
+          <div className="mb-6 p-3 bg-red-50 text-red-600 text-sm rounded flex items-center gap-2 justify-center">
+             <AlertCircle className="w-4 h-4" /> {error}
+          </div>
+        )}
+
+        <Button 
+          className="w-full justify-center py-3 text-base" 
+          disabled={!candidatesFile || !positionsFile || isProcessing}
+          onClick={processFiles}
+        >
+          {isProcessing ? "Processing..." : "Start Import"}
+        </Button>
+      </div>
+    </div>
+  );
+};
+
+const PositionCard = ({ 
+  position, 
+  status, 
+  candidateCount,
+  selectedCandidatesNames,
+  onClick 
+}: { 
+  position: Position; 
+  status: PositionStatus; 
+  candidateCount: number; 
+  selectedCandidatesNames: string[];
+  onClick: () => void;
+}) => {
+  const statusColors = {
+    todo: "bg-slate-100 text-slate-600",
+    inprogress: "bg-blue-100 text-blue-700",
+    completed: "bg-green-100 text-green-700"
+  };
+
+  const statusLabels = {
+    todo: "To Do",
+    inprogress: "In Progress",
+    completed: "Completed"
+  };
+
+  return (
+    <div 
+      onClick={onClick}
+      className="bg-white rounded-lg border border-slate-200 shadow-sm hover:shadow-md transition-shadow cursor-pointer flex flex-col h-full"
+    >
+      <div className="p-5 flex-1">
+        <div className="flex justify-between items-start mb-2">
+          <span className="font-mono text-xs text-slate-500 bg-slate-50 px-2 py-1 rounded">{position.code}</span>
+          <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full ${statusColors[status]}`}>
+            {statusLabels[status]}
+          </span>
+        </div>
+        <h3 className="font-bold text-slate-800 mb-1 line-clamp-2" title={position.title}>{position.title}</h3>
+        <p className="text-sm text-slate-500 flex items-center gap-1 mb-4">
+          <Building className="w-3 h-3" /> {position.entity}
+        </p>
+        
+        <div className="space-y-2 text-xs text-slate-600">
+           <div className="flex justify-between border-b border-slate-100 pb-1">
+             <span className="text-slate-400">Selected</span>
+             <span className={`font-medium ${selectedCandidatesNames.length > 0 ? 'text-green-700' : 'text-slate-400 italic'}`}>
+               {selectedCandidatesNames.length > 0 ? selectedCandidatesNames.join(', ') : 'None'}
+             </span>
+           </div>
+           <div className="flex justify-between border-b border-slate-100 pb-1">
+             <span className="text-slate-400">Grade</span>
+             <span className="font-medium">{position.rankReq || '-'}</span>
+           </div>
+           <div className="flex justify-between pb-1">
+             <span className="text-slate-400">Role</span>
+             <span className="font-medium truncate max-w-[120px]">{position.catSpecQualReq || '-'}</span>
+           </div>
         </div>
       </div>
-
-      {expanded && (
-        <div className="bg-slate-50 p-4 border-t border-slate-200 grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div>
-            <h4 className="text-xs font-bold text-slate-500 uppercase mb-3 flex items-center gap-2">
-              <Briefcase className="w-3 h-3"/> Requirements Evaluation
-            </h4>
-            <div className="space-y-2">
-              {activeReqs.length === 0 && <p className="text-xs text-slate-400 italic">No visible requirements.</p>}
-              {activeReqs.map(req => {
-                const status = evaluation.reqEvaluations[req.id] || 'pending';
-                return (
-                  <div key={req.id} 
-                    onClick={() => handleReqToggle(req.id)}
-                    className="flex items-start gap-3 p-2 rounded cursor-pointer hover:bg-white border border-transparent hover:border-slate-200 transition-all select-none group"
-                  >
-                    <div className={`mt-0.5 w-5 h-5 rounded flex items-center justify-center border transition-colors
-                      ${status === 'yes' ? 'bg-green-500 border-green-600 text-white' : 
-                        status === 'no' ? 'bg-red-500 border-red-600 text-white' : 
-                        status === 'partial' ? 'bg-amber-400 border-amber-500 text-white' : 'bg-white border-slate-300 text-transparent group-hover:border-slate-400'}`}
-                    >
-                      {status === 'yes' && <Check className="w-3.5 h-3.5" />}
-                      {status === 'no' && <X className="w-3.5 h-3.5" />}
-                      {status === 'partial' && <div className="w-2 h-2 rounded-full bg-white opacity-50" />}
-                    </div>
-                    <div className="flex-1">
-                      <p className={`text-sm ${status === 'no' ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
-                        {req.text}
-                      </p>
-                      {req.type === 'essential' && <span className="text-[10px] font-bold text-red-500 uppercase">Essential</span>}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-          
-          <div className="flex flex-col h-full">
-             <div className="mb-4 text-xs text-slate-600 bg-white p-3 rounded border border-slate-200">
-               <div className="grid grid-cols-2 gap-2">
-                  <div><span className="font-semibold">Ruolo:</span> {candidate.role}</div>
-                  <div><span className="font-semibold">Categoria:</span> {candidate.category}</div>
-                  <div><span className="font-semibold">Specialità:</span> {candidate.specialty}</div>
-               </div>
-             </div>
-
-            <h4 className="text-xs font-bold text-slate-500 uppercase mb-3 flex items-center gap-2">
-              <FileText className="w-3 h-3"/> Notes
-            </h4>
-            <textarea
-              className="flex-1 w-full border border-slate-300 rounded p-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none"
-              placeholder="Add evaluation notes here..."
-              value={evaluation.notes}
-              onChange={(e) => onUpdate({...evaluation, notes: e.target.value})}
-              rows={5}
-            />
-             <div className="mt-4 p-3 bg-blue-50 rounded border border-blue-100 text-xs text-blue-800">
-               <strong>Tip:</strong> Click requirements on the left to toggle status (Pending → Yes → No → Partial).
-            </div>
-          </div>
-        </div>
-      )}
+      <div className="bg-slate-50 px-5 py-3 border-t border-slate-100 flex items-center justify-between text-sm">
+         <span className="text-slate-500">Candidates</span>
+         <div className="flex items-center gap-2">
+           <Users className="w-4 h-4 text-slate-400" />
+           <span className="font-bold text-slate-700">{candidateCount}</span>
+         </div>
+      </div>
     </div>
   );
 };
 
 // --- Export Logic ---
 
-const exportToExcel = (position: Position, candidates: Candidate[], evaluations: Record<string, Evaluation>) => {
+const exportToExcel = (position: Position, candidates: Candidate[], evaluations: Record<string, Evaluation>, positions: Position[]) => {
   // @ts-ignore
   if (!window.XLSX) return;
   const XLSX = (window as any).XLSX;
@@ -690,18 +1206,29 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
       reqCols[`Req ${idx + 1} (${req.type})`] = label;
     });
 
+    // Check if selected elsewhere to append to notes
+    let notes = ev.notes || "";
+    const otherSel = getOtherSelectionInfo(c.id, position.code, evaluations, positions);
+    if (otherSel) {
+      const autoText = `Individuato per la posizione ${otherSel.code} ${otherSel.title} - ${otherSel.entity}`;
+      notes = notes ? `${autoText}\n${notes}` : autoText;
+    }
+
     return {
       "Matricola": c.id,
       "Grado": c.rank,
-      "Cognome": c.lastName,
-      "Nome": c.firstName,
+      "Nominativo": c.nominativo,
+      "Ente Servizio": c.serviceEntity,
       "Ruolo": c.role,
       "Categoria": c.category,
       "Specialità": c.specialty,
+      "NOS": `${c.nosLevel} ${c.nosQual}`,
+      "Mandati": c.internationalMandates,
+      "Mix": c.mixDescription,
       "Lingue": c.languages.map(l => `${l.language} ${l.level}`).join('; '),
       ...reqCols,
       "Valutazione Finale": ev.status.toUpperCase(),
-      "Note": ev.notes
+      "Note": notes
     };
   }).filter(Boolean);
 
@@ -729,6 +1256,7 @@ const RecruitmentApp = () => {
   const [selectedPositionId, setSelectedPositionId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterEnte, setFilterEnte] = useState("ALL");
+  const [filterStatus, setFilterStatus] = useState<PositionStatus | 'all'>('all');
 
   // Load from LocalStorage
   useEffect(() => {
@@ -835,9 +1363,13 @@ const RecruitmentApp = () => {
     return appData.positions.filter(p => {
       const matchesSearch = p.title.toLowerCase().includes(searchTerm.toLowerCase()) || p.code.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesEnte = filterEnte === 'ALL' || p.entity === filterEnte;
-      return matchesSearch && matchesEnte;
+      
+      const status = getPositionStatus(p, appData.evaluations);
+      const matchesStatus = filterStatus === 'all' || status === filterStatus;
+
+      return matchesSearch && matchesEnte && matchesStatus;
     });
-  }, [appData.positions, searchTerm, filterEnte]);
+  }, [appData.positions, appData.evaluations, searchTerm, filterEnte, filterStatus]);
 
   // Views Logic
   if (currentView === 'upload') {
@@ -847,133 +1379,18 @@ const RecruitmentApp = () => {
   if (currentView === 'position_detail' && selectedPositionId) {
     const position = appData.positions.find(p => p.code === selectedPositionId)!;
     
-    // Get candidates applied to this position
-    const relevantCandidates = appData.candidates.filter(c => {
-       // Check if evaluation exists (created during import)
-       return !!appData.evaluations[`${position.code}_${c.id}`];
-    });
-
-    // Sort by status (Pending first, then by match score)
-    const sortedCandidates = [...relevantCandidates].sort((a, b) => {
-      const evA = appData.evaluations[`${position.code}_${a.id}`];
-      const evB = appData.evaluations[`${position.code}_${b.id}`];
-      
-      if (evA.status === evB.status) {
-         // Sort by req match count
-         const activeReqs = position.requirements.filter(r => !r.hidden);
-         const scoreA = activeReqs.filter(r => evA.reqEvaluations[r.id] === 'yes').length;
-         const scoreB = activeReqs.filter(r => evB.reqEvaluations[r.id] === 'yes').length;
-         return scoreB - scoreA;
-      }
-      return evA.status === 'pending' ? -1 : 1;
-    });
-
+    // We render the dedicated component for Position Detail to avoid hook rules violation
     return (
-      <div className="flex flex-col h-screen bg-white">
-        {/* Header */}
-        <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between shadow-sm z-10">
-          <div className="flex items-center gap-4">
-            <Button variant="secondary" onClick={() => setCurrentView('dashboard')}>
-              <ChevronRight className="w-4 h-4 rotate-180 mr-1" /> Back
-            </Button>
-            <div>
-              <h1 className="text-xl font-bold text-slate-900">{position.title}</h1>
-              <div className="text-sm text-slate-500 flex gap-2">
-                <span className="font-mono">{position.code}</span>
-                <span>•</span>
-                <span>{position.entity}</span>
-                <span>•</span>
-                <span>{position.location}</span>
-              </div>
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <Button variant="secondary">
-              <Upload className="w-4 h-4 mr-2" /> Upload Job Desc
-            </Button>
-            <Button variant="primary" onClick={() => exportToExcel(position, sortedCandidates, appData.evaluations)}>
-              <Download className="w-4 h-4 mr-2" /> Export Excel
-            </Button>
-          </div>
-        </header>
-
-        <div className="flex-1 overflow-hidden flex">
-           {/* Sidebar Info - UPDATED with Visibility Controls */}
-           <div className="w-80 border-r border-slate-200 bg-slate-50 p-6 overflow-y-auto hidden lg:block">
-              <h3 className="font-bold text-slate-700 mb-4 uppercase text-xs tracking-wide">Requirements Manager</h3>
-              <p className="text-[10px] text-slate-500 mb-4">Click the eye icon to hide headers or irrelevant lines from the evaluation worksheet.</p>
-              
-              <div className="space-y-6">
-                <div>
-                  <h4 className="text-sm font-semibold text-blue-800 mb-2">Essential</h4>
-                  <ul className="space-y-2">
-                    {position.requirements.filter(r => r.type === 'essential').map(r => (
-                      <li key={r.id} className={`flex items-start gap-2 group ${r.hidden ? 'opacity-50' : ''}`}>
-                         <button 
-                            onClick={() => toggleRequirementVisibility(position.code, r.id)}
-                            className="mt-0.5 text-slate-400 hover:text-blue-600 focus:outline-none"
-                         >
-                            {r.hidden ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                         </button>
-                         <span className={`text-xs leading-relaxed ${r.hidden ? 'text-slate-400 line-through decoration-slate-300' : 'text-slate-600'}`}>
-                           {r.text}
-                         </span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-                <div>
-                  <h4 className="text-sm font-semibold text-slate-700 mb-2">Desirable</h4>
-                   <ul className="space-y-2">
-                    {position.requirements.filter(r => r.type === 'desirable').map(r => (
-                       <li key={r.id} className={`flex items-start gap-2 group ${r.hidden ? 'opacity-50' : ''}`}>
-                         <button 
-                            onClick={() => toggleRequirementVisibility(position.code, r.id)}
-                            className="mt-0.5 text-slate-400 hover:text-blue-600 focus:outline-none"
-                         >
-                            {r.hidden ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                         </button>
-                         <span className={`text-xs leading-relaxed ${r.hidden ? 'text-slate-400 line-through decoration-slate-300' : 'text-slate-500'}`}>
-                           {r.text}
-                         </span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-           </div>
-
-           {/* Main Work Area */}
-           <div className="flex-1 bg-slate-100 p-6 overflow-y-auto">
-              <div className="max-w-4xl mx-auto">
-                <div className="flex justify-between items-center mb-4">
-                  <h2 className="text-lg font-bold text-slate-800">Candidates ({sortedCandidates.length})</h2>
-                  <div className="flex gap-2 text-sm text-slate-500">
-                    <span className="flex items-center"><div className="w-3 h-3 bg-green-500 rounded mr-1"></div> Yes</span>
-                    <span className="flex items-center"><div className="w-3 h-3 bg-red-500 rounded mr-1"></div> No</span>
-                    <span className="flex items-center"><div className="w-3 h-3 bg-amber-400 rounded mr-1"></div> Partial</span>
-                  </div>
-                </div>
-
-                {sortedCandidates.length === 0 ? (
-                  <div className="text-center p-12 bg-white rounded-lg border border-slate-200 border-dashed text-slate-400">
-                    No candidates found for this position code.
-                  </div>
-                ) : (
-                  sortedCandidates.map(c => (
-                    <WorksheetRow 
-                      key={c.id} 
-                      candidate={c} 
-                      position={position}
-                      evaluation={appData.evaluations[`${position.code}_${c.id}`]!} 
-                      onUpdate={updateEvaluation}
-                    />
-                  ))
-                )}
-              </div>
-           </div>
-        </div>
-      </div>
+       <PositionDetailView 
+          position={position}
+          allCandidates={appData.candidates}
+          evaluations={appData.evaluations}
+          allPositions={appData.positions}
+          onUpdate={updateEvaluation}
+          onBack={() => setCurrentView('dashboard')}
+          onToggleReqVisibility={toggleRequirementVisibility}
+          onExport={exportToExcel}
+       />
     );
   }
 
@@ -1025,25 +1442,45 @@ const RecruitmentApp = () => {
 
             <div className="p-8 flex-1 overflow-y-auto">
               {/* Controls */}
-              <div className="flex gap-4 mb-6">
-                <div className="relative flex-1 max-w-md">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                  <input 
-                    type="text" 
-                    placeholder="Search positions..." 
-                    className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                  />
+              <div className="flex flex-col gap-4 mb-6">
+                <div className="flex gap-4">
+                  <div className="relative flex-1 max-w-md">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <input 
+                      type="text" 
+                      placeholder="Search positions..." 
+                      className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                  </div>
+                  
+                  <select 
+                    className="px-4 py-2 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    value={filterEnte}
+                    onChange={(e) => setFilterEnte(e.target.value)}
+                  >
+                    {distinctEntities.map(e => <option key={e} value={e}>{e === 'ALL' ? 'All Entities' : e}</option>)}
+                  </select>
                 </div>
-                
-                <select 
-                  className="px-4 py-2 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  value={filterEnte}
-                  onChange={(e) => setFilterEnte(e.target.value)}
-                >
-                  {distinctEntities.map(e => <option key={e} value={e}>{e === 'ALL' ? 'All Entities' : e}</option>)}
-                </select>
+
+                {/* Status Tabs */}
+                <div className="flex gap-2 border-b border-slate-200">
+                  {(['all', 'todo', 'inprogress', 'completed'] as const).map(status => (
+                    <button
+                      key={status}
+                      onClick={() => setFilterStatus(status)}
+                      className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-[1px]
+                        ${filterStatus === status 
+                          ? 'border-blue-600 text-blue-600' 
+                          : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}
+                    >
+                      {status === 'all' ? 'All Positions' : 
+                       status === 'todo' ? 'To Do' :
+                       status === 'inprogress' ? 'In Progress' : 'Completed'}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* Grid */}
@@ -1053,12 +1490,20 @@ const RecruitmentApp = () => {
                   const count = appData.candidates.filter(c => 
                      !!appData.evaluations[`${pos.code}_${c.id}`]
                   ).length;
+                  const status = getPositionStatus(pos, appData.evaluations);
                   
+                  // Get selected candidates names
+                  const selectedNames = appData.candidates
+                    .filter(c => appData.evaluations[`${pos.code}_${c.id}`]?.status === 'selected')
+                    .map(c => c.nominativo);
+
                   return (
                     <PositionCard 
                       key={pos.code} 
-                      position={pos} 
+                      position={pos}
+                      status={status}
                       candidateCount={count}
+                      selectedCandidatesNames={selectedNames}
                       onClick={() => {
                         setSelectedPositionId(pos.code);
                         setCurrentView('position_detail');
