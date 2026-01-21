@@ -163,20 +163,11 @@ const parseCandidates = (data: any[]): Candidate[] => {
         nominativo = `${lastName} ${firstName}`;
       }
 
-      // Parse Applied Positions
-      // UPDATED LOGIC: 
-      // 1. Remove [content] (e.g. [READING])
-      // 2. Split by comma, semicolon, newline or MULTIPLE spaces (but NOT single spaces inside codes if avoidable, though codes usually don't have spaces)
-      // 3. DO NOT split by hyphen '-' because codes like GCAP-D12 use hyphens.
+      // Parse Applied Positions - SIMPLIFIED LOGIC
+      // We do NOT split by separators here anymore because of complex separators (e.g. " - ").
+      // We just store the raw string. The matching logic is now in handleDataLoaded using the known Position list (Reverse Lookup).
       const rawApplied = String(row[poSegnalateKey] || "");
       
-      const cleanApplied = rawApplied.replace(/\[.*?\]/g, ' '); // Remove metadata in brackets
-      
-      const codes = cleanApplied
-        .split(/[,;\n]+/) // Split by separators
-        .map(s => s.trim())
-        .filter(s => s.length > 2); // Filter out tiny noise
-
       map.set(id, {
         id,
         nominativo,
@@ -194,7 +185,7 @@ const parseCandidates = (data: any[]): Candidate[] => {
         mixDescription: String(row[mixKey] || "").trim(),
         languages: [],
         rawAppliedString: rawApplied,
-        appliedPositionCodes: [...new Set(codes)] as string[],
+        appliedPositionCodes: [], // Will be populated in handleDataLoaded via reverse matching
         originalData: row,
       });
     }
@@ -611,10 +602,10 @@ const CandidatesMatrixView = ({
       <table className="w-full border-collapse text-xs">
         <thead>
           <tr>
-            <th className="sticky left-0 bg-slate-50 border border-slate-200 p-2 z-20 w-80 text-left shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+            <th className="sticky left-0 bg-slate-50 border border-slate-200 p-2 z-20 w-80 min-w-[20rem] text-left shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
               Candidate
             </th>
-            <th className="bg-slate-50 border border-slate-200 p-2 min-w-[140px] z-10 sticky left-80 shadow-md">
+            <th className="bg-slate-50 border border-slate-200 p-2 w-[140px] z-10 sticky left-80 shadow-md">
               Status
             </th>
             {activeReqs.map((req, i) => (
@@ -636,7 +627,7 @@ const CandidatesMatrixView = ({
 
             return (
               <tr key={c.id} className={`hover:bg-slate-50 ${isNonCompatible ? 'bg-gray-100 opacity-60 grayscale' : ''}`}>
-                <td className={`sticky left-0 border border-slate-200 p-2 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] ${isNonCompatible ? 'bg-gray-100' : 'bg-white hover:bg-slate-50'}`}>
+                <td className={`sticky left-0 border border-slate-200 p-2 w-80 min-w-[20rem] shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] ${isNonCompatible ? 'bg-gray-100' : 'bg-white hover:bg-slate-50'}`}>
                   <div className="text-[10px] text-slate-500 font-mono uppercase truncate mb-1" title={`${c.rank} ${c.role} ${c.category} ${c.specialty}`}>
                      {c.rank} {c.role} {c.category} {c.specialty}
                   </div>
@@ -650,7 +641,7 @@ const CandidatesMatrixView = ({
                   </div>
                   {isNonCompatible && <div className="text-[10px] text-red-600 font-bold mt-1">PROFILO NON COMPATIBILE</div>}
                 </td>
-                <td className={`border border-slate-200 p-2 sticky left-80 shadow-md ${isNonCompatible ? 'bg-gray-100' : 'bg-white'}`}>
+                <td className={`border border-slate-200 p-2 w-[140px] sticky left-80 shadow-md ${isNonCompatible ? 'bg-gray-100' : 'bg-white'}`}>
                    <select 
                       value={ev.status}
                       onChange={(e) => onUpdate({...ev, status: e.target.value as any})}
@@ -751,14 +742,16 @@ const WorksheetRow: React.FC<{
           {expanded ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
         </button>
         
-        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${isNonCompatible ? 'bg-gray-200 text-gray-500' : 'bg-slate-200 text-slate-600'}`}>
-          {candidate.firstName[0]}{candidate.lastName[0]}
-        </div>
-
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className={`font-medium truncate ${isNonCompatible ? 'text-gray-500 line-through' : 'text-slate-900'}`}>{candidate.nominativo}</span>
             <span className="text-xs px-1.5 py-0.5 bg-slate-100 rounded text-slate-600">{candidate.rank}</span>
+            
+            {/* Added Role/Cat/Spec Details inline */}
+            <span className="text-[10px] text-slate-500 font-mono uppercase bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100 truncate max-w-[300px]">
+               {candidate.role} {candidate.category} {candidate.specialty}
+            </span>
+
             {otherSelection && (
               <span className="text-xs px-1.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded flex items-center gap-1">
                  <AlertTriangle className="w-3 h-3" /> Selected Elsewhere
@@ -894,462 +887,21 @@ const WorksheetRow: React.FC<{
   );
 };
 
-// --- New Position Detail View Component ---
-
-const PositionDetailView = ({
-  position,
-  allCandidates,
-  evaluations,
-  allPositions,
-  onUpdate,
-  onBack,
-  onToggleReqVisibility,
-  onExport
-}: {
-  position: Position;
-  allCandidates: Candidate[];
-  evaluations: Record<string, Evaluation>;
-  allPositions: Position[];
-  onUpdate: (ev: Evaluation) => void;
-  onBack: () => void;
-  onToggleReqVisibility: (posCode: string, reqId: string) => void;
-  onExport: (pos: Position, cands: Candidate[], evals: Record<string, Evaluation>, allPos: Position[]) => void;
-}) => {
-  const [detailViewMode, setDetailViewMode] = useState<'list' | 'matrix'>('list');
-
-  // Logic previously inside the if block in RecruitmentApp
-  const relevantCandidates = useMemo(() => allCandidates.filter(c => {
-       return !!evaluations[`${position.code}_${c.id}`];
-  }), [allCandidates, evaluations, position.code]);
-
-  const candidatesForView = useMemo(() => {
-        if (detailViewMode === 'matrix') {
-             // Stable sort for Matrix
-             return [...relevantCandidates].sort((a, b) => a.nominativo.localeCompare(b.nominativo));
-        } else {
-             // Score/Status sort for List
-             return [...relevantCandidates].sort((a, b) => {
-                const evA = evaluations[`${position.code}_${a.id}`];
-                const evB = evaluations[`${position.code}_${b.id}`];
-                
-                const scoreStatus = (s: string) => {
-                    if (s === 'selected') return 3;
-                    if (s === 'reserve') return 2;
-                    if (s === 'pending') return 1;
-                    return 0; // rejected, non-compatible
-                };
-
-                const statusA = scoreStatus(evA.status);
-                const statusB = scoreStatus(evB.status);
-
-                if (statusA !== statusB) {
-                    return statusB - statusA;
-                }
-
-                // If status same, Sort by req match count
-                const activeReqs = position.requirements.filter(r => !r.hidden);
-                const scoreA = activeReqs.filter(r => evA.reqEvaluations[r.id] === 'yes').length;
-                const scoreB = activeReqs.filter(r => evB.reqEvaluations[r.id] === 'yes').length;
-                return scoreB - scoreA;
-             });
-        }
-    }, [relevantCandidates, evaluations, detailViewMode, position]);
-
-  return (
-      <div className="flex flex-col h-screen bg-white">
-        {/* Header */}
-        <header className="bg-white border-b border-slate-200 px-6 py-4 shadow-sm z-10">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-4">
-              <Button variant="secondary" onClick={onBack}>
-                <ChevronRight className="w-4 h-4 rotate-180 mr-1" /> Back
-              </Button>
-              <div>
-                <h1 className="text-xl font-bold text-slate-900">{position.title}</h1>
-                <div className="text-sm text-slate-500 flex gap-2">
-                  <span className="font-mono">{position.code}</span>
-                  <span>•</span>
-                  <span>{position.location}</span>
-                </div>
-              </div>
-            </div>
-            
-            <div className="flex items-center gap-4">
-               {/* View Toggle */}
-               <div className="flex bg-slate-100 p-1 rounded-lg">
-                 <button 
-                    onClick={() => setDetailViewMode('list')}
-                    className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${detailViewMode === 'list' ? 'bg-white shadow text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
-                 >
-                   <LayoutList className="w-4 h-4" /> List
-                 </button>
-                 <button 
-                    onClick={() => setDetailViewMode('matrix')}
-                    className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${detailViewMode === 'matrix' ? 'bg-white shadow text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
-                 >
-                   <TableIcon className="w-4 h-4" /> Matrix
-                 </button>
-               </div>
-
-               <div className="flex gap-2">
-                  <Button variant="secondary">
-                    <Upload className="w-4 h-4 mr-2" /> Job Desc
-                  </Button>
-                  <Button variant="primary" onClick={() => onExport(position, candidatesForView, evaluations, allPositions)}>
-                    <Download className="w-4 h-4 mr-2" /> Export
-                  </Button>
-               </div>
-            </div>
-          </div>
-          
-          {/* Position Metadata Grid */}
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2 text-xs bg-slate-50 p-2 rounded border border-slate-200">
-             {position.rankReq && <div><span className="text-slate-400 font-semibold block">Grade</span>{position.rankReq}</div>}
-             {position.englishReq && <div><span className="text-slate-400 font-semibold block">English</span>{position.englishReq}</div>}
-             {position.nosReq && <div><span className="text-slate-400 font-semibold block">NOS</span>{position.nosReq}</div>}
-             {position.catSpecQualReq && <div><span className="text-slate-400 font-semibold block">Cat/Spec</span>{position.catSpecQualReq}</div>}
-             {position.ofcn && <div><span className="text-slate-400 font-semibold block">OFCN</span>{position.ofcn}</div>}
-             {position.poInterest && <div><span className="text-slate-400 font-semibold block">Interest</span>{position.poInterest}</div>}
-          </div>
-        </header>
-
-        <div className="flex-1 overflow-hidden flex">
-           {/* Sidebar Info */}
-           <div className="w-80 border-r border-slate-200 bg-slate-50 p-6 overflow-y-auto hidden lg:block shrink-0">
-              <h3 className="font-bold text-slate-700 mb-4 uppercase text-xs tracking-wide">Requirements Manager</h3>
-              <p className="text-[10px] text-slate-500 mb-4">Click the eye icon to hide headers or irrelevant lines from the evaluation worksheet.</p>
-              
-              <div className="space-y-6">
-                <div>
-                  <h4 className="text-sm font-semibold text-blue-800 mb-2">Essential</h4>
-                  <ul className="space-y-2">
-                    {position.requirements.filter(r => r.type === 'essential').map(r => (
-                      <li key={r.id} className={`flex items-start gap-2 group ${r.hidden ? 'opacity-50' : ''}`}>
-                         <button 
-                            onClick={() => onToggleReqVisibility(position.code, r.id)}
-                            className="mt-0.5 text-slate-400 hover:text-blue-600 focus:outline-none"
-                         >
-                            {r.hidden ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                         </button>
-                         <span className={`text-xs leading-relaxed ${r.hidden ? 'text-slate-400 line-through decoration-slate-300' : 'text-slate-600'}`}>
-                           {r.text}
-                         </span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-                <div>
-                  <h4 className="text-sm font-semibold text-slate-700 mb-2">Desirable</h4>
-                   <ul className="space-y-2">
-                    {position.requirements.filter(r => r.type === 'desirable').map(r => (
-                       <li key={r.id} className={`flex items-start gap-2 group ${r.hidden ? 'opacity-50' : ''}`}>
-                         <button 
-                            onClick={() => onToggleReqVisibility(position.code, r.id)}
-                            className="mt-0.5 text-slate-400 hover:text-blue-600 focus:outline-none"
-                         >
-                            {r.hidden ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                         </button>
-                         <span className={`text-xs leading-relaxed ${r.hidden ? 'text-slate-400 line-through decoration-slate-300' : 'text-slate-500'}`}>
-                           {r.text}
-                         </span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-           </div>
-
-           {/* Main Work Area */}
-           <div className="flex-1 bg-slate-100 p-6 overflow-y-auto overflow-x-auto">
-              <div className={`${detailViewMode === 'list' ? 'max-w-4xl mx-auto' : 'min-w-[800px]'}`}>
-                {candidatesForView.length === 0 ? (
-                  <div className="text-center p-12 bg-white rounded-lg border border-slate-200 border-dashed text-slate-400">
-                    No candidates found for this position code.
-                  </div>
-                ) : (
-                  detailViewMode === 'list' ? (
-                    // List View: Use Ranked Candidates
-                    candidatesForView.map(c => (
-                      <WorksheetRow 
-                        key={c.id} 
-                        candidate={c} 
-                        position={position}
-                        evaluation={evaluations[`${position.code}_${c.id}`]!}
-                        otherSelection={getOtherSelectionInfo(c.id, position.code, evaluations, allPositions)}
-                        onUpdate={onUpdate}
-                      />
-                    ))
-                  ) : (
-                    // Matrix View: Use Stable Sorted Candidates
-                    <CandidatesMatrixView 
-                      candidates={candidatesForView}
-                      position={position}
-                      evaluations={evaluations}
-                      positions={allPositions}
-                      onUpdate={onUpdate}
-                    />
-                  )
-                )}
-              </div>
-           </div>
-        </div>
-      </div>
-  );
-};
-
-const CandidatesListView = ({ 
-  candidates, 
-  positions, 
-  evaluations,
-  onNavigateToPosition,
-  onOpenCandidateDetail
-}: { 
-  candidates: Candidate[], 
-  positions: Position[], 
-  evaluations: Record<string, Evaluation>,
-  onNavigateToPosition: (posId: string) => void,
-  onOpenCandidateDetail: (candidateId: string) => void
-}) => {
-  const [searchTerm, setSearchTerm] = useState("");
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-
-  const filtered = candidates.filter(c => 
-    c.nominativo.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    c.id.includes(searchTerm)
-  );
-
-  return (
-    <div className="flex flex-col h-full bg-slate-50">
-       <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-slate-800">Candidates Directory</h1>
-          <div className="relative w-64">
-             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-             <input 
-                type="text" 
-                placeholder="Search candidates..." 
-                className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-          </div>
-       </header>
-       <div className="p-8 overflow-y-auto">
-         <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-medium">
-                <tr>
-                  <th className="px-6 py-3">Matricola</th>
-                  <th className="px-6 py-3">Nominativo</th>
-                  <th className="px-6 py-3">Ente / NOS</th>
-                  <th className="px-6 py-3">Role Info</th>
-                  <th className="px-6 py-3">Applications</th>
-                  <th className="px-6 py-3"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filtered.map(c => (
-                  <React.Fragment key={c.id}>
-                    <tr 
-                      onClick={() => setExpandedId(expandedId === c.id ? null : c.id)}
-                      className={`hover:bg-slate-50 cursor-pointer transition-colors ${expandedId === c.id ? 'bg-blue-50/50' : ''}`}
-                    >
-                      <td className="px-6 py-3 font-mono text-slate-500">{c.id}</td>
-                      <td className="px-6 py-3">
-                        <div className="font-medium text-slate-900">{c.nominativo}</div>
-                        <div className="text-xs text-slate-500">{c.rank}</div>
-                      </td>
-                      <td className="px-6 py-3 text-xs">
-                        <div className="font-semibold text-slate-700">{c.serviceEntity || '-'}</div>
-                        {c.nosLevel && (
-                          <div className="text-slate-500 flex items-center gap-1 mt-1">
-                            <Shield className="w-3 h-3" /> {c.nosLevel} ({c.nosExpiry})
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-6 py-3 text-xs text-slate-600">
-                        <div>{c.role}</div>
-                        <div className="text-slate-400">{c.category} {c.specialty}</div>
-                      </td>
-                      <td className="px-6 py-3">
-                         <Badge color="blue">{c.appliedPositionCodes.length} Positions</Badge>
-                      </td>
-                      <td className="px-6 py-3 text-right">
-                        {expandedId === c.id ? <ChevronDown className="w-4 h-4 inline" /> : <ChevronRight className="w-4 h-4 inline" />}
-                      </td>
-                    </tr>
-                    {expandedId === c.id && (
-                      <tr className="bg-slate-50/50">
-                        <td colSpan={6} className="px-6 py-4">
-                           <div className="flex gap-4">
-                              <div className="w-1/3 space-y-2 p-3 bg-white rounded border border-slate-200">
-                                <h4 className="text-xs font-bold text-slate-500 uppercase mb-2">Details</h4>
-                                <div className="text-xs space-y-1">
-                                  <p><span className="font-semibold">Mix:</span> {c.mixDescription}</p>
-                                  <p><span className="font-semibold">Mandati:</span> {c.internationalMandates}</p>
-                                  <p><span className="font-semibold">Languages:</span> {c.languages.map(l => `${l.language} (${l.level})`).join(', ')}</p>
-                                </div>
-                                <div className="mt-4 pt-4 border-t border-slate-200">
-                                   <Button 
-                                      className="w-full justify-center" 
-                                      onClick={(e: any) => { e.stopPropagation(); onOpenCandidateDetail(c.id); }}
-                                   >
-                                      <User className="w-4 h-4" /> Apri Scheda Valutazione
-                                   </Button>
-                                </div>
-                              </div>
-                              <div className="flex-1 space-y-2 pl-4 border-l-2 border-blue-200">
-                                  <h4 className="text-xs font-bold text-slate-500 uppercase">Applied Positions</h4>
-                                  {c.appliedPositionCodes.map(code => {
-                                    const pos = positions.find(p => p.code.includes(code) || code.includes(p.code));
-                                    const ev = pos ? evaluations[`${pos.code}_${c.id}`] : null;
-                                    return (
-                                      <div key={code} className="flex items-center justify-between bg-white p-2 rounded border border-slate-200">
-                                        <div className="flex items-center gap-3">
-                                          <div className={`w-2 h-2 rounded-full ${pos ? 'bg-green-500' : 'bg-slate-300'}`}></div>
-                                          <div>
-                                            <p className="font-medium text-slate-700">{pos ? pos.title : `Unknown (${code})`}</p>
-                                            <p className="text-xs text-slate-500">{pos?.entity}</p>
-                                          </div>
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                          {ev && <span className="text-xs font-bold">{ev.status.toUpperCase()}</span>}
-                                          {pos && <Button variant="ghost" className="h-6 text-xs" onClick={(e: any) => { e.stopPropagation(); onNavigateToPosition(pos.code); }}>Go</Button>}
-                                        </div>
-                                      </div>
-                                    )
-                                  })}
-                              </div>
-                           </div>
-                        </td>
-                      </tr>
-                    )}
-                  </React.Fragment>
-                ))}
-              </tbody>
-            </table>
-         </div>
-       </div>
-    </div>
-  )
-}
-
-// --- Missing Components ---
-
-const FileUploadView = ({ onDataLoaded }: { onDataLoaded: (candidates: Candidate[], positions: Position[]) => void }) => {
-  const [candidatesFile, setCandidatesFile] = useState<File | null>(null);
-  const [positionsFile, setPositionsFile] = useState<File | null>(null);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const processFiles = async () => {
-    if (!candidatesFile || !positionsFile) return;
-    setIsProcessing(true);
-    setError(null);
-    
-    try {
-      // @ts-ignore
-      if (!window.XLSX) {
-        throw new Error("XLSX library not found. Please include it in your HTML.");
-      }
-      const XLSX = (window as any).XLSX;
-
-      const readFile = (file: File) => new Promise<any[]>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          try {
-            const data = new Uint8Array(e.target?.result as ArrayBuffer);
-            const workbook = XLSX.read(data, { type: 'array' });
-            const firstSheet = workbook.SheetNames[0];
-            const jsonData = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheet]);
-            resolve(jsonData);
-          } catch (err) {
-            reject(err);
-          }
-        };
-        reader.onerror = reject;
-        reader.readAsArrayBuffer(file);
-      });
-
-      const [candData, posData] = await Promise.all([
-        readFile(candidatesFile),
-        readFile(positionsFile)
-      ]);
-
-      const candidates = parseCandidates(candData);
-      const positions = parsePositions(posData);
-
-      onDataLoaded(candidates, positions);
-
-    } catch (err: any) {
-      setError(err.message || "Failed to process files");
-      setIsProcessing(false);
-    }
-  };
-
-  return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-      <div className="bg-white p-8 rounded-xl shadow-lg max-w-lg w-full border border-slate-200 text-center">
-        <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-6">
-          <Upload className="w-8 h-8" />
-        </div>
-        <h1 className="text-2xl font-bold text-slate-800 mb-2">Upload Data</h1>
-        <p className="text-slate-500 mb-8">Please upload both the Candidates and Positions Excel files to begin.</p>
-        
-        <div className="space-y-4 mb-8">
-           <div className={`border-2 border-dashed rounded-lg p-4 transition-colors ${candidatesFile ? 'border-green-500 bg-green-50' : 'border-slate-300 hover:border-blue-400'}`}>
-             <label className="flex items-center gap-3 cursor-pointer">
-               <FileSpreadsheet className={`w-6 h-6 ${candidatesFile ? 'text-green-600' : 'text-slate-400'}`} />
-               <div className="flex-1 text-left">
-                  <span className="block font-medium text-sm text-slate-700">{candidatesFile ? candidatesFile.name : "Select Candidates File"}</span>
-                  <span className="text-xs text-slate-400">.xlsx, .xls</span>
-               </div>
-               <input type="file" accept=".xlsx,.xls" className="hidden" onChange={(e) => setCandidatesFile(e.target.files?.[0] || null)} />
-               {candidatesFile && <Check className="w-5 h-5 text-green-600" />}
-             </label>
-           </div>
-
-           <div className={`border-2 border-dashed rounded-lg p-4 transition-colors ${positionsFile ? 'border-green-500 bg-green-50' : 'border-slate-300 hover:border-blue-400'}`}>
-             <label className="flex items-center gap-3 cursor-pointer">
-               <Briefcase className={`w-6 h-6 ${positionsFile ? 'text-green-600' : 'text-slate-400'}`} />
-               <div className="flex-1 text-left">
-                  <span className="block font-medium text-sm text-slate-700">{positionsFile ? positionsFile.name : "Select Positions File"}</span>
-                  <span className="text-xs text-slate-400">.xlsx, .xls</span>
-               </div>
-               <input type="file" accept=".xlsx,.xls" className="hidden" onChange={(e) => setPositionsFile(e.target.files?.[0] || null)} />
-               {positionsFile && <Check className="w-5 h-5 text-green-600" />}
-             </label>
-           </div>
-        </div>
-
-        {error && (
-          <div className="mb-6 p-3 bg-red-50 text-red-600 text-sm rounded flex items-center gap-2 justify-center">
-             <AlertCircle className="w-4 h-4" /> {error}
-          </div>
-        )}
-
-        <Button 
-          className="w-full justify-center py-3 text-base" 
-          disabled={!candidatesFile || !positionsFile || isProcessing}
-          onClick={processFiles}
-        >
-          {isProcessing ? "Processing..." : "Start Import"}
-        </Button>
-      </div>
-    </div>
-  );
-};
-
 const PositionCard: React.FC<{ 
   position: Position; 
   status: PositionStatus; 
   candidateCount: number; 
   selectedCandidatesNames: string[];
+  selectedCandidatesDetails: Candidate[]; // Added for detailed view
+  candidatesList: Candidate[]; // Added for tooltip
   onClick: () => void;
 }> = ({ 
   position, 
   status, 
   candidateCount, 
-  selectedCandidatesNames,
+  selectedCandidatesNames, 
+  selectedCandidatesDetails,
+  candidatesList,
   onClick 
 }) => {
   const statusColors = {
@@ -1384,9 +936,20 @@ const PositionCard: React.FC<{
         <div className="space-y-2 text-xs text-slate-600">
            <div className="flex justify-between border-b border-slate-100 pb-1">
              <span className="text-slate-400">Selected</span>
-             <span className={`font-medium ${selectedCandidatesNames.length > 0 ? 'text-green-700' : 'text-slate-400 italic'}`}>
-               {selectedCandidatesNames.length > 0 ? selectedCandidatesNames.join(', ') : 'None'}
-             </span>
+             <div className="text-right">
+                {selectedCandidatesDetails.length > 0 ? (
+                   selectedCandidatesDetails.map(c => (
+                      <div key={c.id}>
+                         <div className="font-bold text-green-700">{c.nominativo}</div>
+                         <div className="text-[10px] text-green-600 font-mono">
+                            {c.rank} • {c.role} • {c.category} • {c.specialty}
+                         </div>
+                      </div>
+                   ))
+                ) : (
+                   <span className="text-slate-400 italic">None</span>
+                )}
+             </div>
            </div>
            <div className="flex justify-between border-b border-slate-100 pb-1">
              <span className="text-slate-400">Grade</span>
@@ -1400,9 +963,401 @@ const PositionCard: React.FC<{
       </div>
       <div className="bg-slate-50 px-5 py-3 border-t border-slate-100 flex items-center justify-between text-sm">
          <span className="text-slate-500">Candidates</span>
-         <div className="flex items-center gap-2">
+         <div 
+            className="flex items-center gap-2 group relative" 
+            title={candidatesList.map(c => `${c.rank} ${c.role} ${c.category} ${c.specialty} - ${c.nominativo}`).join('\n')}
+         >
            <Users className="w-4 h-4 text-slate-400" />
            <span className="font-bold text-slate-700">{candidateCount}</span>
+           
+           {/* Custom Tooltip via CSS */}
+           <div className="hidden group-hover:block absolute bottom-full right-0 mb-2 w-72 bg-slate-800 text-white text-[10px] p-2 rounded shadow-lg z-50 whitespace-pre-wrap max-h-64 overflow-y-auto">
+              <div className="font-bold border-b border-slate-600 pb-1 mb-1 text-slate-300">Papabili ({candidateCount})</div>
+              {candidatesList.map(c => (
+                 <div key={c.id} className="mb-1 border-b border-slate-700 pb-1 last:border-0">
+                    <span className="text-slate-400">{c.rank}</span> <span className="font-semibold">{c.nominativo}</span><br/>
+                    <span className="text-slate-500 italic">{c.role} {c.category} {c.specialty}</span>
+                 </div>
+              ))}
+           </div>
+         </div>
+      </div>
+    </div>
+  );
+};
+
+// --- New Components ---
+
+const FileUploadView = ({ onDataLoaded }: { onDataLoaded: (c: Candidate[], p: Position[]) => void }) => {
+  const [candidatesFile, setCandidatesFile] = useState<File | null>(null);
+  const [positionsFile, setPositionsFile] = useState<File | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const processFiles = async () => {
+    if (!candidatesFile || !positionsFile) return;
+    setIsProcessing(true);
+    setError(null);
+
+    try {
+      // @ts-ignore
+      if (!(window as any).XLSX) {
+        throw new Error("XLSX library not loaded. Please ensure script is included.");
+      }
+      const XLSX = (window as any).XLSX;
+
+      const readExcel = (file: File) => {
+        return new Promise<any[]>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            try {
+              const data = new Uint8Array(e.target?.result as ArrayBuffer);
+              const workbook = XLSX.read(data, { type: 'array' });
+              const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+              const jsonData = XLSX.utils.sheet_to_json(firstSheet);
+              resolve(jsonData);
+            } catch (err) {
+              reject(err);
+            }
+          };
+          reader.readAsArrayBuffer(file);
+        });
+      };
+
+      const [candData, posData] = await Promise.all([
+        readExcel(candidatesFile),
+        readExcel(positionsFile)
+      ]);
+
+      const parsedCandidates = parseCandidates(candData);
+      const parsedPositions = parsePositions(posData);
+
+      onDataLoaded(parsedCandidates, parsedPositions);
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || "Failed to process files");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col items-center justify-center h-screen bg-slate-50 p-4">
+      <div className="bg-white p-8 rounded-lg shadow-md max-w-md w-full text-center">
+        <h1 className="text-2xl font-bold text-slate-800 mb-6">Setup Recruitment Data</h1>
+        
+        <div className="space-y-4 mb-6">
+          <div className="border-2 border-dashed border-slate-300 rounded-lg p-6 hover:bg-slate-50 transition-colors relative">
+            <input 
+              type="file" 
+              accept=".xlsx,.xls" 
+              onChange={(e) => setPositionsFile(e.target.files?.[0] || null)}
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+            />
+            <FileSpreadsheet className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+            <p className="text-sm font-medium text-slate-600">
+              {positionsFile ? positionsFile.name : "Upload Positions Excel"}
+            </p>
+          </div>
+
+          <div className="border-2 border-dashed border-slate-300 rounded-lg p-6 hover:bg-slate-50 transition-colors relative">
+             <input 
+              type="file" 
+              accept=".xlsx,.xls" 
+              onChange={(e) => setCandidatesFile(e.target.files?.[0] || null)}
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+            />
+            <Users className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+            <p className="text-sm font-medium text-slate-600">
+              {candidatesFile ? candidatesFile.name : "Upload Candidates Excel"}
+            </p>
+          </div>
+        </div>
+
+        {error && <div className="text-red-500 text-sm mb-4">{error}</div>}
+
+        <Button 
+          onClick={processFiles} 
+          disabled={!candidatesFile || !positionsFile || isProcessing}
+          className="w-full justify-center"
+        >
+          {isProcessing ? "Processing..." : "Start Evaluation"}
+        </Button>
+      </div>
+    </div>
+  );
+};
+
+const PositionDetailView = ({
+  position,
+  allCandidates,
+  evaluations,
+  allPositions,
+  onUpdate,
+  onBack,
+  onToggleReqVisibility,
+  onExport
+}: {
+  position: Position;
+  allCandidates: Candidate[];
+  evaluations: Record<string, Evaluation>;
+  allPositions: Position[];
+  onUpdate: (ev: Evaluation) => void;
+  onBack: () => void;
+  onToggleReqVisibility: (posCode: string, reqId: string) => void;
+  onExport: (p: Position, c: Candidate[], e: Record<string, Evaluation>, all: Position[]) => void;
+}) => {
+  const [viewMode, setViewMode] = useState<'list' | 'matrix'>('list');
+  const [filter, setFilter] = useState<'all' | 'pending' | 'selected'>('all');
+
+  const candidates = useMemo(() => {
+    return allCandidates.filter(c => !!evaluations[`${position.code}_${c.id}`]);
+  }, [allCandidates, evaluations, position.code]);
+
+  const filteredCandidates = candidates.filter(c => {
+    if (filter === 'all') return true;
+    const status = evaluations[`${position.code}_${c.id}`]?.status;
+    if (filter === 'pending') return status === 'pending';
+    if (filter === 'selected') return status === 'selected';
+    return true;
+  });
+
+  return (
+    <div className="flex flex-col h-screen bg-slate-50">
+      <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between sticky top-0 z-30">
+        <div className="flex items-center gap-4">
+          <Button variant="secondary" onClick={onBack}>
+             <ChevronRight className="w-4 h-4 rotate-180 mr-1" /> Back
+          </Button>
+          <div>
+            <h1 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+               <span className="font-mono text-sm bg-slate-100 px-2 py-1 rounded text-slate-500">{position.code}</span>
+               {position.title}
+            </h1>
+            <p className="text-sm text-slate-500">{position.entity} • {position.location}</p>
+          </div>
+        </div>
+        
+        <div className="flex items-center gap-3">
+           <div className="flex bg-slate-100 rounded p-1">
+              <button 
+                onClick={() => setViewMode('list')}
+                className={`p-1.5 rounded ${viewMode === 'list' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
+              >
+                <LayoutList className="w-4 h-4" />
+              </button>
+              <button 
+                onClick={() => setViewMode('matrix')}
+                className={`p-1.5 rounded ${viewMode === 'matrix' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
+              >
+                <TableIcon className="w-4 h-4" />
+              </button>
+           </div>
+           
+           <div className="h-6 w-px bg-slate-200 mx-2"></div>
+
+           <Button variant="secondary" onClick={() => onExport(position, candidates, evaluations, allPositions)}>
+             <Download className="w-4 h-4 mr-2" /> Export
+           </Button>
+        </div>
+      </header>
+      
+      <div className="flex-1 overflow-hidden flex">
+         {/* Sidebar for Requirements (Restored) */}
+         <div className="w-80 flex-shrink-0 bg-slate-50 border-r border-slate-200 p-6 overflow-y-auto hidden lg:block">
+            <h3 className="text-xs font-bold text-slate-500 uppercase mb-4 flex items-center gap-2">
+               <Filter className="w-3 h-3" /> Manage Visibility
+            </h3>
+            <div className="space-y-4">
+               <div>
+                  <div className="text-xs font-semibold text-blue-700 mb-2">Essential</div>
+                  <div className="space-y-2">
+                     {position.requirements.filter(r => r.type === 'essential').map(req => (
+                        <button
+                           key={req.id}
+                           onClick={() => onToggleReqVisibility(position.code, req.id)}
+                           className={`w-full flex items-start gap-2 text-left p-2 rounded text-xs transition-colors ${!req.hidden ? 'bg-white shadow-sm text-slate-700' : 'text-slate-400 hover:bg-slate-100'}`}
+                        >
+                           {req.hidden ? <EyeOff className="w-3 h-3 mt-0.5 shrink-0" /> : <Eye className="w-3 h-3 mt-0.5 shrink-0" />}
+                           <span className={req.hidden ? 'line-through' : ''}>{req.text}</span>
+                        </button>
+                     ))}
+                  </div>
+               </div>
+               <div>
+                  <div className="text-xs font-semibold text-slate-600 mb-2">Desirable</div>
+                  <div className="space-y-2">
+                     {position.requirements.filter(r => r.type === 'desirable').map(req => (
+                        <button
+                           key={req.id}
+                           onClick={() => onToggleReqVisibility(position.code, req.id)}
+                           className={`w-full flex items-start gap-2 text-left p-2 rounded text-xs transition-colors ${!req.hidden ? 'bg-white shadow-sm text-slate-700' : 'text-slate-400 hover:bg-slate-100'}`}
+                        >
+                           {req.hidden ? <EyeOff className="w-3 h-3 mt-0.5 shrink-0" /> : <Eye className="w-3 h-3 mt-0.5 shrink-0" />}
+                           <span className={req.hidden ? 'line-through' : ''}>{req.text}</span>
+                        </button>
+                     ))}
+                  </div>
+               </div>
+            </div>
+         </div>
+
+         {/* Main Content */}
+         <div className="flex-1 flex flex-col overflow-hidden bg-slate-100">
+            {/* Toolbar */}
+            <div className="px-6 py-3 bg-white border-b border-slate-200 flex items-center justify-between shrink-0">
+               <div className="flex gap-2">
+                  {['all', 'pending', 'selected'].map(f => (
+                    <button
+                      key={f}
+                      onClick={() => setFilter(f as any)}
+                      className={`px-3 py-1 text-xs font-medium rounded-full border ${filter === f ? 'bg-blue-50 text-blue-600 border-blue-200' : 'bg-white text-slate-600 border-slate-200'}`}
+                    >
+                      {f.charAt(0).toUpperCase() + f.slice(1)}
+                    </button>
+                  ))}
+               </div>
+               <div className="text-xs text-slate-500">
+                  {filteredCandidates.length} Candidates
+               </div>
+            </div>
+
+            {/* List/Matrix Area */}
+            <div className="flex-1 overflow-auto p-6">
+               {viewMode === 'list' ? (
+                 <div className="max-w-4xl mx-auto">
+                    {filteredCandidates.map(c => (
+                       <WorksheetRow 
+                          key={c.id} 
+                          candidate={c}
+                          position={position}
+                          evaluation={evaluations[`${position.code}_${c.id}`]}
+                          otherSelection={getOtherSelectionInfo(c.id, position.code, evaluations, allPositions)}
+                          onUpdate={onUpdate}
+                       />
+                    ))}
+                 </div>
+               ) : (
+                  <CandidatesMatrixView 
+                     candidates={filteredCandidates}
+                     position={position}
+                     evaluations={evaluations}
+                     positions={allPositions}
+                     onUpdate={onUpdate}
+                  />
+               )}
+            </div>
+         </div>
+      </div>
+    </div>
+  );
+};
+
+const CandidatesListView = ({
+  candidates,
+  positions,
+  evaluations,
+  onNavigateToPosition,
+  onOpenCandidateDetail
+}: {
+  candidates: Candidate[];
+  positions: Position[];
+  evaluations: Record<string, Evaluation>;
+  onNavigateToPosition: (code: string) => void;
+  onOpenCandidateDetail: (id: string) => void;
+}) => {
+  const [search, setSearch] = useState("");
+
+  const filtered = useMemo(() => {
+    const s = search.toLowerCase();
+    return candidates.filter(c => 
+       c.nominativo.toLowerCase().includes(s) ||
+       c.id.includes(s) ||
+       c.rank.toLowerCase().includes(s)
+    );
+  }, [candidates, search]);
+
+  return (
+    <div className="flex flex-col h-full bg-slate-50">
+      <header className="bg-white border-b border-slate-200 px-8 py-4">
+        <h1 className="text-2xl font-bold text-slate-800 mb-4">Candidates Directory</h1>
+        <div className="relative max-w-md">
+           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+           <input 
+              type="text" 
+              placeholder="Search candidates..." 
+              className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+           />
+        </div>
+      </header>
+
+      <div className="flex-1 overflow-y-auto p-8">
+         <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
+            <table className="w-full text-left text-sm">
+               <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase text-xs">
+                  <tr>
+                     <th className="px-6 py-3">Candidate</th>
+                     <th className="px-6 py-3">Rank / Role</th>
+                     <th className="px-6 py-3">Entity</th>
+                     <th className="px-6 py-3">Applications</th>
+                     <th className="px-6 py-3 text-right">Action</th>
+                  </tr>
+               </thead>
+               <tbody className="divide-y divide-slate-100">
+                  {filtered.map(c => {
+                     // Find applications
+                     const apps = positions.filter(p => !!evaluations[`${p.code}_${c.id}`]);
+                     
+                     return (
+                        <tr key={c.id} className="hover:bg-slate-50 transition-colors">
+                           <td className="px-6 py-4">
+                              <div className="font-bold text-slate-800">{c.nominativo}</div>
+                              <div className="text-xs text-slate-500 font-mono">{c.id}</div>
+                           </td>
+                           <td className="px-6 py-4">
+                              <div className="text-slate-700">{c.rank}</div>
+                              <div className="text-xs text-slate-500">{c.role} {c.category}</div>
+                           </td>
+                           <td className="px-6 py-4 text-slate-600">
+                              {c.serviceEntity}
+                           </td>
+                           <td className="px-6 py-4">
+                              <div className="flex flex-wrap gap-1">
+                                 {apps.map(p => {
+                                    const ev = evaluations[`${p.code}_${c.id}`];
+                                    const statusColor = ev.status === 'selected' ? 'bg-green-100 text-green-700 border-green-200' :
+                                                      ev.status === 'rejected' ? 'bg-red-50 text-red-700 border-red-100' :
+                                                      'bg-slate-100 text-slate-600 border-slate-200';
+                                    return (
+                                       <button 
+                                          key={p.code}
+                                          onClick={() => onNavigateToPosition(p.code)}
+                                          className={`text-[10px] px-1.5 py-0.5 rounded border ${statusColor} hover:opacity-80`}
+                                       >
+                                          {p.code}
+                                       </button>
+                                    )
+                                 })}
+                                 {apps.length === 0 && <span className="text-slate-400 italic text-xs">No applications</span>}
+                              </div>
+                           </td>
+                           <td className="px-6 py-4 text-right">
+                              <Button variant="secondary" className="text-xs py-1 h-8" onClick={() => onOpenCandidateDetail(c.id)}>
+                                 View Profile
+                              </Button>
+                           </td>
+                        </tr>
+                     )
+                  })}
+               </tbody>
+            </table>
+            {filtered.length === 0 && (
+               <div className="p-8 text-center text-slate-500">
+                  No candidates found matching your search.
+               </div>
+            )}
          </div>
       </div>
     </div>
@@ -1510,24 +1465,39 @@ const RecruitmentApp = () => {
     // Initialize empty evaluations for all matches
     const evaluations: Record<string, Evaluation> = { ...appData.evaluations };
     
-    candidates.forEach(cand => {
-      // Find matches based on fuzzy code matching
-      cand.appliedPositionCodes.forEach(code => {
-        // Try to find the exact position code
-        const pos = positions.find(p => p.code.includes(code) || code.includes(p.code));
-        if (pos) {
-           const key = `${pos.code}_${cand.id}`;
-           if (!evaluations[key]) {
-             evaluations[key] = {
-               candidateId: cand.id,
-               positionId: pos.code,
-               reqEvaluations: {},
-               notes: "",
-               status: 'pending'
-             };
-           }
-        }
-      });
+    // REVERSE LOOKUP LOGIC
+    // Instead of trusting the messy split string from candidates,
+    // we iterate through all known VALID positions and check if they exist 
+    // in the candidate's raw application string.
+    
+    // First, clear any previously parsed codes to be safe
+    candidates.forEach(c => c.appliedPositionCodes = []);
+
+    positions.forEach(pos => {
+       const cleanPosCode = pos.code.trim().toUpperCase();
+       if (cleanPosCode.length < 2) return; // Skip tiny invalid codes
+
+       candidates.forEach(cand => {
+          const rawApp = cand.rawAppliedString.toUpperCase();
+          
+          // Check if the valid position code exists in the candidate's messy string
+          if (rawApp.includes(cleanPosCode)) {
+             // Link them
+             cand.appliedPositionCodes.push(pos.code);
+
+             // Create evaluation entry if missing
+             const key = `${pos.code}_${cand.id}`;
+             if (!evaluations[key]) {
+               evaluations[key] = {
+                 candidateId: cand.id,
+                 positionId: pos.code,
+                 reqEvaluations: {},
+                 notes: "",
+                 status: 'pending'
+               };
+             }
+          }
+       });
     });
 
     setAppData({
@@ -1540,14 +1510,35 @@ const RecruitmentApp = () => {
   };
 
   const updateEvaluation = (ev: Evaluation) => {
-    setAppData(prev => ({
-      ...prev,
-      evaluations: {
-        ...prev.evaluations,
-        [`${ev.positionId}_${ev.candidateId}`]: ev
-      },
-      lastUpdated: Date.now()
-    }));
+    setAppData(prev => {
+      const newEvaluations = { ...prev.evaluations };
+
+      // SINGLE SELECTION LOGIC:
+      // If setting this candidate to SELECTED, find any other candidate for this position
+      // who is currently SELECTED and set them to PENDING.
+      if (ev.status === 'selected') {
+         Object.values(newEvaluations).forEach((val) => {
+            const existingEv = val as Evaluation;
+            if (existingEv.positionId === ev.positionId && existingEv.candidateId !== ev.candidateId && existingEv.status === 'selected') {
+               // Clone the object to ensure React state updates correctly, 
+               // though strictly speaking we are already working on a shallow copy of the dictionary
+               newEvaluations[`${existingEv.positionId}_${existingEv.candidateId}`] = {
+                  ...existingEv,
+                  status: 'pending' // Revert to pending
+               };
+            }
+         });
+      }
+
+      // Update the target evaluation
+      newEvaluations[`${ev.positionId}_${ev.candidateId}`] = ev;
+
+      return {
+        ...prev,
+        evaluations: newEvaluations,
+        lastUpdated: Date.now()
+      };
+    });
   };
 
   const toggleRequirementVisibility = (positionCode: string, reqId: string) => {
@@ -1587,8 +1578,14 @@ const RecruitmentApp = () => {
   }, [appData.positions]);
 
   const filteredPositions = useMemo(() => {
+    const lowerSearch = searchTerm.toLowerCase();
     return appData.positions.filter(p => {
-      const matchesSearch = p.title.toLowerCase().includes(searchTerm.toLowerCase()) || p.code.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesSearch = 
+         p.title.toLowerCase().includes(lowerSearch) || 
+         p.code.toLowerCase().includes(lowerSearch) ||
+         p.entity.toLowerCase().includes(lowerSearch) || // Added entity search
+         p.location.toLowerCase().includes(lowerSearch); // Added location search
+
       const matchesEnte = filterEnte === 'ALL' || p.entity === filterEnte;
       
       const status = getPositionStatus(p, appData.evaluations);
@@ -1726,15 +1723,17 @@ const RecruitmentApp = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                 {filteredPositions.map(pos => {
                   // Count candidates for this pos
-                  const count = appData.candidates.filter(c => 
+                  const relevantCands = appData.candidates.filter(c => 
                      !!appData.evaluations[`${pos.code}_${c.id}`]
-                  ).length;
+                  );
+                  const count = relevantCands.length;
                   const status = getPositionStatus(pos, appData.evaluations);
                   
                   // Get selected candidates names
-                  const selectedNames = appData.candidates
-                    .filter(c => appData.evaluations[`${pos.code}_${c.id}`]?.status === 'selected')
-                    .map(c => c.nominativo);
+                  const selectedCands = appData.candidates
+                    .filter(c => appData.evaluations[`${pos.code}_${c.id}`]?.status === 'selected');
+                  
+                  const selectedNames = selectedCands.map(c => c.nominativo);
 
                   return (
                     <PositionCard 
@@ -1743,6 +1742,8 @@ const RecruitmentApp = () => {
                       status={status}
                       candidateCount={count}
                       selectedCandidatesNames={selectedNames}
+                      selectedCandidatesDetails={selectedCands}
+                      candidatesList={relevantCands}
                       onClick={() => {
                         setSelectedPositionId(pos.code);
                         setCurrentView('position_detail');
