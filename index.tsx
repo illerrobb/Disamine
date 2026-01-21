@@ -26,7 +26,8 @@ import {
   LayoutList,
   Table as TableIcon,
   AlertTriangle,
-  Ban
+  Ban,
+  User
 } from "lucide-react";
 
 // --- Types ---
@@ -104,7 +105,7 @@ type PositionStatus = 'todo' | 'inprogress' | 'completed';
 
 // --- Helper: Excel Parsing Logic ---
 
-const normalizeHeader = (h: string) => h?.toString().trim().toUpperCase() || "";
+const normalizeHeader = (h: string) => h?.toString().trim().toUpperCase().replace(/\s+/g, ' ') || "";
 
 const findKey = (keys: string[], ...searchTerms: string[]) => {
   return keys.find(k => {
@@ -120,31 +121,34 @@ const parseCandidates = (data: any[]): Candidate[] => {
     const keys = Object.keys(row);
     
     // Core Identity
-    const matricolaKey = findKey(keys, "MATRICOLA");
-    const nominativoKey = findKey(keys, "NOMINATIVO");
-    const cognomeKey = findKey(keys, "COGNOME");
-    const nomeKey = findKey(keys, "NOME");
-    const gradoKey = findKey(keys, "GRADO");
+    const matricolaKey = findKey(keys, "MATRICOLA", "EMPLOYEE ID", "ID");
+    const nominativoKey = findKey(keys, "NOMINATIVO", "FULL NAME", "COGNOME E NOME");
+    const cognomeKey = findKey(keys, "COGNOME", "SURNAME");
+    const nomeKey = findKey(keys, "NOME", "NAME");
+    const gradoKey = findKey(keys, "GRADO", "RANK");
     
     // Professional Details
-    const ruoloKey = findKey(keys, "RUOLO");
-    const catKey = keys.find(k => normalizeHeader(k) === "CATEGORIA" || normalizeHeader(k) === "CAT" || normalizeHeader(k).startsWith("CAT."));
+    const ruoloKey = findKey(keys, "RUOLO", "ROLE");
+    const catKey = keys.find(k => {
+       const n = normalizeHeader(k);
+       return n === "CATEGORIA" || n === "CAT" || n.startsWith("CAT.") || n === "CATEGORY";
+    });
     const specKey = findKey(keys, "SPECIALIT", "SPEC");
-    const enteServizioKey = findKey(keys, "ENTE DI SERVIZIO", "ENTE SERVIZIO", "REPARTO");
+    const enteServizioKey = findKey(keys, "ENTE DI SERVIZIO", "ENTE SERVIZIO", "REPARTO", "UNIT", "SEDE");
     
     // NOS Details
-    const nosLivelloKey = findKey(keys, "LIVELLO NOS");
-    const nosQualKey = findKey(keys, "QUALIFICA NOS");
-    const nosScadenzaKey = findKey(keys, "SCADENZA", "RILASCIO");
+    const nosLivelloKey = findKey(keys, "LIVELLO NOS", "NOS LEVEL");
+    const nosQualKey = findKey(keys, "QUALIFICA NOS", "NOS QUALIFICATION");
+    const nosScadenzaKey = findKey(keys, "SCADENZA", "RILASCIO", "EXPIRY");
 
     // History
-    const mandatiKey = findKey(keys, "MANDATI", "INTERNAZIONALI");
+    const mandatiKey = findKey(keys, "MANDATI", "INTERNAZIONALI", "MANDATES");
     const mixKey = findKey(keys, "DESCRIZIONE MIX", "MIX", "IMPIEGO");
 
     // Language & Applications
-    const linguaKey = findKey(keys, "LINGUA");
-    const livelloKey = findKey(keys, "LIVELLO", "ACCERT");
-    const poSegnalateKey = findKey(keys, "SEGNALATE", "POSIZIONI", "CANDIDATURE");
+    const linguaKey = findKey(keys, "LINGUA", "LANGUAGE");
+    const livelloKey = findKey(keys, "LIVELLO", "ACCERT", "LEVEL");
+    const poSegnalateKey = findKey(keys, "SEGNALATE", "POSIZIONI", "CANDIDATURE", "APPLIED", "PREFERENCES");
 
     if (!matricolaKey || !row[matricolaKey]) return;
 
@@ -160,8 +164,18 @@ const parseCandidates = (data: any[]): Candidate[] => {
       }
 
       // Parse Applied Positions
+      // UPDATED LOGIC: 
+      // 1. Remove [content] (e.g. [READING])
+      // 2. Split by comma, semicolon, newline or MULTIPLE spaces (but NOT single spaces inside codes if avoidable, though codes usually don't have spaces)
+      // 3. DO NOT split by hyphen '-' because codes like GCAP-D12 use hyphens.
       const rawApplied = String(row[poSegnalateKey] || "");
-      const codes = rawApplied.split(/[\s\-]+/).filter(s => s.length > 3 && /[A-Z0-9]/.test(s));
+      
+      const cleanApplied = rawApplied.replace(/\[.*?\]/g, ' '); // Remove metadata in brackets
+      
+      const codes = cleanApplied
+        .split(/[,;\n]+/) // Split by separators
+        .map(s => s.trim())
+        .filter(s => s.length > 2); // Filter out tiny noise
 
       map.set(id, {
         id,
@@ -201,21 +215,21 @@ const parsePositions = (data: any[]): Position[] => {
   return data.map((row) => {
     const keys = Object.keys(row);
     
-    const codeKey = findKey(keys, "CODICE", "POSIZIONE");
+    const codeKey = findKey(keys, "CODICE", "POSIZIONE", "JOB ID", "REF");
     // SEDE corresponds to Entity
-    const sedeKey = findKey(keys, "SEDE", "ENTE", "STRUTTURA", "COMANDO");
+    const sedeKey = findKey(keys, "SEDE", "ENTE", "STRUTTURA", "COMANDO", "DIVISION", "AREA");
     const jobTitleKey = findKey(keys, "JOB TITLE", "TITOLO", "DENOMINAZIONE");
-    const locationKey = findKey(keys, "LUOGO", "LOCALITA", "NAZIONE");
-    const reqKey = findKey(keys, "REQUISITI", "CRITERIA", "COMPETENZE");
+    const locationKey = findKey(keys, "LUOGO", "LOCALITA", "NAZIONE", "LOCATION");
+    const reqKey = findKey(keys, "REQUISITI", "CRITERIA", "COMPETENZE", "REQUIREMENTS");
 
     // Specific Fields
     const ingleseKey = findKey(keys, "INGLESE", "ENGLISH");
-    const nosKey = keys.find(k => normalizeHeader(k) === "NOS"); // Exact match preferred
+    const nosKey = keys.find(k => normalizeHeader(k) === "NOS" || normalizeHeader(k).includes("SECURITY CLEARANCE"));
     const gradoKey = findKey(keys, "GRADO", "RANK");
     const catSpecKey = findKey(keys, "CAT", "SPEC", "QUAL", "CATEGORIA");
     const ofcnKey = findKey(keys, "OFCN");
-    const interesseKey = findKey(keys, "INTERESSE");
-    const titolareKey = findKey(keys, "TITOLARE");
+    const interesseKey = findKey(keys, "INTERESSE", "INTEREST");
+    const titolareKey = findKey(keys, "TITOLARE", "INCUMBENT");
 
     if (!codeKey || !row[codeKey]) return null;
 
@@ -348,6 +362,208 @@ const Badge = ({ children, color = 'blue' }: any) => {
     purple: "bg-purple-100 text-purple-800"
   };
   return <span className={`px-2 py-0.5 rounded text-xs font-semibold ${colors[color]}`}>{children}</span>;
+};
+
+// --- New Component: Candidate Detail View (Multi-Position Evaluation) ---
+
+const CandidateDetailView = ({
+  candidate,
+  evaluations,
+  allPositions,
+  onUpdate,
+  onBack
+}: {
+  candidate: Candidate;
+  evaluations: Record<string, Evaluation>;
+  allPositions: Position[];
+  onUpdate: (ev: Evaluation) => void;
+  onBack: () => void;
+}) => {
+  // Find all positions this candidate applied to
+  const relevantPositions = useMemo(() => {
+    return allPositions.filter(p => {
+       // Check if there is an evaluation for this pair
+       return !!evaluations[`${p.code}_${candidate.id}`];
+    });
+  }, [allPositions, evaluations, candidate.id]);
+
+  const getStatusColor = (s: string) => {
+    switch(s) {
+      case 'selected': return 'bg-green-100 text-green-800 border-green-200';
+      case 'rejected': return 'bg-red-100 text-red-800 border-red-200';
+      case 'reserve': return 'bg-amber-100 text-amber-800 border-amber-200';
+      case 'non-compatible': return 'bg-gray-200 text-gray-800 border-gray-300';
+      default: return 'bg-white text-slate-600 border-slate-200';
+    }
+  };
+
+  const handleReqToggle = (ev: Evaluation, reqId: string) => {
+    if (ev.status === 'non-compatible') return;
+    const current = ev.reqEvaluations[reqId] || 'pending';
+    const next = current === 'pending' ? 'yes' : current === 'yes' ? 'no' : current === 'no' ? 'partial' : 'pending';
+    
+    onUpdate({
+      ...ev,
+      reqEvaluations: {
+        ...ev.reqEvaluations,
+        [reqId]: next
+      }
+    });
+  };
+
+  return (
+    <div className="flex flex-col h-screen bg-slate-50">
+      {/* Header */}
+      <header className="bg-white border-b border-slate-200 px-6 py-4 shadow-sm z-10 sticky top-0">
+         <div className="flex items-center gap-4 mb-4">
+            <Button variant="secondary" onClick={onBack}>
+              <ChevronRight className="w-4 h-4 rotate-180 mr-1" /> Back
+            </Button>
+            <div>
+               <h1 className="text-xl font-bold text-slate-900">{candidate.nominativo}</h1>
+               <div className="text-sm text-slate-500 flex gap-2 items-center">
+                 <span className="bg-slate-100 px-2 py-0.5 rounded text-slate-600 font-mono">{candidate.id}</span>
+                 <span>•</span>
+                 <span>{candidate.rank}</span>
+                 <span>•</span>
+                 <span>{candidate.serviceEntity}</span>
+               </div>
+            </div>
+         </div>
+         
+         <div className="grid grid-cols-3 gap-4 text-xs bg-slate-50 p-3 rounded border border-slate-200">
+             <div><span className="font-semibold text-slate-400">Role:</span> {candidate.role} {candidate.category} {candidate.specialty}</div>
+             <div><span className="font-semibold text-slate-400">NOS:</span> {candidate.nosLevel} {candidate.nosQual}</div>
+             <div><span className="font-semibold text-slate-400">Languages:</span> {candidate.languages.map(l => `${l.language} (${l.level})`).join(', ')}</div>
+             <div className="col-span-3 border-t border-slate-200 pt-2 mt-1">
+                <span className="font-semibold text-slate-400">Mix:</span> {candidate.mixDescription}
+             </div>
+         </div>
+      </header>
+
+      {/* Content */}
+      <div className="flex-1 overflow-y-auto p-6">
+         <div className="max-w-5xl mx-auto space-y-8">
+            <h2 className="text-lg font-bold text-slate-700 flex items-center gap-2">
+               <Briefcase className="w-5 h-5" /> Applications Evaluation ({relevantPositions.length})
+            </h2>
+
+            {relevantPositions.length === 0 && (
+               <div className="p-8 text-center bg-white rounded border border-slate-200 text-slate-500">
+                  No active applications found for this candidate.
+               </div>
+            )}
+
+            {relevantPositions.map(pos => {
+               const ev = evaluations[`${pos.code}_${candidate.id}`];
+               const isNonCompatible = ev.status === 'non-compatible';
+               const activeReqs = pos.requirements.filter(r => !r.hidden);
+               const otherSelection = getOtherSelectionInfo(candidate.id, pos.code, evaluations, allPositions);
+               
+               // Calculate stats
+               const reqScore = activeReqs.filter(r => ev.reqEvaluations[r.id] === 'yes').length;
+               
+               return (
+                  <div key={pos.code} className={`bg-white rounded-lg border shadow-sm overflow-hidden ${isNonCompatible ? 'border-gray-200' : 'border-slate-200'}`}>
+                     {/* Card Header */}
+                     <div className={`px-6 py-4 border-b flex justify-between items-start ${isNonCompatible ? 'bg-gray-50' : 'bg-slate-50 border-slate-200'}`}>
+                        <div>
+                           <div className="flex items-center gap-2 mb-1">
+                              <span className="font-mono text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">{pos.code}</span>
+                              <h3 className={`font-bold text-lg ${isNonCompatible ? 'text-gray-500 line-through' : 'text-slate-800'}`}>{pos.title}</h3>
+                           </div>
+                           <div className="text-sm text-slate-500 flex gap-2">
+                              <span>{pos.entity}</span>
+                              <span>•</span>
+                              <span>{pos.location}</span>
+                           </div>
+                           {otherSelection && (
+                              <div className="mt-2 text-xs bg-amber-50 text-amber-700 px-2 py-1 rounded border border-amber-200 inline-flex items-center gap-1">
+                                 <AlertTriangle className="w-3 h-3" /> Warning: Selected for {otherSelection.code}
+                              </div>
+                           )}
+                        </div>
+                        
+                        <div className="flex flex-col items-end gap-2">
+                           <select 
+                              value={ev.status}
+                              onChange={(e) => onUpdate({...ev, status: e.target.value as any})}
+                              className={`text-sm font-bold uppercase px-3 py-1.5 rounded border cursor-pointer focus:outline-none focus:ring-2 ${getStatusColor(ev.status)}`}
+                           >
+                              <option value="pending">PENDING</option>
+                              <option value="selected" disabled={!!otherSelection && ev.status !== 'selected'}>
+                                 {!!otherSelection && ev.status !== 'selected' ? 'GIÀ SELEZIONATO' : 'SELECTED'}
+                              </option>
+                              <option value="reserve">RESERVE</option>
+                              <option value="rejected">REJECTED</option>
+                              <option value="non-compatible">NON COMPATIBILE</option>
+                           </select>
+                           
+                           {!isNonCompatible && (
+                              <div className="text-xs font-medium text-slate-500">
+                                 Match: <span className={reqScore === activeReqs.length ? 'text-green-600' : 'text-slate-700'}>{reqScore}/{activeReqs.length}</span>
+                              </div>
+                           )}
+                        </div>
+                     </div>
+
+                     {/* Card Body */}
+                     <div className="p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        {/* Requirements */}
+                        <div className="lg:col-span-2 space-y-3">
+                           <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Requirements</h4>
+                           {isNonCompatible ? (
+                              <div className="p-4 bg-gray-50 text-gray-400 text-sm text-center italic rounded border border-gray-100">
+                                 Evaluation disabled.
+                              </div>
+                           ) : (
+                              <div className="space-y-2">
+                                 {activeReqs.map(req => {
+                                    const status = ev.reqEvaluations[req.id] || 'pending';
+                                    return (
+                                       <div 
+                                          key={req.id}
+                                          onClick={() => handleReqToggle(ev, req.id)}
+                                          className="flex items-start gap-3 p-2 rounded hover:bg-slate-50 cursor-pointer border border-transparent hover:border-slate-100 transition-colors group"
+                                       >
+                                          <div className={`mt-0.5 shrink-0 w-6 h-6 rounded flex items-center justify-center border transition-colors
+                                             ${status === 'yes' ? 'bg-green-500 border-green-600 text-white' : 
+                                               status === 'no' ? 'bg-red-500 border-red-600 text-white' : 
+                                               status === 'partial' ? 'bg-amber-400 border-amber-500 text-white' : 'bg-white border-slate-300 text-transparent group-hover:border-slate-400'}`}
+                                          >
+                                             {status === 'yes' && <Check className="w-4 h-4" />}
+                                             {status === 'no' && <X className="w-4 h-4" />}
+                                             {status === 'partial' && <div className="w-2 h-2 rounded-full bg-white opacity-50" />}
+                                          </div>
+                                          <div>
+                                             <p className={`text-sm ${status === 'no' ? 'text-slate-400 line-through' : 'text-slate-700'}`}>{req.text}</p>
+                                             {req.type === 'essential' && <span className="text-[10px] text-red-500 font-bold uppercase">Essential</span>}
+                                          </div>
+                                       </div>
+                                    )
+                                 })}
+                              </div>
+                           )}
+                        </div>
+
+                        {/* Notes */}
+                        <div>
+                           <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Notes</h4>
+                           <textarea
+                              className="w-full h-40 border border-slate-300 rounded p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none bg-slate-50 focus:bg-white transition-colors"
+                              placeholder="Add notes specifically for this position..."
+                              value={ev.notes}
+                              onChange={(e) => onUpdate({...ev, notes: e.target.value})}
+                           />
+                        </div>
+                     </div>
+                  </div>
+               )
+            })}
+         </div>
+      </div>
+    </div>
+  );
 };
 
 // --- Matrix View Component ---
@@ -885,12 +1101,14 @@ const CandidatesListView = ({
   candidates, 
   positions, 
   evaluations,
-  onNavigateToPosition 
+  onNavigateToPosition,
+  onOpenCandidateDetail
 }: { 
   candidates: Candidate[], 
   positions: Position[], 
   evaluations: Record<string, Evaluation>,
-  onNavigateToPosition: (posId: string) => void
+  onNavigateToPosition: (posId: string) => void,
+  onOpenCandidateDetail: (candidateId: string) => void
 }) => {
   const [searchTerm, setSearchTerm] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -969,6 +1187,14 @@ const CandidatesListView = ({
                                   <p><span className="font-semibold">Mix:</span> {c.mixDescription}</p>
                                   <p><span className="font-semibold">Mandati:</span> {c.internationalMandates}</p>
                                   <p><span className="font-semibold">Languages:</span> {c.languages.map(l => `${l.language} (${l.level})`).join(', ')}</p>
+                                </div>
+                                <div className="mt-4 pt-4 border-t border-slate-200">
+                                   <Button 
+                                      className="w-full justify-center" 
+                                      onClick={(e: any) => { e.stopPropagation(); onOpenCandidateDetail(c.id); }}
+                                   >
+                                      <User className="w-4 h-4" /> Apri Scheda Valutazione
+                                   </Button>
                                 </div>
                               </div>
                               <div className="flex-1 space-y-2 pl-4 border-l-2 border-blue-200">
@@ -1113,18 +1339,18 @@ const FileUploadView = ({ onDataLoaded }: { onDataLoaded: (candidates: Candidate
   );
 };
 
-const PositionCard = ({ 
-  position, 
-  status, 
-  candidateCount,
-  selectedCandidatesNames,
-  onClick 
-}: { 
+const PositionCard: React.FC<{ 
   position: Position; 
   status: PositionStatus; 
   candidateCount: number; 
   selectedCandidatesNames: string[];
   onClick: () => void;
+}> = ({ 
+  position, 
+  status, 
+  candidateCount, 
+  selectedCandidatesNames,
+  onClick 
 }) => {
   const statusColors = {
     todo: "bg-slate-100 text-slate-600",
@@ -1252,8 +1478,9 @@ const RecruitmentApp = () => {
     lastUpdated: 0
   });
 
-  const [currentView, setCurrentView] = useState<'upload' | 'dashboard' | 'position_detail' | 'candidates_list'>('upload');
+  const [currentView, setCurrentView] = useState<'upload' | 'dashboard' | 'position_detail' | 'candidates_list' | 'candidate_detail'>('upload');
   const [selectedPositionId, setSelectedPositionId] = useState<string | null>(null);
+  const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterEnte, setFilterEnte] = useState("ALL");
   const [filterStatus, setFilterStatus] = useState<PositionStatus | 'all'>('all');
@@ -1379,7 +1606,6 @@ const RecruitmentApp = () => {
   if (currentView === 'position_detail' && selectedPositionId) {
     const position = appData.positions.find(p => p.code === selectedPositionId)!;
     
-    // We render the dedicated component for Position Detail to avoid hook rules violation
     return (
        <PositionDetailView 
           position={position}
@@ -1392,6 +1618,19 @@ const RecruitmentApp = () => {
           onExport={exportToExcel}
        />
     );
+  }
+
+  if (currentView === 'candidate_detail' && selectedCandidateId) {
+    const candidate = appData.candidates.find(c => c.id === selectedCandidateId)!;
+    return (
+      <CandidateDetailView 
+         candidate={candidate}
+         allPositions={appData.positions}
+         evaluations={appData.evaluations}
+         onUpdate={updateEvaluation}
+         onBack={() => setCurrentView('candidates_list')}
+      />
+    )
   }
 
   // Dashboard View (Shared Layout)
@@ -1415,7 +1654,7 @@ const RecruitmentApp = () => {
           </button>
           <button 
              onClick={() => setCurrentView('candidates_list')}
-             className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${currentView === 'candidates_list' ? 'bg-slate-800 text-white' : 'hover:bg-slate-800 text-slate-400'}`}
+             className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${currentView === 'candidates_list' || currentView === 'candidate_detail' ? 'bg-slate-800 text-white' : 'hover:bg-slate-800 text-slate-400'}`}
           >
             <Users className="w-5 h-5" />
             Candidates <span className="text-xs ml-auto bg-slate-700 px-2 py-0.5 rounded">{appData.candidates.length}</span>
@@ -1524,6 +1763,10 @@ const RecruitmentApp = () => {
               onNavigateToPosition={(posCode) => {
                  setSelectedPositionId(posCode);
                  setCurrentView('position_detail');
+              }}
+              onOpenCandidateDetail={(candId) => {
+                 setSelectedCandidateId(candId);
+                 setCurrentView('candidate_detail');
               }}
            />
         )}
