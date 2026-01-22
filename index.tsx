@@ -1282,8 +1282,132 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
   const worksheet = XLSX.utils.aoa_to_sheet(wsData);
   worksheet['!merges'] = merges;
 
-  // Basic styling hints (works with Pro or style-aware builds, ignored by standard SheetJS)
-  // We can't easily add colors without specific libraries, but we set up the structure.
+  const headerFillBlue = "D9E2F3";
+  const headerFillGray = "D9D9D9";
+  const nominativoFill = "BFBFBF";
+  const white = "FFFFFF";
+  const black = "000000";
+  const green = "008000";
+  const red = "C00000";
+
+  const baseBorder = {
+    top: { style: "thin", color: { rgb: black } },
+    bottom: { style: "thin", color: { rgb: black } },
+    left: { style: "thin", color: { rgb: black } },
+    right: { style: "thin", color: { rgb: black } }
+  };
+
+  const setCellStyle = (cellAddr: string, style: any) => {
+    if (!worksheet[cellAddr]) return;
+    worksheet[cellAddr].s = style;
+  };
+
+  const makeStyle = ({
+    bold = false,
+    size = 10,
+    color = black,
+    fill = white,
+    align = "center",
+    valign = "center",
+    wrap = true
+  }: {
+    bold?: boolean;
+    size?: number;
+    color?: string;
+    fill?: string;
+    align?: "center" | "left" | "right";
+    valign?: "center" | "top" | "bottom";
+    wrap?: boolean;
+  }) => ({
+    font: { name: "Calibri", sz: size, bold, color: { rgb: color } },
+    alignment: { horizontal: align, vertical: valign, wrapText: wrap },
+    fill: { patternType: "solid", fgColor: { rgb: fill } },
+    border: baseBorder
+  });
+
+  const range = XLSX.utils.decode_range(worksheet["!ref"] || "A1");
+  for (let r = range.s.r; r <= range.e.r; r += 1) {
+    for (let c = range.s.c; c <= range.e.c; c += 1) {
+      const cellAddr = XLSX.utils.encode_cell({ r, c });
+      if (!worksheet[cellAddr]) continue;
+      setCellStyle(cellAddr, makeStyle({}));
+    }
+  }
+
+  // Title row
+  for (let c = 0; c < totalCols; c += 1) {
+    setCellStyle(XLSX.utils.encode_cell({ r: 0, c }), makeStyle({ bold: true, size: 12 }));
+  }
+  // Dedalus row
+  for (let c = 0; c < totalCols; c += 1) {
+    setCellStyle(XLSX.utils.encode_cell({ r: 1, c }), makeStyle({ bold: true, size: 10 }));
+  }
+  // Legend row
+  for (let c = 0; c < totalCols; c += 1) {
+    setCellStyle(XLSX.utils.encode_cell({ r: 2, c }), makeStyle({ size: 9 }));
+  }
+  // Requisiti Job Description row
+  for (let c = 0; c < totalCols; c += 1) {
+    setCellStyle(XLSX.utils.encode_cell({ r: 3, c }), makeStyle({ bold: true, fill: headerFillGray }));
+  }
+  // Group header row
+  for (let c = 0; c < totalCols; c += 1) {
+    setCellStyle(XLSX.utils.encode_cell({ r: 4, c }), makeStyle({ bold: true, fill: headerFillBlue }));
+  }
+  // Essential/Desirable row
+  for (let c = 0; c < totalCols; c += 1) {
+    setCellStyle(XLSX.utils.encode_cell({ r: 5, c }), makeStyle({ bold: true, fill: headerFillBlue }));
+  }
+  // Column headers row
+  for (let c = 0; c < totalCols; c += 1) {
+    setCellStyle(XLSX.utils.encode_cell({ r: 6, c }), makeStyle({ bold: true, fill: headerFillBlue, size: 9 }));
+  }
+
+  // Nominativo header cell
+  setCellStyle(XLSX.utils.encode_cell({ r: 4, c: 0 }), makeStyle({ bold: true, fill: headerFillGray, size: 9 }));
+
+  // Data rows
+  dataRows.forEach((row, idx) => {
+    const r = 7 + idx;
+    row.forEach((value, c) => {
+      const cellAddr = XLSX.utils.encode_cell({ r, c });
+      if (!worksheet[cellAddr]) return;
+      let color = black;
+      if (value === "SI") color = green;
+      if (value === "NO") color = red;
+      const fill = c === 0 ? nominativoFill : white;
+      setCellStyle(cellAddr, makeStyle({ color, fill, align: c === 0 ? "left" : "center", valign: "center" }));
+    });
+  });
+
+  worksheet["!cols"] = [
+    { wch: 28 },
+    { wch: 12 },
+    { wch: 22 },
+    { wch: 10 },
+    { wch: 10 },
+    { wch: 16 },
+    ...essentialReqs.map(() => ({ wch: 18 })),
+    ...desirableReqs.map(() => ({ wch: 18 })),
+    { wch: 14 },
+    { wch: 16 },
+    { wch: 18 },
+    { wch: 16 },
+    { wch: 16 },
+    { wch: 14 },
+    { wch: 26 }
+  ];
+
+  worksheet["!rows"] = [
+    { hpt: 20 },
+    { hpt: 18 },
+    { hpt: 30 },
+    { hpt: 18 },
+    { hpt: 22 },
+    { hpt: 18 },
+    { hpt: 44 },
+    ...dataRows.map(() => ({ hpt: 36 }))
+  ];
   
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, "Scheda Disamina");
