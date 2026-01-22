@@ -1585,6 +1585,7 @@ const PositionDetailView = ({
 // --- Main App ---
 
 const RecruitmentApp = () => {
+  const backupVersion = 1;
   const createDefaultCycle = (): Cycle => ({
     name: "Ciclo disamine 2026/2027",
     startedAt: Date.now(),
@@ -1607,6 +1608,9 @@ const RecruitmentApp = () => {
   const [filterStatus, setFilterStatus] = useState<PositionStatus | 'all'>('all');
   const [isNewCycleModalOpen, setIsNewCycleModalOpen] = useState(false);
   const [newCycleName, setNewCycleName] = useState("");
+  const [backupError, setBackupError] = useState("");
+  const [backupSuccess, setBackupSuccess] = useState("");
+  const backupInputRef = useRef<HTMLInputElement | null>(null);
 
   // Load from LocalStorage
   useEffect(() => {
@@ -1741,6 +1745,92 @@ const RecruitmentApp = () => {
     }
   };
 
+  const exportBackup = () => {
+    setBackupError("");
+    setBackupSuccess("");
+    const payload = {
+      version: backupVersion,
+      exportedAt: Date.now(),
+      appData
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const safeCycleName = appData.cycle.name.replace(/[^a-z0-9-_]+/gi, "_").slice(0, 40);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `scheda_disamina_backup_${safeCycleName || "ciclo"}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setBackupSuccess("Backup scaricato correttamente.");
+  };
+
+  const validateBackupPayload = (payload: any): AppData => {
+    const isObject = (value: any) => typeof value === "object" && value !== null && !Array.isArray(value);
+    if (!isObject(payload)) {
+      throw new Error("Formato backup non valido.");
+    }
+    if (payload.version !== backupVersion) {
+      throw new Error("Versione backup incompatibile.");
+    }
+    if (!isObject(payload.appData)) {
+      throw new Error("Formato backup non valido.");
+    }
+    const { candidates, positions, evaluations, lastUpdated, cycle } = payload.appData as AppData;
+    if (!Array.isArray(candidates) || !Array.isArray(positions) || !isObject(evaluations)) {
+      throw new Error("Formato backup non valido.");
+    }
+    if (!isObject(cycle) || typeof cycle.name !== "string" || typeof cycle.startedAt !== "number" || typeof cycle.id !== "string") {
+      throw new Error("Formato backup non valido.");
+    }
+    if (typeof lastUpdated !== "number") {
+      throw new Error("Formato backup non valido.");
+    }
+    return payload.appData as AppData;
+  };
+
+  const importBackup = (file: File) => {
+    setBackupError("");
+    setBackupSuccess("");
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const text = String(reader.result || "");
+        const parsed = JSON.parse(text);
+        const nextAppData = validateBackupPayload(parsed);
+        setAppData({
+          candidates: nextAppData.candidates,
+          positions: nextAppData.positions,
+          evaluations: nextAppData.evaluations,
+          lastUpdated: nextAppData.lastUpdated,
+          cycle: nextAppData.cycle
+        });
+        setSelectedCandidateId(null);
+        setSelectedPositionId(null);
+        setFilterEnte("ALL");
+        setFilterStatus('all');
+        setSearchTerm("");
+        setCurrentView(nextAppData.candidates.length && nextAppData.positions.length ? 'dashboard' : 'upload');
+        setBackupSuccess("Backup caricato correttamente.");
+      } catch (error: any) {
+        console.error(error);
+        setBackupError(error.message || "Errore durante il caricamento del backup.");
+      }
+    };
+    reader.onerror = () => {
+      setBackupError("Errore durante il caricamento del backup.");
+    };
+    reader.readAsText(file);
+  };
+
+  const handleBackupUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    importBackup(file);
+    event.target.value = "";
+  };
+
   const startNewSearch = () => {
     const confirmed = confirm("Vuoi avviare una nuova ricerca di personale? I dati attuali verranno svuotati.");
     if (!confirmed) return;
@@ -1867,6 +1957,40 @@ const RecruitmentApp = () => {
           <button onClick={resetData} className="flex items-center gap-2 text-red-400 hover:text-red-300 text-sm">
             <Trash2 className="w-4 h-4" /> Reset Data
           </button>
+          <div className="mt-6">
+            <p className="text-xs uppercase tracking-wide text-slate-500 mb-3">Impostazioni</p>
+            <div className="space-y-2">
+              <button
+                onClick={exportBackup}
+                className="w-full flex items-center gap-2 text-slate-200 hover:text-white text-sm px-3 py-2 rounded-md bg-slate-800/60 hover:bg-slate-800"
+              >
+                <Download className="w-4 h-4" /> Scarica backup
+              </button>
+              <button
+                onClick={() => backupInputRef.current?.click()}
+                className="w-full flex items-center gap-2 text-slate-200 hover:text-white text-sm px-3 py-2 rounded-md bg-slate-800/60 hover:bg-slate-800"
+              >
+                <Upload className="w-4 h-4" /> Carica backup
+              </button>
+              <input
+                ref={backupInputRef}
+                type="file"
+                accept=".json,application/json"
+                className="hidden"
+                onChange={handleBackupUpload}
+              />
+              {backupError && (
+                <div className="text-xs text-red-400 flex items-center gap-2">
+                  <AlertTriangle className="w-3 h-3" /> {backupError}
+                </div>
+              )}
+              {backupSuccess && !backupError && (
+                <div className="text-xs text-emerald-400 flex items-center gap-2">
+                  <Check className="w-3 h-3" /> {backupSuccess}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </aside>
 
