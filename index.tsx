@@ -1177,43 +1177,18 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
   // Row 3: Legend
   const legendText = "in ROSSO la mancanza (o parziale possesso) di quanto previsto per essere eleggibile per la posizione in titolo\nin VERDE l'attinenza dei requisiti degli Ufficiali segnalati a quanto previsto dalla Job description";
   const row3 = Array(totalCols).fill("");
-  row3[0] = {
-    t: "s",
-    v: {
-      richText: [
-        { text: "in " },
-        {
-          text: "ROSSO",
-          font: { bold: true, color: { rgb: "C00000" } }
-        },
-        {
-          text: " la mancanza (o parziale possesso) di quanto previsto per essere eleggibile per la posizione in titolo\nin "
-        },
-        {
-          text: "VERDE",
-          font: { bold: true, color: { rgb: "008000" } }
-        },
-        {
-          text: " l'attinenza dei requisiti degli Ufficiali segnalati a quanto previsto dalla Job description"
-        }
-      ]
-    }
-  };
+  row3[0] = legendText;
 
-  // Row 4: Super Headers (REQUISITI JOB DESCRIPTION)
-  // Split into segmented merges (left, central, right)
-  const row4 = Array(totalCols).fill("");
   const requisitiStartCol = baseHeaders.length;
-  if (totalReqsCount > 0) {
-    row4[requisitiStartCol] = "Requisiti Job Description";
-  }
 
   // Row 5: Group Headers (BASICI | JOB DESCRIPTION | ELEMENTI D'IMPIEGO)
   // NOMINATIVI starts at col 0, spans 1 col, 2 rows (handled by merges)
   const row5 = Array(totalCols).fill("");
   row5[0] = "NOMINATIVI SEGNALATI CON RICERCA PERSONALE"; // Will span A5:A6
   row5[1] = "BASICI"; // Spans base headers (excluding nominativo)
-  row5[requisitiStartCol] = "JOB DESCRIPTION"; // Spans over essential + desirable
+  if (totalReqsCount > 0) {
+    row5[requisitiStartCol] = "JOB DESCRIPTION"; // Spans over essential + desirable
+  }
   row5[requisitiStartCol + totalReqsCount] = "ELEMENTI D'IMPIEGO"; // Spans rest
 
   // Row 6: Specific Headers & Essential/Desirable Labels
@@ -1232,9 +1207,11 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
   // The photo shows specific columns.
   
   // Let's implement Row 6 as the "ESSENTIAL" / "DESIRABLE" split row.
-  row6[requisitiStartCol] = "ESSENTIAL";
-  if (desirableCount > 0) {
-     row6[requisitiStartCol + essentialCount] = "DESIRABLE";
+  if (totalReqsCount > 0) {
+    row6[requisitiStartCol] = "ESSENTIAL";
+    if (desirableCount > 0) {
+      row6[requisitiStartCol + essentialCount] = "DESIRABLE";
+    }
   }
 
   // Row 7: The actual column headers
@@ -1293,7 +1270,7 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
        ...essentialReqs.map(r => ev.reqEvaluations[r.id] === 'yes' ? 'SI' : ev.reqEvaluations[r.id] === 'no' ? 'NO' : '-'),
        ...desirableReqs.map(r => ev.reqEvaluations[r.id] === 'yes' ? 'SI' : ev.reqEvaluations[r.id] === 'no' ? 'NO' : '-'),
        corsoGraduat, // Corso/Graduat.
-       c.feoDate, // Data FEO
+       formatExcelDate(c.feoDate), // Data FEO
        c.serviceEntity, // Ente FEO
        mandatesDetail, // Mandati Estero / data ultimo rientro
        mapStatusToText(ev.status), // Parere
@@ -1303,66 +1280,45 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
 
   // --- Merges ---
   const merges = [
-     // Row 1 Title
-     { s: { r: 0, c: 0 }, e: { r: 0, c: totalCols - 1 } },
-     // Row 2 Dedalus
-     { s: { r: 1, c: 0 }, e: { r: 1, c: totalCols - 1 } },
-     // Row 3 Legend
-     { s: { r: 2, c: 0 }, e: { r: 2, c: totalCols - 1 } },
-     // Row 4 segmented merges (left | requisiti | right)
-     { s: { r: 3, c: 0 }, e: { r: 3, c: baseHeaders.length - 1 } },
-     (totalReqsCount > 0 ? { s: { r: 3, c: requisitiStartCol }, e: { r: 3, c: requisitiStartCol + totalReqsCount - 1 } } : null),
-     (requisitiStartCol + totalReqsCount <= totalCols - 1 ? { s: { r: 3, c: requisitiStartCol + totalReqsCount }, e: { r: 3, c: totalCols - 1 } } : null),
-     
-     // Row 5 Group Headers
-     // Nominativi (Rowspan 2: A5-A6) -> Actually A5-A7 based on row7 being column headers
-     { s: { r: 4, c: 0 }, e: { r: 6, c: 0 } }, 
-     // Basici (Colspan base headers excluding nominativo)
-     { s: { r: 4, c: 1 }, e: { r: 4, c: baseHeaders.length - 1 } },
-     // Job Description (Colspan Total Reqs)
-     { s: { r: 4, c: requisitiStartCol }, e: { r: 4, c: requisitiStartCol + totalReqsCount - 1 } },
-     // Elementi d'Impiego (Colspan 6)
-     { s: { r: 4, c: requisitiStartCol + totalReqsCount }, e: { r: 4, c: totalCols - 1 } },
+    // Row 1 Title
+    { s: { r: 0, c: 0 }, e: { r: 0, c: totalCols - 1 } },
+    // Row 2 Dedalus
+    { s: { r: 1, c: 0 }, e: { r: 1, c: totalCols - 1 } },
+    // Row 3 Legend
+    { s: { r: 2, c: 0 }, e: { r: 2, c: totalCols - 1 } },
 
-     // Row 6 Sub-headers
-     // Essential
-     { s: { r: 5, c: requisitiStartCol }, e: { r: 5, c: requisitiStartCol + essentialCount - 1 } },
-     // Desirable
-     (desirableCount > 0 ? { s: { r: 5, c: requisitiStartCol + essentialCount }, e: { r: 5, c: requisitiStartCol + totalReqsCount - 1 } } : null),
+    // Row 5 Group Headers
+    // Nominativi (Rowspan 3: A5-A7)
+    { s: { r: 3, c: 0 }, e: { r: 5, c: 0 } },
+    // Basici (Colspan base headers excluding nominativo, spanning 2 rows)
+    { s: { r: 3, c: 1 }, e: { r: 4, c: baseHeaders.length - 1 } },
+    // Job Description (Colspan Total Reqs)
+    (totalReqsCount > 0 ? { s: { r: 3, c: requisitiStartCol }, e: { r: 3, c: requisitiStartCol + totalReqsCount - 1 } } : null),
+    // Elementi d'Impiego (Colspan 6, spanning 2 rows)
+    { s: { r: 3, c: requisitiStartCol + totalReqsCount }, e: { r: 4, c: totalCols - 1 } },
 
-     // Vertical merges for Fixed Headers (Basici columns) spanning rows 6-7 (indices 5-6)
-     ...Array.from({ length: baseHeaders.length - 1 }, (_, idx) => ({
-       s: { r: 5, c: idx + 1 },
-       e: { r: 6, c: idx + 1 }
-     })),
-
-     // Vertical merges for Fixed Headers (Elementi columns) spanning rows 6-7
-     { s: { r: 5, c: requisitiStartCol + totalReqsCount }, e: { r: 6, c: requisitiStartCol + totalReqsCount } }, // Corso
-     { s: { r: 5, c: requisitiStartCol + totalReqsCount + 1 }, e: { r: 6, c: requisitiStartCol + totalReqsCount + 1 } }, // FEO
-     { s: { r: 5, c: requisitiStartCol + totalReqsCount + 2 }, e: { r: 6, c: requisitiStartCol + totalReqsCount + 2 } }, // Ente
-     { s: { r: 5, c: requisitiStartCol + totalReqsCount + 3 }, e: { r: 6, c: requisitiStartCol + totalReqsCount + 3 } }, // Mandati
-     { s: { r: 5, c: requisitiStartCol + totalReqsCount + 4 }, e: { r: 6, c: requisitiStartCol + totalReqsCount + 4 } }, // Parere
-     { s: { r: 5, c: requisitiStartCol + totalReqsCount + 5 }, e: { r: 6, c: requisitiStartCol + totalReqsCount + 5 } }, // Note
-
+    // Row 6 Sub-headers
+    // Essential
+    (essentialCount > 0 ? { s: { r: 4, c: requisitiStartCol }, e: { r: 4, c: requisitiStartCol + essentialCount - 1 } } : null),
+    // Desirable
+    (desirableCount > 0 ? { s: { r: 4, c: requisitiStartCol + essentialCount }, e: { r: 4, c: requisitiStartCol + totalReqsCount - 1 } } : null)
   ].filter(Boolean);
 
   // Combine all rows
   const wsData = [
-     row1,
-     row2,
-     row3,
-     row4,
-     row5,
-     row6,
-     row7,
-     ...dataRows
+    row1,
+    row2,
+    row3,
+    row5,
+    row6,
+    row7,
+    ...dataRows
   ];
 
   const worksheet = XLSX.utils.aoa_to_sheet(wsData);
   worksheet['!merges'] = merges;
 
   const headerFillBlue = "D9E2F3";
-  const headerFillGray = "D9D9D9";
   const nominativoFill = "BFBFBF";
   const white = "FFFFFF";
   const black = "000000";
@@ -1408,7 +1364,9 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
   for (let r = range.s.r; r <= range.e.r; r += 1) {
     for (let c = range.s.c; c <= range.e.c; c += 1) {
       const cellAddr = XLSX.utils.encode_cell({ r, c });
-      if (!worksheet[cellAddr]) continue;
+      if (!worksheet[cellAddr]) {
+        worksheet[cellAddr] = { t: "s", v: "" };
+      }
       setCellStyle(cellAddr, makeStyle({}));
     }
   }
@@ -1425,29 +1383,27 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
   for (let c = 0; c < totalCols; c += 1) {
     setCellStyle(XLSX.utils.encode_cell({ r: 2, c }), makeStyle({ size: 9 }));
   }
-  // Requisiti Job Description row
-  for (let c = 0; c < totalCols; c += 1) {
-    setCellStyle(XLSX.utils.encode_cell({ r: 3, c }), makeStyle({ bold: true, fill: headerFillGray }));
-  }
   // Group header row
   for (let c = 0; c < totalCols; c += 1) {
-    setCellStyle(XLSX.utils.encode_cell({ r: 4, c }), makeStyle({ bold: true, fill: headerFillBlue }));
+    setCellStyle(XLSX.utils.encode_cell({ r: 3, c }), makeStyle({ bold: true, fill: headerFillBlue }));
   }
   // Essential/Desirable row
   for (let c = 0; c < totalCols; c += 1) {
-    setCellStyle(XLSX.utils.encode_cell({ r: 5, c }), makeStyle({ bold: true, fill: headerFillBlue }));
+    setCellStyle(XLSX.utils.encode_cell({ r: 4, c }), makeStyle({ bold: true, fill: headerFillBlue }));
   }
   // Column headers row
   for (let c = 0; c < totalCols; c += 1) {
-    setCellStyle(XLSX.utils.encode_cell({ r: 6, c }), makeStyle({ bold: true, fill: headerFillBlue, size: 9 }));
+    setCellStyle(XLSX.utils.encode_cell({ r: 5, c }), makeStyle({ bold: true, fill: headerFillBlue, size: 9, align: "center" }));
   }
 
-  // Nominativo header cell
-  setCellStyle(XLSX.utils.encode_cell({ r: 4, c: 0 }), makeStyle({ bold: true, fill: headerFillGray, size: 9 }));
+  // Nominativo header cell (white background)
+  [3, 4, 5].forEach((r) => {
+    setCellStyle(XLSX.utils.encode_cell({ r, c: 0 }), makeStyle({ bold: true, fill: white, size: 9 }));
+  });
 
   // Data rows
   dataRows.forEach((row, idx) => {
-    const r = 7 + idx;
+    const r = 6 + idx;
     row.forEach((value, c) => {
       const cellAddr = XLSX.utils.encode_cell({ r, c });
       if (!worksheet[cellAddr]) return;
@@ -1455,7 +1411,7 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
       if (value === "SI") color = green;
       if (value === "NO") color = red;
       const fill = c === 0 ? nominativoFill : white;
-      setCellStyle(cellAddr, makeStyle({ color, fill, align: c === 0 ? "left" : "center", valign: "center" }));
+      setCellStyle(cellAddr, makeStyle({ color, fill, align: c === 0 ? "center" : "center", valign: "center" }));
     });
   });
 
@@ -1484,7 +1440,6 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
     { hpt: 20 },
     { hpt: 18 },
     { hpt: 30 },
-    { hpt: 18 },
     { hpt: 22 },
     { hpt: 18 },
     { hpt: 44 },
