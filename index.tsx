@@ -52,6 +52,7 @@ interface Candidate {
   nosQual: string; // QUALIFICA NOS
   nosExpiry: string; // SCADENZA NOS
   internationalMandates: string; // MANDATI INTERNAZIONALI
+  feoDate: string; // DT ENTE SVZ
   mixDescription: string; // DESCRIZIONE MIX
   languages: Language[];
   rawAppliedString: string;
@@ -122,6 +123,25 @@ const findKey = (keys: string[], ...searchTerms: string[]) => {
   });
 };
 
+const formatExcelDate = (value: unknown) => {
+  if (value === null || value === undefined) return "";
+  const numericValue =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim() !== "" && !Number.isNaN(Number(value))
+        ? Number(value)
+        : null;
+
+  if (numericValue !== null) {
+    const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+    const date = new Date(excelEpoch.getTime() + numericValue * 86400 * 1000);
+    if (Number.isNaN(date.getTime())) return "";
+    return date.toLocaleDateString("it-IT");
+  }
+
+  return String(value).trim();
+};
+
 interface DedupResult<T> {
   items: T[];
   duplicateCount: number;
@@ -160,6 +180,7 @@ const parseCandidates = (data: any[]): DedupResult<Candidate> => {
     const nosLivelloKey = findKey(keys, "LIVELLO NOS", "NOS LEVEL");
     const nosQualKey = findKey(keys, "QUALIFICA NOS", "NOS QUALIFICATION");
     const nosScadenzaKey = findKey(keys, "SCADENZA", "RILASCIO", "EXPIRY");
+    const feoDateKey = findKey(keys, "DT ENTE SVZ", "DATA ENTE SVZ");
 
     // History
     const mandatiKey = findKey(keys, "MANDATI", "INTERNAZIONALI", "MANDATES");
@@ -202,6 +223,7 @@ const parseCandidates = (data: any[]): DedupResult<Candidate> => {
         nosQual: String(row[nosQualKey] || "").trim(),
         nosExpiry: String(row[nosScadenzaKey] || "").trim(),
         internationalMandates: String(row[mandatiKey] || "").trim(),
+        feoDate: formatExcelDate(row[feoDateKey]),
         mixDescription: String(row[mixKey] || "").trim(),
         languages: [],
         rawAppliedString: rawApplied,
@@ -1137,8 +1159,8 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
   // Total columns calculation
   // Fixed Left: baseHeaders
   // Requirements: totalReqsCount
-  // Fixed Right: Corso, FEO, Ente, Mandati Estero, Mandati NATO, Parere, Note (7 cols)
-  const totalCols = baseHeaders.length + totalReqsCount + 7;
+  // Fixed Right: Corso, Data FEO, Ente, Mandati Estero, Parere, Note (6 cols)
+  const totalCols = baseHeaders.length + totalReqsCount + 6;
 
   // --- Build Header Rows ---
 
@@ -1220,12 +1242,11 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
      ...baseHeaders,
      ...essentialReqs.map(r => r.text),
      ...desirableReqs.map(r => r.text),
-     "CORSO GRADO AT.", 
-     "FEO minima ente attuale (3 anni)", 
-     "ENTE FEO", 
-     "Nr. mandati estero / data ultimo rientro", 
-     "Nr. mandati Nato ITALIA / data ultimo rientro", 
-     "Parere Com.te", 
+     "CORSO\nGRADUAT.",
+     "Data FEO",
+     "ENTE FEO",
+     "Nr. mandati estero / data ultimo rientro",
+     "Parere Com.te",
      "Note"
   ];
 
@@ -1264,15 +1285,17 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
        englishCell // Inglese
     ];
 
+    const corsoGraduat = [c.category, c.specialty].filter(Boolean).join(" / ");
+    const mandatesDetail = [c.internationalMandates, c.mixDescription].filter(Boolean).join("\n");
+
     return [
        ...baseValues,
        ...essentialReqs.map(r => ev.reqEvaluations[r.id] === 'yes' ? 'SI' : ev.reqEvaluations[r.id] === 'no' ? 'NO' : '-'),
        ...desirableReqs.map(r => ev.reqEvaluations[r.id] === 'yes' ? 'SI' : ev.reqEvaluations[r.id] === 'no' ? 'NO' : '-'),
-       `${c.category} / ${c.specialty}`, // Corso Grado AT
-       c.nosExpiry, // FEO Minima placeholder (using expiry as date reference)
+       corsoGraduat, // Corso/Graduat.
+       c.feoDate, // Data FEO
        c.serviceEntity, // Ente FEO
-       c.internationalMandates, // Mandati Estero
-       "0", // Mandati NATO Italia placeholder
+       mandatesDetail, // Mandati Estero / data ultimo rientro
        mapStatusToText(ev.status), // Parere
        noteText // Note
     ];
@@ -1298,7 +1321,7 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
      { s: { r: 4, c: 1 }, e: { r: 4, c: baseHeaders.length - 1 } },
      // Job Description (Colspan Total Reqs)
      { s: { r: 4, c: requisitiStartCol }, e: { r: 4, c: requisitiStartCol + totalReqsCount - 1 } },
-     // Elementi d'Impiego (Colspan 7)
+     // Elementi d'Impiego (Colspan 6)
      { s: { r: 4, c: requisitiStartCol + totalReqsCount }, e: { r: 4, c: totalCols - 1 } },
 
      // Row 6 Sub-headers
@@ -1318,9 +1341,8 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
      { s: { r: 5, c: requisitiStartCol + totalReqsCount + 1 }, e: { r: 6, c: requisitiStartCol + totalReqsCount + 1 } }, // FEO
      { s: { r: 5, c: requisitiStartCol + totalReqsCount + 2 }, e: { r: 6, c: requisitiStartCol + totalReqsCount + 2 } }, // Ente
      { s: { r: 5, c: requisitiStartCol + totalReqsCount + 3 }, e: { r: 6, c: requisitiStartCol + totalReqsCount + 3 } }, // Mandati
-     { s: { r: 5, c: requisitiStartCol + totalReqsCount + 4 }, e: { r: 6, c: requisitiStartCol + totalReqsCount + 4 } }, // NATO
-     { s: { r: 5, c: requisitiStartCol + totalReqsCount + 5 }, e: { r: 6, c: requisitiStartCol + totalReqsCount + 5 } }, // Parere
-     { s: { r: 5, c: requisitiStartCol + totalReqsCount + 6 }, e: { r: 6, c: requisitiStartCol + totalReqsCount + 6 } }, // Note
+     { s: { r: 5, c: requisitiStartCol + totalReqsCount + 4 }, e: { r: 6, c: requisitiStartCol + totalReqsCount + 4 } }, // Parere
+     { s: { r: 5, c: requisitiStartCol + totalReqsCount + 5 }, e: { r: 6, c: requisitiStartCol + totalReqsCount + 5 } }, // Note
 
   ].filter(Boolean);
 
@@ -1453,7 +1475,6 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
     { wch: 14 },
     { wch: 16 },
     { wch: 18 },
-    { wch: 16 },
     { wch: 16 },
     { wch: 14 },
     { wch: 26 }
