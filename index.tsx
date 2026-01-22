@@ -121,8 +121,20 @@ const findKey = (keys: string[], ...searchTerms: string[]) => {
   });
 };
 
-const parseCandidates = (data: any[]): Candidate[] => {
+interface DedupResult<T> {
+  items: T[];
+  duplicateCount: number;
+  totalRows: number;
+}
+
+interface ImportStats {
+  candidates: { imported: number; duplicates: number; totalRows: number };
+  positions: { imported: number; duplicates: number; totalRows: number };
+}
+
+const parseCandidates = (data: any[]): DedupResult<Candidate> => {
   const map = new Map<string, Candidate>();
+  let duplicateCount = 0;
 
   data.forEach((row) => {
     const keys = Object.keys(row);
@@ -195,22 +207,43 @@ const parseCandidates = (data: any[]): Candidate[] => {
         appliedPositionCodes: [], // Will be populated in handleDataLoaded via reverse matching
         originalData: row,
       });
+    } else {
+      duplicateCount += 1;
     }
 
     const candidate = map.get(id)!;
     if (linguaKey && row[linguaKey]) {
-      candidate.languages.push({
+      const languageEntry = {
         language: String(row[linguaKey]).trim(),
         level: String(row[livelloKey] || "?").trim(),
-      });
+      };
+      const languageKey = `${languageEntry.language.toLowerCase()}|${languageEntry.level.toLowerCase()}`;
+      const hasLanguage = candidate.languages.some(
+        (lang) => `${lang.language.toLowerCase()}|${lang.level.toLowerCase()}` === languageKey
+      );
+      if (!hasLanguage) {
+        candidate.languages.push(languageEntry);
+      }
+    }
+
+    const rawApplied = String(row[poSegnalateKey] || "").trim();
+    if (!candidate.rawAppliedString && rawApplied) {
+      candidate.rawAppliedString = rawApplied;
     }
   });
 
-  return Array.from(map.values());
+  return {
+    items: Array.from(map.values()),
+    duplicateCount,
+    totalRows: data.length
+  };
 };
 
-const parsePositions = (data: any[]): Position[] => {
-  return data.map((row) => {
+const parsePositions = (data: any[]): DedupResult<Position> => {
+  const map = new Map<string, Position>();
+  let duplicateCount = 0;
+
+  data.forEach((row) => {
     const keys = Object.keys(row);
     
     const codeKey = findKey(keys, "CODICE", "POSIZIONE", "JOB ID", "REF");
@@ -229,7 +262,7 @@ const parsePositions = (data: any[]): Position[] => {
     const interesseKey = findKey(keys, "INTERESSE", "INTEREST");
     const titolareKey = findKey(keys, "TITOLARE", "INCUMBENT");
 
-    if (!codeKey || !row[codeKey]) return null;
+    if (!codeKey || !row[codeKey]) return;
 
     // Parse Requirements (Same logic as before)
     const rawReqs = String(row[reqKey] || "");
@@ -287,7 +320,7 @@ const parsePositions = (data: any[]): Position[] => {
     const codeStr = String(row[codeKey]).trim();
     const titleStr = String(row[jobTitleKey] || codeStr).trim();
 
-    return {
+    const position: Position = {
       code: codeStr,
       entity: String(row[sedeKey] || "Unknown Entity").trim(),
       location: String(row[locationKey] || "").trim(),
@@ -304,7 +337,65 @@ const parsePositions = (data: any[]): Position[] => {
 
       originalData: row,
     };
-  }).filter(Boolean) as Position[];
+
+    if (!map.has(codeStr)) {
+      map.set(codeStr, position);
+      return;
+    }
+
+    duplicateCount += 1;
+    const existing = map.get(codeStr)!;
+    const isBlank = (value: string) => value.trim() === "";
+    const isDefaultTitle = (value: string) => value.trim() === `Position ${codeStr}`;
+
+    if ((isBlank(existing.entity) || existing.entity === "Unknown Entity") && !isBlank(position.entity)) {
+      existing.entity = position.entity;
+    }
+    if (isBlank(existing.location) && !isBlank(position.location)) {
+      existing.location = position.location;
+    }
+    if ((isBlank(existing.title) || isDefaultTitle(existing.title)) && !isBlank(position.title)) {
+      existing.title = position.title;
+    }
+    if (isBlank(existing.englishReq) && !isBlank(position.englishReq)) {
+      existing.englishReq = position.englishReq;
+    }
+    if (isBlank(existing.nosReq) && !isBlank(position.nosReq)) {
+      existing.nosReq = position.nosReq;
+    }
+    if (isBlank(existing.rankReq) && !isBlank(position.rankReq)) {
+      existing.rankReq = position.rankReq;
+    }
+    if (isBlank(existing.catSpecQualReq) && !isBlank(position.catSpecQualReq)) {
+      existing.catSpecQualReq = position.catSpecQualReq;
+    }
+    if (isBlank(existing.ofcn) && !isBlank(position.ofcn)) {
+      existing.ofcn = position.ofcn;
+    }
+    if (isBlank(existing.poInterest) && !isBlank(position.poInterest)) {
+      existing.poInterest = position.poInterest;
+    }
+    if (isBlank(existing.incumbent) && !isBlank(position.incumbent)) {
+      existing.incumbent = position.incumbent;
+    }
+
+    const requirementSet = new Set(
+      existing.requirements.map((req) => req.text.trim().toLowerCase())
+    );
+    position.requirements.forEach((req) => {
+      const key = req.text.trim().toLowerCase();
+      if (!requirementSet.has(key)) {
+        existing.requirements.push(req);
+        requirementSet.add(key);
+      }
+    });
+  });
+
+  return {
+    items: Array.from(map.values()),
+    duplicateCount,
+    totalRows: data.length
+  };
 };
 
 const getPositionStatus = (position: Position, evaluations: Record<string, Evaluation>): PositionStatus => {
@@ -1203,21 +1294,21 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
 
 // --- New View Components ---
 
-const FileUploadView = ({ onDataLoaded }: { onDataLoaded: (c: Candidate[], p: Position[]) => void }) => {
-  const [candidatesFile, setCandidatesFile] = useState<File | null>(null);
-  const [positionsFile, setPositionsFile] = useState<File | null>(null);
+const FileUploadView = ({ onDataLoaded }: { onDataLoaded: (c: Candidate[], p: Position[], stats: ImportStats) => void }) => {
+  const [candidatesFiles, setCandidatesFiles] = useState<File[]>([]);
+  const [positionsFiles, setPositionsFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, type: 'c' | 'p') => {
-    if (e.target.files && e.target.files[0]) {
-      if (type === 'c') setCandidatesFile(e.target.files[0]);
-      else setPositionsFile(e.target.files[0]);
-    }
+    const files = e.target.files ? Array.from(e.target.files) : [];
+    if (type === 'c') setCandidatesFiles(files);
+    else setPositionsFiles(files);
+    setError("");
   };
 
   const processFiles = async () => {
-    if (!candidatesFile || !positionsFile) {
+    if (candidatesFiles.length === 0 || positionsFiles.length === 0) {
       setError("Please select both files.");
       return;
     }
@@ -1250,18 +1341,35 @@ const FileUploadView = ({ onDataLoaded }: { onDataLoaded: (c: Candidate[], p: Po
       };
 
       const [cData, pData] = await Promise.all([
-        readExcel(candidatesFile),
-        readExcel(positionsFile)
+        Promise.all(candidatesFiles.map((file) => readExcel(file))),
+        Promise.all(positionsFiles.map((file) => readExcel(file)))
       ]);
 
-      const candidates = parseCandidates(cData);
-      const positions = parsePositions(pData);
+      const candidatesRows = cData.flat();
+      const positionsRows = pData.flat();
+      const candidatesResult = parseCandidates(candidatesRows);
+      const positionsResult = parsePositions(positionsRows);
+
+      const candidates = candidatesResult.items;
+      const positions = positionsResult.items;
 
       if (candidates.length === 0 || positions.length === 0) {
         throw new Error("No valid data found in one or both files.");
       }
 
-      onDataLoaded(candidates, positions);
+      const stats: ImportStats = {
+        candidates: {
+          imported: candidatesResult.items.length,
+          duplicates: candidatesResult.duplicateCount,
+          totalRows: candidatesResult.totalRows
+        },
+        positions: {
+          imported: positionsResult.items.length,
+          duplicates: positionsResult.duplicateCount,
+          totalRows: positionsResult.totalRows
+        }
+      };
+      onDataLoaded(candidates, positions, stats);
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Error processing files");
@@ -1284,13 +1392,27 @@ const FileUploadView = ({ onDataLoaded }: { onDataLoaded: (c: Candidate[], p: Po
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Candidates List (Excel)</label>
-            <input type="file" accept=".xlsx, .xls" onChange={(e) => handleFileChange(e, 'c')} 
+            <input type="file" accept=".xlsx, .xls" multiple onChange={(e) => handleFileChange(e, 'c')} 
               className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
+            {candidatesFiles.length > 0 && (
+              <ul className="mt-2 text-xs text-slate-500 list-disc list-inside space-y-1">
+                {candidatesFiles.map((file) => (
+                  <li key={`${file.name}-${file.lastModified}`}>{file.name}</li>
+                ))}
+              </ul>
+            )}
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Positions List (Excel)</label>
-            <input type="file" accept=".xlsx, .xls" onChange={(e) => handleFileChange(e, 'p')}
+            <input type="file" accept=".xlsx, .xls" multiple onChange={(e) => handleFileChange(e, 'p')}
               className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
+            {positionsFiles.length > 0 && (
+              <ul className="mt-2 text-xs text-slate-500 list-disc list-inside space-y-1">
+                {positionsFiles.map((file) => (
+                  <li key={`${file.name}-${file.lastModified}`}>{file.name}</li>
+                ))}
+              </ul>
+            )}
           </div>
         </div>
 
@@ -1610,6 +1732,7 @@ const RecruitmentApp = () => {
   const [newCycleName, setNewCycleName] = useState("");
   const [backupError, setBackupError] = useState("");
   const [backupSuccess, setBackupSuccess] = useState("");
+  const [lastImportStats, setLastImportStats] = useState<ImportStats | null>(null);
   const backupInputRef = useRef<HTMLInputElement | null>(null);
 
   // Load from LocalStorage
@@ -1634,7 +1757,7 @@ const RecruitmentApp = () => {
     localStorage.setItem('recruitment_db', JSON.stringify(appData));
   }, [appData]);
 
-  const handleDataLoaded = (candidates: Candidate[], positions: Position[]) => {
+  const handleDataLoaded = (candidates: Candidate[], positions: Position[], stats: ImportStats) => {
     // Initialize empty evaluations for all matches
     const evaluations: Record<string, Evaluation> = { ...appData.evaluations };
     
@@ -1655,8 +1778,10 @@ const RecruitmentApp = () => {
           
           // Check if the valid position code exists in the candidate's messy string
           if (rawApp.includes(cleanPosCode)) {
-             // Link them
-             cand.appliedPositionCodes.push(pos.code);
+             // Link them (deduped)
+             if (!cand.appliedPositionCodes.includes(pos.code)) {
+               cand.appliedPositionCodes.push(pos.code);
+             }
 
              // Create evaluation entry if missing
              const key = `${pos.code}_${cand.id}`;
@@ -1680,6 +1805,7 @@ const RecruitmentApp = () => {
       evaluations,
       lastUpdated: Date.now()
     });
+    setLastImportStats(stats);
     setCurrentView('dashboard');
   };
 
@@ -2012,6 +2138,15 @@ const RecruitmentApp = () => {
             <div className="p-8 flex-1 overflow-y-auto">
               {/* Controls */}
               <div className="flex flex-col gap-4 mb-6">
+                {lastImportStats && (
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                    <div className="font-semibold text-slate-700 mb-2">Import summary</div>
+                    <div className="flex flex-col gap-1">
+                      <span>Candidates: {lastImportStats.candidates.imported} imported, {lastImportStats.candidates.duplicates} duplicates (rows: {lastImportStats.candidates.totalRows})</span>
+                      <span>Positions: {lastImportStats.positions.imported} imported, {lastImportStats.positions.duplicates} duplicates (rows: {lastImportStats.positions.totalRows})</span>
+                    </div>
+                  </div>
+                )}
                 <div className="flex gap-4">
                   <div className="relative flex-1 max-w-md">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
