@@ -1650,8 +1650,11 @@ const FileUploadView = ({ onDataLoaded }: { onDataLoaded: (c: Candidate[], p: Po
               const data = e.target?.result;
               const workbook = XLSX.read(data, { type: 'binary', cellDates: true });
               const firstSheetName = workbook.SheetNames[0];
+              console.log("[readExcel] Sheet names:", workbook.SheetNames);
+              console.log("[readExcel] First sheet name:", firstSheetName);
               const worksheet = workbook.Sheets[firstSheetName];
               const json = XLSX.utils.sheet_to_json(worksheet, { raw: true });
+              console.log("[readExcel] Sample keys:", Object.keys(json[0] || {}));
               resolve(json);
             } catch (err) {
               reject(err);
