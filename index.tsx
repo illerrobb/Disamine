@@ -1413,7 +1413,7 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
   XLSX.utils.book_append_sheet(workbook, worksheet, "Scheda Disamina");
   
   // Save file
-  XLSX.writeFile(workbook, `Scheda_Disamina_${position.code}.xlsx`);
+  XLSX.writeFile(workbook, `Scheda_Disamina_${position.code}.xlsx`, { cellStyles: true });
 };
 
 // --- New View Components ---
