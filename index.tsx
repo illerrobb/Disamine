@@ -1093,10 +1093,27 @@ const PositionCard: React.FC<{
 
 // --- Export Logic ---
 
-const exportToExcel = (position: Position, candidates: Candidate[], evaluations: Record<string, Evaluation>, positions: Position[]) => {
+const getStyledXlsx = () => {
   // @ts-ignore
-  if (!window.XLSX) return;
   const XLSX = (window as any).XLSX;
+  const hasCoreApi =
+    XLSX?.utils?.aoa_to_sheet &&
+    XLSX?.utils?.book_new &&
+    XLSX?.utils?.book_append_sheet &&
+    XLSX?.utils?.sheet_to_json &&
+    XLSX?.writeFile;
+
+  if (!hasCoreApi) {
+    throw new Error(
+      "XLSX styling build not available. Please load xlsx-js-style (with writeFile + style support) before importing or exporting."
+    );
+  }
+
+  return XLSX;
+};
+
+const exportToExcel = (position: Position, candidates: Candidate[], evaluations: Record<string, Evaluation>, positions: Position[]) => {
+  const XLSX = getStyledXlsx();
 
   // Filter out hidden requirements and split into Essential/Desirable
   const activeReqs = position.requirements.filter(r => !r.hidden);
@@ -1440,9 +1457,7 @@ const FileUploadView = ({ onDataLoaded }: { onDataLoaded: (c: Candidate[], p: Po
     setError("");
 
     try {
-      // @ts-ignore
-      const XLSX = (window as any).XLSX;
-      if (!XLSX) throw new Error("XLSX library not found. Please include it in index.html");
+      const XLSX = getStyledXlsx();
 
       const readExcel = (file: File) => {
         return new Promise<any[]>((resolve, reject) => {
