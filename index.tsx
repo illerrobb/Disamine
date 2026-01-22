@@ -1142,9 +1142,30 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
   row2[0] = dedalusText;
 
   // Row 3: Legend
-  const legendText = "in ROSSO la mancanza (o parziale possesso) di quanto previsto per essere eleggibile per la posizione in titolo - in VERDE l'attinenza dei requisiti degli Ufficiali segnalati a quanto previsto dalla Job description";
+  const legendText = "in ROSSO la mancanza (o parziale possesso) di quanto previsto per essere eleggibile per la posizione in titolo\nin VERDE l'attinenza dei requisiti degli Ufficiali segnalati a quanto previsto dalla Job description";
   const row3 = Array(totalCols).fill("");
-  row3[0] = legendText;
+  row3[0] = {
+    t: "s",
+    v: {
+      richText: [
+        { text: "in " },
+        {
+          text: "ROSSO",
+          font: { bold: true, color: { rgb: "C00000" } }
+        },
+        {
+          text: " la mancanza (o parziale possesso) di quanto previsto per essere eleggibile per la posizione in titolo\nin "
+        },
+        {
+          text: "VERDE",
+          font: { bold: true, color: { rgb: "008000" } }
+        },
+        {
+          text: " l'attinenza dei requisiti degli Ufficiali segnalati a quanto previsto dalla Job description"
+        }
+      ]
+    }
+  };
 
   // Row 4: Super Headers (REQUISITI JOB DESCRIPTION)
   // Spans from column index 6 (start of reqs) to 6 + totalReqsCount
