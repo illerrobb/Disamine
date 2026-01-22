@@ -1123,11 +1123,22 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
   const desirableCount = desirableReqs.length;
   const totalReqsCount = essentialCount + desirableCount;
 
+  const includeOfcn = position.ofcn === "SI";
+
+  const baseHeaders = [
+    "Nominativo",
+    `Profilo richiesto\n${position.rankReq} \\${position.catSpecQualReq}`,
+    "Attribuzioni specifiche/Corsi obbligatori",
+    ...(includeOfcn ? ["Idoneità OFCN"] : []),
+    `NOS\n${position.nosReq}`,
+    `Livello inglese\n${position.englishReq}`
+  ];
+
   // Total columns calculation
-  // Fixed Left: Nominativo, Grado, Attribuzioni, OFCN, NOS, Inglese (6 cols)
+  // Fixed Left: baseHeaders
   // Requirements: totalReqsCount
   // Fixed Right: Corso, FEO, Ente, Mandati Estero, Mandati NATO, Parere, Note (7 cols)
-  const totalCols = 6 + totalReqsCount + 7;
+  const totalCols = baseHeaders.length + totalReqsCount + 7;
 
   // --- Build Header Rows ---
 
@@ -1170,17 +1181,18 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
   // Row 4: Super Headers (REQUISITI JOB DESCRIPTION)
   // Split into segmented merges (left, central, right)
   const row4 = Array(totalCols).fill("");
+  const requisitiStartCol = baseHeaders.length;
   if (totalReqsCount > 0) {
-    row4[6] = "Requisiti Job Description";
+    row4[requisitiStartCol] = "Requisiti Job Description";
   }
 
   // Row 5: Group Headers (BASICI | JOB DESCRIPTION | ELEMENTI D'IMPIEGO)
   // NOMINATIVI starts at col 0, spans 1 col, 2 rows (handled by merges)
   const row5 = Array(totalCols).fill("");
   row5[0] = "NOMINATIVI SEGNALATI CON RICERCA PERSONALE"; // Will span A5:A6
-  row5[1] = "BASICI"; // Spans B5:F5
-  row5[6] = "JOB DESCRIPTION"; // Spans over essential + desirable
-  row5[6 + totalReqsCount] = "ELEMENTI D'IMPIEGO"; // Spans rest
+  row5[1] = "BASICI"; // Spans base headers (excluding nominativo)
+  row5[requisitiStartCol] = "JOB DESCRIPTION"; // Spans over essential + desirable
+  row5[requisitiStartCol + totalReqsCount] = "ELEMENTI D'IMPIEGO"; // Spans rest
 
   // Row 6: Specific Headers & Essential/Desirable Labels
   const row6 = Array(totalCols).fill("");
@@ -1198,19 +1210,14 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
   // The photo shows specific columns.
   
   // Let's implement Row 6 as the "ESSENTIAL" / "DESIRABLE" split row.
-  row6[6] = "ESSENTIAL";
+  row6[requisitiStartCol] = "ESSENTIAL";
   if (desirableCount > 0) {
-     row6[6 + essentialCount] = "DESIRABLE";
+     row6[requisitiStartCol + essentialCount] = "DESIRABLE";
   }
 
   // Row 7: The actual column headers
   const row7 = [
-     "Nominativo", 
-     "Grado richiesto", 
-     "Attribuzioni Specifiche / Corsi Obbligatori", 
-     "Idoneità OFCN", 
-     "NOS NATO", 
-     "Livello Inglese SLP",
+     ...baseHeaders,
      ...essentialReqs.map(r => r.text),
      ...desirableReqs.map(r => r.text),
      "CORSO GRADO AT.", 
@@ -1242,13 +1249,23 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
        return '';
     };
 
+    const englishLanguage = c.languages.find(l => l.language === "INGLESE");
+    const englishLevelRaw = englishLanguage?.level ?? "";
+    const englishLevelDigits = englishLevelRaw.replace(/\D/g, "");
+    const englishLevel = englishLevelDigits.length >= 4 ? englishLevelDigits.slice(0, 4) : englishLevelDigits;
+    const englishCell = englishLanguage ? `INGLESE\n${englishLevel || englishLevelRaw}` : "";
+
+    const baseValues = [
+       `${c.rank} ${c.role} ${c.category} ${c.specialty}\n${c.nominativo}`, // Nominativo
+       "SI", // Profilo richiesto match placeholder
+       "", // Attribuzioni specifiche/Corsi obbligatori (manuale)
+       ...(includeOfcn ? [""] : []), // Idoneità OFCN (manuale)
+       c.nosLevel, // NOS
+       englishCell // Inglese
+    ];
+
     return [
-       `${c.rank} ${c.role} ${c.category} ${c.specialty}\n${c.nominativo}`, // A
-       "SI", // Grado match placeholder (B)
-       "SI", // Attribuzioni placeholder (C)
-       "SI", // OFCN placeholder (D)
-       c.nosLevel, // E
-       c.languages.map(l => `${l.level}`).join(' '), // F
+       ...baseValues,
        ...essentialReqs.map(r => ev.reqEvaluations[r.id] === 'yes' ? 'SI' : ev.reqEvaluations[r.id] === 'no' ? 'NO' : '-'),
        ...desirableReqs.map(r => ev.reqEvaluations[r.id] === 'yes' ? 'SI' : ev.reqEvaluations[r.id] === 'no' ? 'NO' : '-'),
        `${c.category} / ${c.specialty}`, // Corso Grado AT
@@ -1270,41 +1287,40 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
      // Row 3 Legend
      { s: { r: 2, c: 0 }, e: { r: 2, c: totalCols - 1 } },
      // Row 4 segmented merges (left | requisiti | right)
-     { s: { r: 3, c: 0 }, e: { r: 3, c: 5 } },
-     (totalReqsCount > 0 ? { s: { r: 3, c: 6 }, e: { r: 3, c: 6 + totalReqsCount - 1 } } : null),
-     (6 + totalReqsCount <= totalCols - 1 ? { s: { r: 3, c: 6 + totalReqsCount }, e: { r: 3, c: totalCols - 1 } } : null),
+     { s: { r: 3, c: 0 }, e: { r: 3, c: baseHeaders.length - 1 } },
+     (totalReqsCount > 0 ? { s: { r: 3, c: requisitiStartCol }, e: { r: 3, c: requisitiStartCol + totalReqsCount - 1 } } : null),
+     (requisitiStartCol + totalReqsCount <= totalCols - 1 ? { s: { r: 3, c: requisitiStartCol + totalReqsCount }, e: { r: 3, c: totalCols - 1 } } : null),
      
      // Row 5 Group Headers
      // Nominativi (Rowspan 2: A5-A6) -> Actually A5-A7 based on row7 being column headers
      { s: { r: 4, c: 0 }, e: { r: 6, c: 0 } }, 
-     // Basici (Colspan 5: B5-F5)
-     { s: { r: 4, c: 1 }, e: { r: 4, c: 5 } },
+     // Basici (Colspan base headers excluding nominativo)
+     { s: { r: 4, c: 1 }, e: { r: 4, c: baseHeaders.length - 1 } },
      // Job Description (Colspan Total Reqs)
-     { s: { r: 4, c: 6 }, e: { r: 4, c: 6 + totalReqsCount - 1 } },
+     { s: { r: 4, c: requisitiStartCol }, e: { r: 4, c: requisitiStartCol + totalReqsCount - 1 } },
      // Elementi d'Impiego (Colspan 7)
-     { s: { r: 4, c: 6 + totalReqsCount }, e: { r: 4, c: totalCols - 1 } },
+     { s: { r: 4, c: requisitiStartCol + totalReqsCount }, e: { r: 4, c: totalCols - 1 } },
 
      // Row 6 Sub-headers
      // Essential
-     { s: { r: 5, c: 6 }, e: { r: 5, c: 6 + essentialCount - 1 } },
+     { s: { r: 5, c: requisitiStartCol }, e: { r: 5, c: requisitiStartCol + essentialCount - 1 } },
      // Desirable
-     (desirableCount > 0 ? { s: { r: 5, c: 6 + essentialCount }, e: { r: 5, c: 6 + totalReqsCount - 1 } } : null),
+     (desirableCount > 0 ? { s: { r: 5, c: requisitiStartCol + essentialCount }, e: { r: 5, c: requisitiStartCol + totalReqsCount - 1 } } : null),
 
      // Vertical merges for Fixed Headers (Basici columns) spanning rows 6-7 (indices 5-6)
-     { s: { r: 5, c: 1 }, e: { r: 6, c: 1 } }, // Grado
-     { s: { r: 5, c: 2 }, e: { r: 6, c: 2 } }, // Attribuzioni
-     { s: { r: 5, c: 3 }, e: { r: 6, c: 3 } }, // OFCN
-     { s: { r: 5, c: 4 }, e: { r: 6, c: 4 } }, // NOS
-     { s: { r: 5, c: 5 }, e: { r: 6, c: 5 } }, // Inglese
+     ...Array.from({ length: baseHeaders.length - 1 }, (_, idx) => ({
+       s: { r: 5, c: idx + 1 },
+       e: { r: 6, c: idx + 1 }
+     })),
 
      // Vertical merges for Fixed Headers (Elementi columns) spanning rows 6-7
-     { s: { r: 5, c: 6 + totalReqsCount }, e: { r: 6, c: 6 + totalReqsCount } }, // Corso
-     { s: { r: 5, c: 6 + totalReqsCount + 1 }, e: { r: 6, c: 6 + totalReqsCount + 1 } }, // FEO
-     { s: { r: 5, c: 6 + totalReqsCount + 2 }, e: { r: 6, c: 6 + totalReqsCount + 2 } }, // Ente
-     { s: { r: 5, c: 6 + totalReqsCount + 3 }, e: { r: 6, c: 6 + totalReqsCount + 3 } }, // Mandati
-     { s: { r: 5, c: 6 + totalReqsCount + 4 }, e: { r: 6, c: 6 + totalReqsCount + 4 } }, // NATO
-     { s: { r: 5, c: 6 + totalReqsCount + 5 }, e: { r: 6, c: 6 + totalReqsCount + 5 } }, // Parere
-     { s: { r: 5, c: 6 + totalReqsCount + 6 }, e: { r: 6, c: 6 + totalReqsCount + 6 } }, // Note
+     { s: { r: 5, c: requisitiStartCol + totalReqsCount }, e: { r: 6, c: requisitiStartCol + totalReqsCount } }, // Corso
+     { s: { r: 5, c: requisitiStartCol + totalReqsCount + 1 }, e: { r: 6, c: requisitiStartCol + totalReqsCount + 1 } }, // FEO
+     { s: { r: 5, c: requisitiStartCol + totalReqsCount + 2 }, e: { r: 6, c: requisitiStartCol + totalReqsCount + 2 } }, // Ente
+     { s: { r: 5, c: requisitiStartCol + totalReqsCount + 3 }, e: { r: 6, c: requisitiStartCol + totalReqsCount + 3 } }, // Mandati
+     { s: { r: 5, c: requisitiStartCol + totalReqsCount + 4 }, e: { r: 6, c: requisitiStartCol + totalReqsCount + 4 } }, // NATO
+     { s: { r: 5, c: requisitiStartCol + totalReqsCount + 5 }, e: { r: 6, c: requisitiStartCol + totalReqsCount + 5 } }, // Parere
+     { s: { r: 5, c: requisitiStartCol + totalReqsCount + 6 }, e: { r: 6, c: requisitiStartCol + totalReqsCount + 6 } }, // Note
 
   ].filter(Boolean);
 
@@ -1421,13 +1437,17 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
     });
   });
 
+  const baseColumnWidths = [
+    { wch: 28 }, // Nominativo
+    { wch: 16 }, // Profilo richiesto
+    { wch: 24 }, // Attribuzioni specifiche/Corsi obbligatori
+    ...(includeOfcn ? [{ wch: 12 }] : []), // Idoneità OFCN
+    { wch: 12 }, // NOS
+    { wch: 16 } // Inglese
+  ];
+
   worksheet["!cols"] = [
-    { wch: 28 },
-    { wch: 12 },
-    { wch: 22 },
-    { wch: 10 },
-    { wch: 10 },
-    { wch: 16 },
+    ...baseColumnWidths,
     ...essentialReqs.map(() => ({ wch: 18 })),
     ...desirableReqs.map(() => ({ wch: 18 })),
     { wch: 14 },
