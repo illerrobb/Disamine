@@ -2132,23 +2132,21 @@ const RecruitmentApp = () => {
     return ['ALL', ...Array.from(entes).sort()];
   }, [appData.positions]);
 
-  const filteredPositions = useMemo(() => {
-    const lowerSearch = searchTerm.toLowerCase();
-    return appData.positions.filter(p => {
-      const matchesSearch = 
-         p.title.toLowerCase().includes(lowerSearch) || 
-         p.code.toLowerCase().includes(lowerSearch) ||
-         p.entity.toLowerCase().includes(lowerSearch) || // Added entity search
-         p.location.toLowerCase().includes(lowerSearch); // Added location search
+  const lowerSearch = searchTerm.trim().toLowerCase();
+  const filteredPositions = appData.positions.filter(p => {
+    const matchesSearch = 
+      p.title.toLowerCase().includes(lowerSearch) || 
+      p.code.toLowerCase().includes(lowerSearch) ||
+      p.entity.toLowerCase().includes(lowerSearch) ||
+      p.location.toLowerCase().includes(lowerSearch);
 
-      const matchesEnte = filterEnte === 'ALL' || p.entity === filterEnte;
-      
-      const status = getPositionStatus(p, appData.evaluations);
-      const matchesStatus = filterStatus === 'all' || status === filterStatus;
+    const matchesEnte = filterEnte === 'ALL' || p.entity === filterEnte;
+    
+    const status = getPositionStatus(p, appData.evaluations);
+    const matchesStatus = filterStatus === 'all' || status === filterStatus;
 
-      return matchesSearch && matchesEnte && matchesStatus;
-    });
-  }, [appData.positions, appData.evaluations, searchTerm, filterEnte, filterStatus]);
+    return matchesSearch && matchesEnte && matchesStatus;
+  });
 
   // Views Logic
   if (currentView === 'upload') {
