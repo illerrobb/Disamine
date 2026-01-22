@@ -993,106 +993,407 @@ const PositionCard: React.FC<{
   );
 };
 
-// --- New Components ---
+// --- Export Logic ---
+
+const exportToExcel = (position: Position, candidates: Candidate[], evaluations: Record<string, Evaluation>, positions: Position[]) => {
+  // @ts-ignore
+  if (!window.XLSX) return;
+  const XLSX = (window as any).XLSX;
+
+  // Filter out hidden requirements and split into Essential/Desirable
+  const activeReqs = position.requirements.filter(r => !r.hidden);
+  const essentialReqs = activeReqs.filter(r => r.type === 'essential');
+  const desirableReqs = activeReqs.filter(r => r.type === 'desirable');
+
+  const essentialCount = essentialReqs.length;
+  const desirableCount = desirableReqs.length;
+  const totalReqsCount = essentialCount + desirableCount;
+
+  // Total columns calculation
+  // Fixed Left: Nominativo, Grado, Attribuzioni, OFCN, NOS, Inglese (6 cols)
+  // Requirements: totalReqsCount
+  // Fixed Right: Corso, FEO, Ente, Mandati Estero, Mandati NATO, Parere, Note (7 cols)
+  const totalCols = 6 + totalReqsCount + 7;
+
+  // --- Build Header Rows ---
+
+  // Row 1: Title
+  const titleText = `SCHEDA DISAMINA P.O. ${position.code} ${position.location} ${position.title} (${position.entity})`;
+  const row1 = Array(totalCols).fill(null);
+  row1[0] = titleText;
+
+  // Row 2: Dedalus Index
+  const dedalusText = `Indice di funzionalità Dedalus: ${position.poInterest || 'N/A'}`;
+  const row2 = Array(totalCols).fill(null);
+  row2[0] = dedalusText;
+
+  // Row 3: Legend
+  const legendText = "in ROSSO la mancanza (o parziale possesso) di quanto previsto per essere eleggibile per la posizione in titolo - in VERDE l'attinenza dei requisiti degli Ufficiali segnalati a quanto previsto dalla Job description";
+  const row3 = Array(totalCols).fill(null);
+  row3[0] = legendText;
+
+  // Row 4: Super Headers (REQUISITI JOB DESCRIPTION)
+  // Spans from column index 6 (start of reqs) to 6 + totalReqsCount
+  const row4 = Array(totalCols).fill(null);
+  row4[6] = "Requisiti Job Description";
+
+  // Row 5: Group Headers (BASICI | JOB DESCRIPTION | ELEMENTI D'IMPIEGO)
+  // NOMINATIVI starts at col 0, spans 1 col, 2 rows (handled by merges)
+  const row5 = Array(totalCols).fill(null);
+  row5[0] = "NOMINATIVI SEGNALATI CON RICERCA PERSONALE"; // Will span A5:A6
+  row5[1] = "BASICI"; // Spans B5:F5
+  row5[6] = "JOB DESCRIPTION"; // Spans over essential + desirable
+  row5[6 + totalReqsCount] = "ELEMENTI D'IMPIEGO"; // Spans rest
+
+  // Row 6: Specific Headers & Essential/Desirable Labels
+  const row6 = Array(totalCols).fill(null);
+  
+  // Basici Sub-headers (technically part of the Basici block, but let's put them here for simplicity in this structure)
+  // Or rather, Row 6 should contain "ESSENTIAL" and "DESIRABLE" under JOB DESCRIPTION
+  // Let's shift content to match image:
+  // Image Row 5: BASICI | JOB DESCRIPTION | ELEMENTI
+  // Image Row 6: Specific headers for Basici | ESSENTIAL | DESIRABLE | Specific headers for Elementi
+  // Image Row 7: Specific Req Text under Essential/Desirable
+  
+  // Let's adjust to 7 header rows to perfectly match the complexity if needed, 
+  // but let's try to fit into the structure provided in the prompt's text which implied row 1-2 merged etc.
+  // The prompt says "Row 1... Row 2... then see photo".
+  // The photo shows specific columns.
+  
+  // Let's implement Row 6 as the "ESSENTIAL" / "DESIRABLE" split row.
+  row6[6] = "ESSENTIAL";
+  if (desirableCount > 0) {
+     row6[6 + essentialCount] = "DESIRABLE";
+  }
+
+  // Row 7: The actual column headers
+  const row7 = [
+     "Nominativo", 
+     "Grado richiesto", 
+     "Attribuzioni Specifiche / Corsi Obbligatori", 
+     "Idoneità OFCN", 
+     "NOS NATO", 
+     "Livello Inglese SLP",
+     ...essentialReqs.map(r => r.text),
+     ...desirableReqs.map(r => r.text),
+     "CORSO GRADO AT.", 
+     "FEO minima ente attuale (3 anni)", 
+     "ENTE FEO", 
+     "Nr. mandati estero / data ultimo rientro", 
+     "Nr. mandati Nato ITALIA / data ultimo rientro", 
+     "Parere Com.te", 
+     "Note"
+  ];
+
+  // --- Data Rows ---
+  const dataRows = candidates.map(c => {
+    const ev = evaluations[`${position.code}_${c.id}`];
+    if (!ev) return null;
+
+    const otherSel = getOtherSelectionInfo(c.id, position.code, evaluations, positions);
+    let noteText = ev.notes || "";
+    if (otherSel) {
+       const autoText = `INDIVIDUATO PER LA POSIZIONE ${otherSel.code} ${otherSel.title} (${otherSel.entity})`;
+       noteText = noteText ? `${autoText}\n${noteText}` : autoText;
+    }
+
+    const mapStatusToText = (s: string) => {
+       if (s === 'selected') return 'FAVOREVOLE';
+       if (s === 'rejected') return 'NON FAVOREVOLE';
+       if (s === 'reserve') return 'RISERVA';
+       if (s === 'non-compatible') return 'NON COMPATIBILE';
+       return '';
+    };
+
+    return [
+       `${c.rank} ${c.role} ${c.category} ${c.specialty}\n${c.nominativo}`, // A
+       "SI", // Grado match placeholder (B)
+       "SI", // Attribuzioni placeholder (C)
+       "SI", // OFCN placeholder (D)
+       c.nosLevel, // E
+       c.languages.map(l => `${l.level}`).join(' '), // F
+       ...essentialReqs.map(r => ev.reqEvaluations[r.id] === 'yes' ? 'SI' : ev.reqEvaluations[r.id] === 'no' ? 'NO' : '-'),
+       ...desirableReqs.map(r => ev.reqEvaluations[r.id] === 'yes' ? 'SI' : ev.reqEvaluations[r.id] === 'no' ? 'NO' : '-'),
+       `${c.category} / ${c.specialty}`, // Corso Grado AT
+       c.nosExpiry, // FEO Minima placeholder (using expiry as date reference)
+       c.serviceEntity, // Ente FEO
+       c.internationalMandates, // Mandati Estero
+       "0", // Mandati NATO Italia placeholder
+       mapStatusToText(ev.status), // Parere
+       noteText // Note
+    ];
+  }).filter(Boolean);
+
+  // --- Merges ---
+  const merges = [
+     // Row 1 Title
+     { s: { r: 0, c: 0 }, e: { r: 0, c: totalCols - 1 } },
+     // Row 2 Dedalus
+     { s: { r: 1, c: 0 }, e: { r: 1, c: totalCols - 1 } },
+     // Row 3 Legend
+     { s: { r: 2, c: 0 }, e: { r: 2, c: totalCols - 1 } },
+     // Row 4 "Requisiti Job Description"
+     { s: { r: 3, c: 6 }, e: { r: 3, c: 6 + totalReqsCount - 1 } },
+     
+     // Row 5 Group Headers
+     // Nominativi (Rowspan 2: A5-A6) -> Actually A5-A7 based on row7 being column headers
+     { s: { r: 4, c: 0 }, e: { r: 6, c: 0 } }, 
+     // Basici (Colspan 5: B5-F5)
+     { s: { r: 4, c: 1 }, e: { r: 4, c: 5 } },
+     // Job Description (Colspan Total Reqs)
+     { s: { r: 4, c: 6 }, e: { r: 4, c: 6 + totalReqsCount - 1 } },
+     // Elementi d'Impiego (Colspan 7)
+     { s: { r: 4, c: 6 + totalReqsCount }, e: { r: 4, c: totalCols - 1 } },
+
+     // Row 6 Sub-headers
+     // Essential
+     { s: { r: 5, c: 6 }, e: { r: 5, c: 6 + essentialCount - 1 } },
+     // Desirable
+     (desirableCount > 0 ? { s: { r: 5, c: 6 + essentialCount }, e: { r: 5, c: 6 + totalReqsCount - 1 } } : null),
+
+     // Vertical merges for Fixed Headers (Basici columns) spanning rows 6-7 (indices 5-6)
+     { s: { r: 5, c: 1 }, e: { r: 6, c: 1 } }, // Grado
+     { s: { r: 5, c: 2 }, e: { r: 6, c: 2 } }, // Attribuzioni
+     { s: { r: 5, c: 3 }, e: { r: 6, c: 3 } }, // OFCN
+     { s: { r: 5, c: 4 }, e: { r: 6, c: 4 } }, // NOS
+     { s: { r: 5, c: 5 }, e: { r: 6, c: 5 } }, // Inglese
+
+     // Vertical merges for Fixed Headers (Elementi columns) spanning rows 6-7
+     { s: { r: 5, c: 6 + totalReqsCount }, e: { r: 6, c: 6 + totalReqsCount } }, // Corso
+     { s: { r: 5, c: 6 + totalReqsCount + 1 }, e: { r: 6, c: 6 + totalReqsCount + 1 } }, // FEO
+     { s: { r: 5, c: 6 + totalReqsCount + 2 }, e: { r: 6, c: 6 + totalReqsCount + 2 } }, // Ente
+     { s: { r: 5, c: 6 + totalReqsCount + 3 }, e: { r: 6, c: 6 + totalReqsCount + 3 } }, // Mandati
+     { s: { r: 5, c: 6 + totalReqsCount + 4 }, e: { r: 6, c: 6 + totalReqsCount + 4 } }, // NATO
+     { s: { r: 5, c: 6 + totalReqsCount + 5 }, e: { r: 6, c: 6 + totalReqsCount + 5 } }, // Parere
+     { s: { r: 5, c: 6 + totalReqsCount + 6 }, e: { r: 6, c: 6 + totalReqsCount + 6 } }, // Note
+
+  ].filter(Boolean);
+
+  // Combine all rows
+  const wsData = [
+     row1,
+     row2,
+     row3,
+     row4,
+     row5,
+     row6,
+     row7,
+     ...dataRows
+  ];
+
+  const worksheet = XLSX.utils.aoa_to_sheet(wsData);
+  worksheet['!merges'] = merges;
+
+  // Basic styling hints (works with Pro or style-aware builds, ignored by standard SheetJS)
+  // We can't easily add colors without specific libraries, but we set up the structure.
+  
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Scheda Disamina");
+  
+  // Save file
+  XLSX.writeFile(workbook, `Scheda_Disamina_${position.code}.xlsx`);
+};
+
+// --- New View Components ---
 
 const FileUploadView = ({ onDataLoaded }: { onDataLoaded: (c: Candidate[], p: Position[]) => void }) => {
   const [candidatesFile, setCandidatesFile] = useState<File | null>(null);
   const [positionsFile, setPositionsFile] = useState<File | null>(null);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, type: 'c' | 'p') => {
+    if (e.target.files && e.target.files[0]) {
+      if (type === 'c') setCandidatesFile(e.target.files[0]);
+      else setPositionsFile(e.target.files[0]);
+    }
+  };
 
   const processFiles = async () => {
-    if (!candidatesFile || !positionsFile) return;
-    setIsProcessing(true);
-    setError(null);
+    if (!candidatesFile || !positionsFile) {
+      setError("Please select both files.");
+      return;
+    }
+    setLoading(true);
+    setError("");
 
     try {
       // @ts-ignore
-      if (!(window as any).XLSX) {
-        throw new Error("XLSX library not loaded. Please ensure script is included.");
-      }
       const XLSX = (window as any).XLSX;
+      if (!XLSX) throw new Error("XLSX library not found. Please include it in index.html");
 
       const readExcel = (file: File) => {
         return new Promise<any[]>((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = (e) => {
             try {
-              const data = new Uint8Array(e.target?.result as ArrayBuffer);
-              const workbook = XLSX.read(data, { type: 'array' });
-              const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-              const jsonData = XLSX.utils.sheet_to_json(firstSheet);
-              resolve(jsonData);
+              const data = e.target?.result;
+              const workbook = XLSX.read(data, { type: 'binary' });
+              const firstSheetName = workbook.SheetNames[0];
+              const worksheet = workbook.Sheets[firstSheetName];
+              const json = XLSX.utils.sheet_to_json(worksheet);
+              resolve(json);
             } catch (err) {
               reject(err);
             }
           };
-          reader.readAsArrayBuffer(file);
+          reader.onerror = reject;
+          reader.readAsBinaryString(file);
         });
       };
 
-      const [candData, posData] = await Promise.all([
+      const [cData, pData] = await Promise.all([
         readExcel(candidatesFile),
         readExcel(positionsFile)
       ]);
 
-      const parsedCandidates = parseCandidates(candData);
-      const parsedPositions = parsePositions(posData);
+      const candidates = parseCandidates(cData);
+      const positions = parsePositions(pData);
 
-      onDataLoaded(parsedCandidates, parsedPositions);
+      if (candidates.length === 0 || positions.length === 0) {
+        throw new Error("No valid data found in one or both files.");
+      }
+
+      onDataLoaded(candidates, positions);
     } catch (err: any) {
       console.error(err);
-      setError(err.message || "Failed to process files");
+      setError(err.message || "Error processing files");
     } finally {
-      setIsProcessing(false);
+      setLoading(false);
     }
   };
 
   return (
-    <div className="flex flex-col items-center justify-center h-screen bg-slate-50 p-4">
-      <div className="bg-white p-8 rounded-lg shadow-md max-w-md w-full text-center">
-        <h1 className="text-2xl font-bold text-slate-800 mb-6">Setup Recruitment Data</h1>
+    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
+      <div className="bg-white p-8 rounded-xl shadow-lg max-w-md w-full border border-slate-200">
+        <div className="flex justify-center mb-6">
+           <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center text-blue-600">
+             <Upload className="w-8 h-8" />
+           </div>
+        </div>
+        <h1 className="text-2xl font-bold text-center text-slate-800 mb-2">Import Data</h1>
+        <p className="text-center text-slate-500 mb-8">Upload the Excel files to begin.</p>
         
-        <div className="space-y-4 mb-6">
-          <div className="border-2 border-dashed border-slate-300 rounded-lg p-6 hover:bg-slate-50 transition-colors relative">
-            <input 
-              type="file" 
-              accept=".xlsx,.xls" 
-              onChange={(e) => setPositionsFile(e.target.files?.[0] || null)}
-              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-            />
-            <FileSpreadsheet className="w-8 h-8 text-slate-400 mx-auto mb-2" />
-            <p className="text-sm font-medium text-slate-600">
-              {positionsFile ? positionsFile.name : "Upload Positions Excel"}
-            </p>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Candidates List (Excel)</label>
+            <input type="file" accept=".xlsx, .xls" onChange={(e) => handleFileChange(e, 'c')} 
+              className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
           </div>
-
-          <div className="border-2 border-dashed border-slate-300 rounded-lg p-6 hover:bg-slate-50 transition-colors relative">
-             <input 
-              type="file" 
-              accept=".xlsx,.xls" 
-              onChange={(e) => setCandidatesFile(e.target.files?.[0] || null)}
-              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-            />
-            <Users className="w-8 h-8 text-slate-400 mx-auto mb-2" />
-            <p className="text-sm font-medium text-slate-600">
-              {candidatesFile ? candidatesFile.name : "Upload Candidates Excel"}
-            </p>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Positions List (Excel)</label>
+            <input type="file" accept=".xlsx, .xls" onChange={(e) => handleFileChange(e, 'p')}
+              className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
           </div>
         </div>
 
-        {error && <div className="text-red-500 text-sm mb-4">{error}</div>}
+        {error && (
+          <div className="mt-4 p-3 bg-red-50 text-red-600 text-sm rounded flex items-center gap-2">
+            <AlertCircle className="w-4 h-4" /> {error}
+          </div>
+        )}
 
-        <Button 
-          onClick={processFiles} 
-          disabled={!candidatesFile || !positionsFile || isProcessing}
-          className="w-full justify-center"
-        >
-          {isProcessing ? "Processing..." : "Start Evaluation"}
+        <Button onClick={processFiles} disabled={loading} className="w-full mt-6 justify-center">
+          {loading ? 'Processing...' : 'Start Import'}
         </Button>
       </div>
     </div>
   );
+};
+
+const CandidatesListView = ({
+   candidates,
+   positions,
+   evaluations,
+   onNavigateToPosition,
+   onOpenCandidateDetail
+}: {
+   candidates: Candidate[];
+   positions: Position[];
+   evaluations: Record<string, Evaluation>;
+   onNavigateToPosition: (code: string) => void;
+   onOpenCandidateDetail: (id: string) => void;
+}) => {
+   const [search, setSearch] = useState("");
+
+   const filtered = candidates.filter(c => 
+      c.nominativo.toLowerCase().includes(search.toLowerCase()) ||
+      c.id.toLowerCase().includes(search.toLowerCase()) ||
+      c.rank.toLowerCase().includes(search.toLowerCase())
+   );
+
+   return (
+      <div className="flex flex-col h-full bg-slate-50">
+         <header className="bg-white border-b border-slate-200 px-8 py-4">
+            <h1 className="text-2xl font-bold text-slate-800 mb-4">Candidates Directory</h1>
+            <div className="relative max-w-md">
+               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+               <input 
+                  type="text" 
+                  placeholder="Search candidates by name, ID, or rank..." 
+                  className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+               />
+            </div>
+         </header>
+         <div className="flex-1 overflow-y-auto p-8">
+            <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
+               <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-50 border-b border-slate-200">
+                     <tr>
+                        <th className="px-6 py-3 font-semibold text-slate-600">Candidate</th>
+                        <th className="px-6 py-3 font-semibold text-slate-600">Rank & Role</th>
+                        <th className="px-6 py-3 font-semibold text-slate-600">Applications</th>
+                        <th className="px-6 py-3 font-semibold text-slate-600">Actions</th>
+                     </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                     {filtered.map(c => {
+                        const apps = positions.filter(p => !!evaluations[`${p.code}_${c.id}`]);
+                        return (
+                           <tr key={c.id} className="hover:bg-slate-50 transition-colors">
+                              <td className="px-6 py-4">
+                                 <div className="font-bold text-slate-900">{c.nominativo}</div>
+                                 <div className="text-xs text-slate-500 font-mono">{c.id}</div>
+                              </td>
+                              <td className="px-6 py-4">
+                                 <div className="text-slate-700">{c.rank}</div>
+                                 <div className="text-xs text-slate-500">{c.role} {c.category} {c.specialty}</div>
+                              </td>
+                              <td className="px-6 py-4">
+                                 <div className="flex flex-wrap gap-1">
+                                    {apps.map(p => {
+                                       const ev = evaluations[`${p.code}_${c.id}`];
+                                       const isSel = ev?.status === 'selected';
+                                       return (
+                                          <button 
+                                             key={p.code}
+                                             onClick={() => onNavigateToPosition(p.code)}
+                                             className={`text-xs px-2 py-0.5 rounded border ${isSel ? 'bg-green-100 text-green-700 border-green-200' : 'bg-slate-100 text-slate-600 border-slate-200 hover:border-slate-300'}`}
+                                          >
+                                             {p.code}
+                                          </button>
+                                       )
+                                    })}
+                                    {apps.length === 0 && <span className="text-slate-400 text-xs italic">No active applications</span>}
+                                 </div>
+                              </td>
+                              <td className="px-6 py-4">
+                                 <Button variant="secondary" className="h-8 px-3 text-xs" onClick={() => onOpenCandidateDetail(c.id)}>
+                                    View Profile
+                                 </Button>
+                              </td>
+                           </tr>
+                        );
+                     })}
+                  </tbody>
+               </table>
+               {filtered.length === 0 && <div className="p-8 text-center text-slate-500">No candidates found.</div>}
+            </div>
+         </div>
+      </div>
+   );
 };
 
 const PositionDetailView = ({
@@ -1112,322 +1413,166 @@ const PositionDetailView = ({
   onUpdate: (ev: Evaluation) => void;
   onBack: () => void;
   onToggleReqVisibility: (posCode: string, reqId: string) => void;
-  onExport: (p: Position, c: Candidate[], e: Record<string, Evaluation>, all: Position[]) => void;
+  onExport: (p: Position, c: Candidate[], e: Record<string, Evaluation>, pos: Position[]) => void;
 }) => {
   const [viewMode, setViewMode] = useState<'list' | 'matrix'>('list');
-  const [filter, setFilter] = useState<'all' | 'pending' | 'selected'>('all');
+  const [filter, setFilter] = useState('all'); // all, selected, pending...
 
+  // Filter candidates relevant to this position
   const candidates = useMemo(() => {
-    return allCandidates.filter(c => !!evaluations[`${position.code}_${c.id}`]);
-  }, [allCandidates, evaluations, position.code]);
+    return allCandidates.filter(c => {
+       const ev = evaluations[`${position.code}_${c.id}`];
+       if (!ev) return false;
+       if (filter === 'all') return true;
+       return ev.status === filter;
+    });
+  }, [allCandidates, evaluations, position.code, filter]);
 
-  const filteredCandidates = candidates.filter(c => {
-    if (filter === 'all') return true;
-    const status = evaluations[`${position.code}_${c.id}`]?.status;
-    if (filter === 'pending') return status === 'pending';
-    if (filter === 'selected') return status === 'selected';
-    return true;
-  });
+  const stats = useMemo(() => {
+     const relevant = allCandidates.filter(c => !!evaluations[`${position.code}_${c.id}`]);
+     const selected = relevant.filter(c => evaluations[`${position.code}_${c.id}`]?.status === 'selected').length;
+     const pending = relevant.filter(c => evaluations[`${position.code}_${c.id}`]?.status === 'pending').length;
+     return { total: relevant.length, selected, pending };
+  }, [allCandidates, evaluations, position.code]);
 
   return (
     <div className="flex flex-col h-screen bg-slate-50">
-      <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between sticky top-0 z-30">
-        <div className="flex items-center gap-4">
-          <Button variant="secondary" onClick={onBack}>
-             <ChevronRight className="w-4 h-4 rotate-180 mr-1" /> Back
-          </Button>
-          <div>
-            <h1 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-               <span className="font-mono text-sm bg-slate-100 px-2 py-1 rounded text-slate-500">{position.code}</span>
-               {position.title}
-            </h1>
-            <p className="text-sm text-slate-500">{position.entity} • {position.location}</p>
+      <header className="bg-white border-b border-slate-200 shadow-sm z-20">
+        <div className="px-6 py-4">
+          <div className="flex items-center gap-4 mb-4">
+            <Button variant="secondary" onClick={onBack}>
+               <ChevronRight className="w-4 h-4 rotate-180 mr-1" /> Back
+            </Button>
+            <div className="flex-1">
+               <div className="flex items-center gap-2 mb-1">
+                 <span className="font-mono text-sm font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">{position.code}</span>
+                 <h1 className="text-xl font-bold text-slate-900 truncate">{position.title}</h1>
+               </div>
+               <div className="text-sm text-slate-500 flex gap-4">
+                 <span className="flex items-center gap-1"><Building className="w-3 h-3" /> {position.entity}</span>
+                 <span className="flex items-center gap-1"><Globe className="w-3 h-3" /> {position.location}</span>
+               </div>
+            </div>
+            <div className="flex items-center gap-2">
+               <div className="text-right mr-4 text-xs text-slate-500">
+                  <div className="font-bold text-slate-700">{stats.total} Candidates</div>
+                  <div>{stats.selected} Selected • {stats.pending} Pending</div>
+               </div>
+               <Button variant="secondary" onClick={() => onExport(position, candidates, evaluations, allPositions)}>
+                  <Download className="w-4 h-4 mr-2" /> Export Excel
+               </Button>
+            </div>
+          </div>
+
+          {/* Controls */}
+          <div className="flex items-center justify-between gap-4 mt-6">
+             <div className="flex bg-slate-100 p-1 rounded-lg">
+                <button 
+                  onClick={() => setViewMode('list')}
+                  className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all flex items-center gap-2 ${viewMode === 'list' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                   <LayoutList className="w-4 h-4" /> List
+                </button>
+                <button 
+                  onClick={() => setViewMode('matrix')}
+                  className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all flex items-center gap-2 ${viewMode === 'matrix' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                   <TableIcon className="w-4 h-4" /> Matrix
+                </button>
+             </div>
+             
+             <div className="flex items-center gap-2">
+                <Filter className="w-4 h-4 text-slate-400" />
+                <select 
+                  className="text-sm border-none bg-transparent focus:ring-0 font-medium text-slate-600 cursor-pointer"
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                >
+                   <option value="all">All Candidates</option>
+                   <option value="pending">Pending Only</option>
+                   <option value="selected">Selected Only</option>
+                   <option value="reserve">Reserve Only</option>
+                   <option value="rejected">Rejected Only</option>
+                </select>
+             </div>
           </div>
         </div>
-        
-        <div className="flex items-center gap-3">
-           <div className="flex bg-slate-100 rounded p-1">
-              <button 
-                onClick={() => setViewMode('list')}
-                className={`p-1.5 rounded ${viewMode === 'list' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
-              >
-                <LayoutList className="w-4 h-4" />
-              </button>
-              <button 
-                onClick={() => setViewMode('matrix')}
-                className={`p-1.5 rounded ${viewMode === 'matrix' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
-              >
-                <TableIcon className="w-4 h-4" />
-              </button>
-           </div>
-           
-           <div className="h-6 w-px bg-slate-200 mx-2"></div>
-
-           <Button variant="secondary" onClick={() => onExport(position, candidates, evaluations, allPositions)}>
-             <Download className="w-4 h-4 mr-2" /> Export
-           </Button>
-        </div>
       </header>
-      
-      <div className="flex-1 overflow-hidden flex">
-         {/* Sidebar for Requirements (Restored) */}
-         <div className="w-80 flex-shrink-0 bg-slate-50 border-r border-slate-200 p-6 overflow-y-auto hidden lg:block">
-            <h3 className="text-xs font-bold text-slate-500 uppercase mb-4 flex items-center gap-2">
-               <Filter className="w-3 h-3" /> Manage Visibility
-            </h3>
-            <div className="space-y-4">
-               <div>
-                  <div className="text-xs font-semibold text-blue-700 mb-2">Essential</div>
-                  <div className="space-y-2">
-                     {position.requirements.filter(r => r.type === 'essential').map(req => (
-                        <button
-                           key={req.id}
-                           onClick={() => onToggleReqVisibility(position.code, req.id)}
-                           className={`w-full flex items-start gap-2 text-left p-2 rounded text-xs transition-colors ${!req.hidden ? 'bg-white shadow-sm text-slate-700' : 'text-slate-400 hover:bg-slate-100'}`}
-                        >
-                           {req.hidden ? <EyeOff className="w-3 h-3 mt-0.5 shrink-0" /> : <Eye className="w-3 h-3 mt-0.5 shrink-0" />}
-                           <span className={req.hidden ? 'line-through' : ''}>{req.text}</span>
-                        </button>
-                     ))}
-                  </div>
-               </div>
-               <div>
-                  <div className="text-xs font-semibold text-slate-600 mb-2">Desirable</div>
-                  <div className="space-y-2">
-                     {position.requirements.filter(r => r.type === 'desirable').map(req => (
-                        <button
-                           key={req.id}
-                           onClick={() => onToggleReqVisibility(position.code, req.id)}
-                           className={`w-full flex items-start gap-2 text-left p-2 rounded text-xs transition-colors ${!req.hidden ? 'bg-white shadow-sm text-slate-700' : 'text-slate-400 hover:bg-slate-100'}`}
-                        >
-                           {req.hidden ? <EyeOff className="w-3 h-3 mt-0.5 shrink-0" /> : <Eye className="w-3 h-3 mt-0.5 shrink-0" />}
-                           <span className={req.hidden ? 'line-through' : ''}>{req.text}</span>
-                        </button>
-                     ))}
-                  </div>
-               </div>
-            </div>
-         </div>
 
+      <div className="flex-1 overflow-hidden flex flex-row">
          {/* Main Content */}
-         <div className="flex-1 flex flex-col overflow-hidden bg-slate-100">
-            {/* Toolbar */}
-            <div className="px-6 py-3 bg-white border-b border-slate-200 flex items-center justify-between shrink-0">
-               <div className="flex gap-2">
-                  {['all', 'pending', 'selected'].map(f => (
-                    <button
-                      key={f}
-                      onClick={() => setFilter(f as any)}
-                      className={`px-3 py-1 text-xs font-medium rounded-full border ${filter === f ? 'bg-blue-50 text-blue-600 border-blue-200' : 'bg-white text-slate-600 border-slate-200'}`}
-                    >
-                      {f.charAt(0).toUpperCase() + f.slice(1)}
-                    </button>
-                  ))}
-               </div>
-               <div className="text-xs text-slate-500">
-                  {filteredCandidates.length} Candidates
-               </div>
-            </div>
-
-            {/* List/Matrix Area */}
-            <div className="flex-1 overflow-auto p-6">
-               {viewMode === 'list' ? (
-                 <div className="max-w-4xl mx-auto">
-                    {filteredCandidates.map(c => (
-                       <WorksheetRow 
-                          key={c.id} 
-                          candidate={c}
-                          position={position}
-                          evaluation={evaluations[`${position.code}_${c.id}`]}
-                          otherSelection={getOtherSelectionInfo(c.id, position.code, evaluations, allPositions)}
-                          onUpdate={onUpdate}
-                       />
-                    ))}
-                 </div>
-               ) : (
-                  <CandidatesMatrixView 
-                     candidates={filteredCandidates}
-                     position={position}
-                     evaluations={evaluations}
-                     positions={allPositions}
-                     onUpdate={onUpdate}
-                  />
-               )}
-            </div>
-         </div>
-      </div>
-    </div>
-  );
-};
-
-const CandidatesListView = ({
-  candidates,
-  positions,
-  evaluations,
-  onNavigateToPosition,
-  onOpenCandidateDetail
-}: {
-  candidates: Candidate[];
-  positions: Position[];
-  evaluations: Record<string, Evaluation>;
-  onNavigateToPosition: (code: string) => void;
-  onOpenCandidateDetail: (id: string) => void;
-}) => {
-  const [search, setSearch] = useState("");
-
-  const filtered = useMemo(() => {
-    const s = search.toLowerCase();
-    return candidates.filter(c => 
-       c.nominativo.toLowerCase().includes(s) ||
-       c.id.includes(s) ||
-       c.rank.toLowerCase().includes(s)
-    );
-  }, [candidates, search]);
-
-  return (
-    <div className="flex flex-col h-full bg-slate-50">
-      <header className="bg-white border-b border-slate-200 px-8 py-4">
-        <h1 className="text-2xl font-bold text-slate-800 mb-4">Candidates Directory</h1>
-        <div className="relative max-w-md">
-           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-           <input 
-              type="text" 
-              placeholder="Search candidates..." 
-              className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-           />
-        </div>
-      </header>
-
-      <div className="flex-1 overflow-y-auto p-8">
-         <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
-            <table className="w-full text-left text-sm">
-               <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase text-xs">
-                  <tr>
-                     <th className="px-6 py-3">Candidate</th>
-                     <th className="px-6 py-3">Rank / Role</th>
-                     <th className="px-6 py-3">Entity</th>
-                     <th className="px-6 py-3">Applications</th>
-                     <th className="px-6 py-3 text-right">Action</th>
-                  </tr>
-               </thead>
-               <tbody className="divide-y divide-slate-100">
-                  {filtered.map(c => {
-                     // Find applications
-                     const apps = positions.filter(p => !!evaluations[`${p.code}_${c.id}`]);
-                     
+         <div className="flex-1 overflow-y-auto p-6">
+            {viewMode === 'list' ? (
+               <div className="max-w-4xl mx-auto">
+                  {candidates.map(c => {
+                     const ev = evaluations[`${position.code}_${c.id}`];
+                     const other = getOtherSelectionInfo(c.id, position.code, evaluations, allPositions);
+                     if (!ev) return null;
                      return (
-                        <tr key={c.id} className="hover:bg-slate-50 transition-colors">
-                           <td className="px-6 py-4">
-                              <div className="font-bold text-slate-800">{c.nominativo}</div>
-                              <div className="text-xs text-slate-500 font-mono">{c.id}</div>
-                           </td>
-                           <td className="px-6 py-4">
-                              <div className="text-slate-700">{c.rank}</div>
-                              <div className="text-xs text-slate-500">{c.role} {c.category}</div>
-                           </td>
-                           <td className="px-6 py-4 text-slate-600">
-                              {c.serviceEntity}
-                           </td>
-                           <td className="px-6 py-4">
-                              <div className="flex flex-wrap gap-1">
-                                 {apps.map(p => {
-                                    const ev = evaluations[`${p.code}_${c.id}`];
-                                    const statusColor = ev.status === 'selected' ? 'bg-green-100 text-green-700 border-green-200' :
-                                                      ev.status === 'rejected' ? 'bg-red-50 text-red-700 border-red-100' :
-                                                      'bg-slate-100 text-slate-600 border-slate-200';
-                                    return (
-                                       <button 
-                                          key={p.code}
-                                          onClick={() => onNavigateToPosition(p.code)}
-                                          className={`text-[10px] px-1.5 py-0.5 rounded border ${statusColor} hover:opacity-80`}
-                                       >
-                                          {p.code}
-                                       </button>
-                                    )
-                                 })}
-                                 {apps.length === 0 && <span className="text-slate-400 italic text-xs">No applications</span>}
-                              </div>
-                           </td>
-                           <td className="px-6 py-4 text-right">
-                              <Button variant="secondary" className="text-xs py-1 h-8" onClick={() => onOpenCandidateDetail(c.id)}>
-                                 View Profile
-                              </Button>
-                           </td>
-                        </tr>
-                     )
+                        <WorksheetRow 
+                           key={c.id}
+                           candidate={c}
+                           evaluation={ev}
+                           position={position}
+                           otherSelection={other}
+                           onUpdate={onUpdate}
+                        />
+                     );
                   })}
-               </tbody>
-            </table>
-            {filtered.length === 0 && (
-               <div className="p-8 text-center text-slate-500">
-                  No candidates found matching your search.
                </div>
+            ) : (
+               <CandidatesMatrixView 
+                  candidates={candidates}
+                  position={position}
+                  evaluations={evaluations}
+                  positions={allPositions}
+                  onUpdate={onUpdate}
+               />
             )}
          </div>
+
+         {/* Requirements Sidebar (Right) */}
+         <div className="w-80 bg-white border-l border-slate-200 flex flex-col overflow-hidden shadow-lg">
+            <div className="p-4 border-b border-slate-100 bg-slate-50">
+               <h3 className="font-bold text-slate-700 text-sm uppercase flex items-center gap-2">
+                  <Shield className="w-4 h-4" /> Requirements Config
+               </h3>
+               <p className="text-xs text-slate-500 mt-1">Toggle requirements visibility for the matrix.</p>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+               <div>
+                  <h4 className="text-xs font-bold text-slate-400 uppercase mb-2">Essential</h4>
+                  {position.requirements.filter(r => r.type === 'essential').map(r => (
+                     <div key={r.id} className="flex items-start gap-2 mb-2 group">
+                        <button 
+                           onClick={() => onToggleReqVisibility(position.code, r.id)}
+                           className={`mt-0.5 shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-colors ${!r.hidden ? 'bg-blue-500 border-blue-600 text-white' : 'bg-slate-100 border-slate-300 text-slate-300'}`}
+                        >
+                           {!r.hidden ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                        </button>
+                        <span className={`text-xs ${r.hidden ? 'text-slate-400 line-through' : 'text-slate-700'}`}>{r.text}</span>
+                     </div>
+                  ))}
+               </div>
+               <div>
+                  <h4 className="text-xs font-bold text-slate-400 uppercase mb-2">Desirable</h4>
+                  {position.requirements.filter(r => r.type === 'desirable').map(r => (
+                     <div key={r.id} className="flex items-start gap-2 mb-2 group">
+                        <button 
+                           onClick={() => onToggleReqVisibility(position.code, r.id)}
+                           className={`mt-0.5 shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-colors ${!r.hidden ? 'bg-blue-500 border-blue-600 text-white' : 'bg-slate-100 border-slate-300 text-slate-300'}`}
+                        >
+                           {!r.hidden ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                        </button>
+                        <span className={`text-xs ${r.hidden ? 'text-slate-400 line-through' : 'text-slate-700'}`}>{r.text}</span>
+                     </div>
+                  ))}
+               </div>
+            </div>
+         </div>
       </div>
     </div>
   );
-};
-
-// --- Export Logic ---
-
-const exportToExcel = (position: Position, candidates: Candidate[], evaluations: Record<string, Evaluation>, positions: Position[]) => {
-  // @ts-ignore
-  if (!window.XLSX) return;
-  const XLSX = (window as any).XLSX;
-
-  // 1. Prepare Data Matrix
-  // Filter out hidden requirements
-  const activeReqs = position.requirements.filter(r => !r.hidden);
-
-  const rows = candidates.map(c => {
-    const ev = evaluations[`${position.code}_${c.id}`];
-    if (!ev) return null;
-
-    // Build requirement columns
-    const reqCols: any = {};
-    activeReqs.forEach((req, idx) => {
-      const val = ev.reqEvaluations[req.id];
-      const label = val === 'yes' ? 'YES' : val === 'no' ? 'NO' : val === 'partial' ? 'PARTIAL' : '-';
-      reqCols[`Req ${idx + 1} (${req.type})`] = label;
-    });
-
-    // Check if selected elsewhere to append to notes
-    let notes = ev.notes || "";
-    const otherSel = getOtherSelectionInfo(c.id, position.code, evaluations, positions);
-    if (otherSel) {
-      const autoText = `Individuato per la posizione ${otherSel.code} ${otherSel.title} - ${otherSel.entity}`;
-      notes = notes ? `${autoText}\n${notes}` : autoText;
-    }
-
-    return {
-      "Matricola": c.id,
-      "Grado": c.rank,
-      "Nominativo": c.nominativo,
-      "Ente Servizio": c.serviceEntity,
-      "Ruolo": c.role,
-      "Categoria": c.category,
-      "Specialità": c.specialty,
-      "NOS": `${c.nosLevel} ${c.nosQual}`,
-      "Mandati": c.internationalMandates,
-      "Mix": c.mixDescription,
-      "Lingue": c.languages.map(l => `${l.language} ${l.level}`).join('; '),
-      ...reqCols,
-      "Valutazione Finale": ev.status.toUpperCase(),
-      "Note": notes
-    };
-  }).filter(Boolean);
-
-  if (rows.length === 0) return;
-
-  const worksheet = XLSX.utils.json_to_sheet(rows);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, "Scheda Disamina");
-  
-  // Save file
-  XLSX.writeFile(workbook, `Scheda_Disamina_${position.code}.xlsx`);
 };
 
 // --- Main App ---
