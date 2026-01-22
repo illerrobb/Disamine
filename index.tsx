@@ -863,13 +863,25 @@ const WorksheetRow: React.FC<{
   evaluation: Evaluation; 
   position: Position; 
   otherSelection: Position | null;
-  onUpdate: (e: Evaluation) => void; 
+  onUpdate: (e: Evaluation) => void;
+  isDragging: boolean;
+  isDropTarget: boolean;
+  onDragStart: (candidateId: string) => void;
+  onDragEnd: () => void;
+  onDrop: (candidateId: string) => void;
+  onDragOver: (candidateId: string) => void;
 }> = ({ 
   candidate, 
   evaluation, 
   position, 
   otherSelection,
-  onUpdate 
+  onUpdate,
+  isDragging,
+  isDropTarget,
+  onDragStart,
+  onDragEnd,
+  onDrop,
+  onDragOver
 }) => {
   const [expanded, setExpanded] = useState(false);
   const isNonCompatible = evaluation.status === 'non-compatible';
@@ -904,8 +916,31 @@ const WorksheetRow: React.FC<{
   };
 
   return (
-    <div className={`border rounded-lg mb-2 shadow-sm overflow-hidden transition-all ${isNonCompatible ? 'bg-gray-50 border-gray-200 opacity-75' : 'bg-white border-slate-200'}`}>
-      <div className="flex items-center p-3 gap-4 hover:bg-slate-50 transition-colors">
+    <div
+      onDragOver={(event) => {
+        event.preventDefault();
+        onDragOver(candidate.id);
+      }}
+      onDrop={(event) => {
+        event.preventDefault();
+        onDrop(candidate.id);
+      }}
+      className={`border rounded-lg mb-2 shadow-sm overflow-hidden transition-all ${isNonCompatible ? 'bg-gray-50 border-gray-200 opacity-75' : 'bg-white border-slate-200'} ${isDropTarget ? 'ring-2 ring-blue-300' : ''}`}
+    >
+      <div className={`flex items-center p-3 gap-4 hover:bg-slate-50 transition-colors ${isDragging ? 'opacity-60' : ''}`}>
+        <button
+          draggable
+          onDragStart={(event) => {
+            event.dataTransfer.effectAllowed = "move";
+            event.dataTransfer.setData("text/plain", candidate.id);
+            onDragStart(candidate.id);
+          }}
+          onDragEnd={onDragEnd}
+          className="cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600"
+          aria-label="Drag to reorder"
+        >
+          <Menu className="w-4 h-4" />
+        </button>
         <button onClick={() => setExpanded(!expanded)} className="text-slate-400 hover:text-slate-600">
           {expanded ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
         </button>
@@ -1175,6 +1210,14 @@ const getStyledXlsx = () => {
 
 const exportToExcel = (position: Position, candidates: Candidate[], evaluations: Record<string, Evaluation>, positions: Position[]) => {
   const XLSX = getStyledXlsx();
+  const baseOrderMap = new Map(candidates.map((c, index) => [c.id, index]));
+  const orderedCandidates = [...candidates].sort((a, b) => {
+    const evA = evaluations[`${position.code}_${a.id}`];
+    const evB = evaluations[`${position.code}_${b.id}`];
+    const orderA = evA?.manualOrder ?? baseOrderMap.get(a.id) ?? 0;
+    const orderB = evB?.manualOrder ?? baseOrderMap.get(b.id) ?? 0;
+    return orderA - orderB;
+  });
 
   // Filter out hidden requirements and split into Essential/Desirable
   const activeReqs = position.requirements.filter(r => !r.hidden);
@@ -1275,7 +1318,7 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
   const red = "C00000";
 
   // --- Data Rows ---
-  const dataRows = candidates.map(c => {
+  const dataRows = orderedCandidates.map(c => {
     const ev = evaluations[`${position.code}_${c.id}`];
     if (!ev) return null;
 
@@ -1736,6 +1779,7 @@ const PositionDetailView = ({
   evaluations,
   allPositions,
   onUpdate,
+  onReorder,
   onBack,
   onToggleReqVisibility,
   onExport
@@ -1745,29 +1789,65 @@ const PositionDetailView = ({
   evaluations: Record<string, Evaluation>;
   allPositions: Position[];
   onUpdate: (ev: Evaluation) => void;
+  onReorder: (positionId: string, orderedCandidateIds: string[]) => void;
   onBack: () => void;
   onToggleReqVisibility: (posCode: string, reqId: string) => void;
   onExport: (p: Position, c: Candidate[], e: Record<string, Evaluation>, pos: Position[]) => void;
 }) => {
   const [viewMode, setViewMode] = useState<'list' | 'matrix'>('list');
   const [filter, setFilter] = useState('all'); // all, selected, pending...
+  const [draggedCandidateId, setDraggedCandidateId] = useState<string | null>(null);
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const baseOrderMap = useMemo(() => new Map(allCandidates.map((c, index) => [c.id, index])), [allCandidates]);
 
-  // Filter candidates relevant to this position
-  const candidates = useMemo(() => {
-    return allCandidates.filter(c => {
-       const ev = evaluations[`${position.code}_${c.id}`];
-       if (!ev) return false;
-       if (filter === 'all') return true;
-       return ev.status === filter;
+  const positionCandidates = useMemo(() => {
+    return allCandidates.filter(c => !!evaluations[`${position.code}_${c.id}`]);
+  }, [allCandidates, evaluations, position.code]);
+
+  const orderedCandidates = useMemo(() => {
+    return [...positionCandidates].sort((a, b) => {
+      const evA = evaluations[`${position.code}_${a.id}`];
+      const evB = evaluations[`${position.code}_${b.id}`];
+      const orderA = evA?.manualOrder ?? baseOrderMap.get(a.id) ?? 0;
+      const orderB = evB?.manualOrder ?? baseOrderMap.get(b.id) ?? 0;
+      return orderA - orderB;
     });
-  }, [allCandidates, evaluations, position.code, filter]);
+  }, [positionCandidates, evaluations, position.code, baseOrderMap]);
+
+  const candidates = useMemo(() => {
+    return orderedCandidates.filter(c => {
+      const ev = evaluations[`${position.code}_${c.id}`];
+      if (!ev) return false;
+      if (filter === 'all') return true;
+      return ev.status === filter;
+    });
+  }, [orderedCandidates, evaluations, position.code, filter]);
 
   const stats = useMemo(() => {
-     const relevant = allCandidates.filter(c => !!evaluations[`${position.code}_${c.id}`]);
-     const selected = relevant.filter(c => evaluations[`${position.code}_${c.id}`]?.status === 'selected').length;
-     const pending = relevant.filter(c => evaluations[`${position.code}_${c.id}`]?.status === 'pending').length;
-     return { total: relevant.length, selected, pending };
-  }, [allCandidates, evaluations, position.code]);
+     const selected = positionCandidates.filter(c => evaluations[`${position.code}_${c.id}`]?.status === 'selected').length;
+     const pending = positionCandidates.filter(c => evaluations[`${position.code}_${c.id}`]?.status === 'pending').length;
+     return { total: positionCandidates.length, selected, pending };
+  }, [positionCandidates, evaluations, position.code]);
+
+  const handleDropCandidate = (targetCandidateId: string) => {
+    if (!draggedCandidateId || draggedCandidateId === targetCandidateId) {
+      setDraggedCandidateId(null);
+      setDropTargetId(null);
+      return;
+    }
+    const fullIds = orderedCandidates.map(c => c.id);
+    const nextIds = fullIds.filter(id => id !== draggedCandidateId);
+    const targetIndex = nextIds.indexOf(targetCandidateId);
+    if (targetIndex === -1) {
+      setDraggedCandidateId(null);
+      setDropTargetId(null);
+      return;
+    }
+    nextIds.splice(targetIndex, 0, draggedCandidateId);
+    onReorder(position.code, nextIds);
+    setDraggedCandidateId(null);
+    setDropTargetId(null);
+  };
 
   return (
     <div className="flex flex-col h-screen bg-slate-50">
@@ -1850,6 +1930,22 @@ const PositionDetailView = ({
                            position={position}
                            otherSelection={other}
                            onUpdate={onUpdate}
+                           isDragging={draggedCandidateId === c.id}
+                           isDropTarget={dropTargetId === c.id}
+                           onDragStart={(candidateId) => {
+                             setDraggedCandidateId(candidateId);
+                             setDropTargetId(candidateId);
+                           }}
+                           onDragEnd={() => {
+                             setDraggedCandidateId(null);
+                             setDropTargetId(null);
+                           }}
+                           onDrop={handleDropCandidate}
+                           onDragOver={(candidateId) => {
+                             if (draggedCandidateId && draggedCandidateId !== candidateId) {
+                               setDropTargetId(candidateId);
+                             }
+                           }}
                         />
                      );
                   })}
@@ -2046,6 +2142,27 @@ const RecruitmentApp = () => {
     });
   };
 
+  const updateManualOrder = (positionId: string, orderedCandidateIds: string[]) => {
+    setAppData(prev => {
+      const newEvaluations = { ...prev.evaluations };
+      orderedCandidateIds.forEach((candidateId, index) => {
+        const key = `${positionId}_${candidateId}`;
+        const existing = newEvaluations[key];
+        if (existing) {
+          newEvaluations[key] = {
+            ...existing,
+            manualOrder: index
+          };
+        }
+      });
+      return {
+        ...prev,
+        evaluations: newEvaluations,
+        lastUpdated: Date.now()
+      };
+    });
+  };
+
   const toggleRequirementVisibility = (positionCode: string, reqId: string) => {
     setAppData(prev => {
       const posIndex = prev.positions.findIndex(p => p.code === positionCode);
@@ -2229,6 +2346,7 @@ const RecruitmentApp = () => {
           evaluations={appData.evaluations}
           allPositions={appData.positions}
           onUpdate={updateEvaluation}
+          onReorder={updateManualOrder}
           onBack={() => setCurrentView('dashboard')}
           onToggleReqVisibility={toggleRequirementVisibility}
           onExport={exportToExcel}
