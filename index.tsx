@@ -1134,34 +1134,34 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
 
   // Row 1: Title
   const titleText = `SCHEDA DISAMINA P.O. ${position.code} ${position.location} ${position.title} (${position.entity})`;
-  const row1 = Array(totalCols).fill(null);
+  const row1 = Array(totalCols).fill("");
   row1[0] = titleText;
 
   // Row 2: Dedalus Index
   const dedalusText = `Indice di funzionalità Dedalus: ${position.poInterest || 'N/A'}`;
-  const row2 = Array(totalCols).fill(null);
+  const row2 = Array(totalCols).fill("");
   row2[0] = dedalusText;
 
   // Row 3: Legend
   const legendText = "in ROSSO la mancanza (o parziale possesso) di quanto previsto per essere eleggibile per la posizione in titolo - in VERDE l'attinenza dei requisiti degli Ufficiali segnalati a quanto previsto dalla Job description";
-  const row3 = Array(totalCols).fill(null);
+  const row3 = Array(totalCols).fill("");
   row3[0] = legendText;
 
   // Row 4: Super Headers (REQUISITI JOB DESCRIPTION)
   // Spans from column index 6 (start of reqs) to 6 + totalReqsCount
-  const row4 = Array(totalCols).fill(null);
+  const row4 = Array(totalCols).fill("");
   row4[6] = "Requisiti Job Description";
 
   // Row 5: Group Headers (BASICI | JOB DESCRIPTION | ELEMENTI D'IMPIEGO)
   // NOMINATIVI starts at col 0, spans 1 col, 2 rows (handled by merges)
-  const row5 = Array(totalCols).fill(null);
+  const row5 = Array(totalCols).fill("");
   row5[0] = "NOMINATIVI SEGNALATI CON RICERCA PERSONALE"; // Will span A5:A6
   row5[1] = "BASICI"; // Spans B5:F5
   row5[6] = "JOB DESCRIPTION"; // Spans over essential + desirable
   row5[6 + totalReqsCount] = "ELEMENTI D'IMPIEGO"; // Spans rest
 
   // Row 6: Specific Headers & Essential/Desirable Labels
-  const row6 = Array(totalCols).fill(null);
+  const row6 = Array(totalCols).fill("");
   
   // Basici Sub-headers (technically part of the Basici block, but let's put them here for simplicity in this structure)
   // Or rather, Row 6 should contain "ESSENTIAL" and "DESIRABLE" under JOB DESCRIPTION
