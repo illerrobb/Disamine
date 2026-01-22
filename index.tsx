@@ -1168,9 +1168,11 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
   };
 
   // Row 4: Super Headers (REQUISITI JOB DESCRIPTION)
-  // Spans from column index 6 (start of reqs) to 6 + totalReqsCount
+  // Split into segmented merges (left, central, right)
   const row4 = Array(totalCols).fill("");
-  row4[6] = "Requisiti Job Description";
+  if (totalReqsCount > 0) {
+    row4[6] = "Requisiti Job Description";
+  }
 
   // Row 5: Group Headers (BASICI | JOB DESCRIPTION | ELEMENTI D'IMPIEGO)
   // NOMINATIVI starts at col 0, spans 1 col, 2 rows (handled by merges)
@@ -1267,8 +1269,10 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
      { s: { r: 1, c: 0 }, e: { r: 1, c: totalCols - 1 } },
      // Row 3 Legend
      { s: { r: 2, c: 0 }, e: { r: 2, c: totalCols - 1 } },
-     // Row 4 "Requisiti Job Description"
-     { s: { r: 3, c: 6 }, e: { r: 3, c: 6 + totalReqsCount - 1 } },
+     // Row 4 segmented merges (left | requisiti | right)
+     { s: { r: 3, c: 0 }, e: { r: 3, c: 5 } },
+     (totalReqsCount > 0 ? { s: { r: 3, c: 6 }, e: { r: 3, c: 6 + totalReqsCount - 1 } } : null),
+     (6 + totalReqsCount <= totalCols - 1 ? { s: { r: 3, c: 6 + totalReqsCount }, e: { r: 3, c: totalCols - 1 } } : null),
      
      // Row 5 Group Headers
      // Nominativi (Rowspan 2: A5-A6) -> Actually A5-A7 based on row7 being column headers
