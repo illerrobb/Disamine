@@ -1478,6 +1478,10 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
     (desirableCount > 0 ? { s: { r: 4, c: requisitiStartCol + essentialCount }, e: { r: 4, c: requisitiStartCol + totalReqsCount - 1 } } : null)
   ].filter(Boolean);
 
+  const candidatesWithoutFeoDate = candidates.filter(candidate => !candidate.feoDate);
+  const sampleCandidates = (candidatesWithoutFeoDate.length > 0 ? candidatesWithoutFeoDate : candidates).slice(0, 5);
+  console.log("[exportToExcel] candidates sample", sampleCandidates);
+
   // Combine all rows
   const wsData = [
     row1,
