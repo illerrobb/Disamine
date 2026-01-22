@@ -180,15 +180,16 @@ const parseCandidates = (data: any[]): DedupResult<Candidate> => {
     const nosLivelloKey = findKey(keys, "LIVELLO NOS", "NOS LEVEL");
     const nosQualKey = findKey(keys, "QUALIFICA NOS", "NOS QUALIFICATION");
     const nosScadenzaKey = findKey(keys, "SCADENZA", "RILASCIO", "EXPIRY");
-    const feoDateKey = findKey(
-      keys,
-      "DT ENTE SVZ",
-      "DT. ENTE SVZ",
-      "DATA ENTE SVZ",
-      "DATA FEO",
-      "DT FEO",
-      "FEO"
-    );
+    const feoDateKey =
+      findKey(
+        keys,
+        "DT ENTE SVZ",
+        "DT. ENTE SVZ",
+        "DATA ENTE SVZ",
+        "DATA FEO",
+        "DT FEO",
+        "DT. FEO"
+      ) ?? keys.find((k) => normalizeHeader(k) === "FEO");
 
     // History
     const mandatiKey = findKey(keys, "MANDATI", "INTERNAZIONALI", "MANDATES");
