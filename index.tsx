@@ -180,7 +180,15 @@ const parseCandidates = (data: any[]): DedupResult<Candidate> => {
     const nosLivelloKey = findKey(keys, "LIVELLO NOS", "NOS LEVEL");
     const nosQualKey = findKey(keys, "QUALIFICA NOS", "NOS QUALIFICATION");
     const nosScadenzaKey = findKey(keys, "SCADENZA", "RILASCIO", "EXPIRY");
-    const feoDateKey = findKey(keys, "DT ENTE SVZ", "DATA ENTE SVZ");
+    const feoDateKey = findKey(
+      keys,
+      "DT ENTE SVZ",
+      "DT. ENTE SVZ",
+      "DATA ENTE SVZ",
+      "DATA FEO",
+      "DT FEO",
+      "FEO"
+    );
 
     // History
     const mandatiKey = findKey(keys, "MANDATI", "INTERNAZIONALI", "MANDATES");
@@ -1221,11 +1229,18 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
      ...desirableReqs.map(r => r.text),
      "CORSO\nGRADUAT.",
      "Data FEO",
-     "ENTE FEO",
+     "Ente FEO",
      "Nr. mandati estero / data ultimo rientro",
      "Parere Com.te",
      "Note"
   ];
+
+  const headerFillBlue = "D9E2F3";
+  const nominativoFill = "BFBFBF";
+  const white = "FFFFFF";
+  const black = "000000";
+  const green = "008000";
+  const red = "C00000";
 
   // --- Data Rows ---
   const dataRows = candidates.map(c => {
@@ -1316,14 +1331,50 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
   ];
 
   const worksheet = XLSX.utils.aoa_to_sheet(wsData);
+  const legendRichText = {
+    richText: [
+      { text: "in " },
+      {
+        text: "ROSSO",
+        font: { name: "Calibri", sz: 9, bold: true, color: { rgb: red } }
+      },
+      {
+        text: " la mancanza (o parziale possesso) di quanto previsto per essere eleggibile per la posizione in titolo\nin "
+      },
+      {
+        text: "VERDE",
+        font: { name: "Calibri", sz: 9, bold: true, color: { rgb: green } }
+      },
+      {
+        text: " l'attinenza dei requisiti degli Ufficiali segnalati a quanto previsto dalla Job description"
+      }
+    ]
+  };
+  if (worksheet["A3"]) {
+    worksheet["A3"].t = "s";
+    worksheet["A3"].v = legendRichText;
+  }
+  dataRows.forEach((row, idx) => {
+    const r = 6 + idx;
+    const cellAddr = XLSX.utils.encode_cell({ r, c: 0 });
+    if (!worksheet[cellAddr]) return;
+    const cellText = String(row[0] ?? "");
+    const [roleLine, nominativoLine = ""] = cellText.split("\n");
+    worksheet[cellAddr].t = "s";
+    worksheet[cellAddr].v = {
+      richText: [
+        {
+          text: roleLine ? `${roleLine}\n` : "",
+          font: { name: "Calibri", sz: 10, color: { rgb: black } }
+        },
+        {
+          text: nominativoLine,
+          font: { name: "Calibri", sz: 10, bold: true, color: { rgb: black } }
+        }
+      ]
+    };
+  });
   worksheet['!merges'] = merges;
-
-  const headerFillBlue = "D9E2F3";
-  const nominativoFill = "BFBFBF";
-  const white = "FFFFFF";
-  const black = "000000";
-  const green = "008000";
-  const red = "C00000";
 
   const baseBorder = {
     top: { style: "thin", color: { rgb: black } },
