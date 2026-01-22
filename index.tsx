@@ -1367,6 +1367,26 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
     worksheet["A3"].t = "s";
     worksheet["A3"].v = legendRichText;
   }
+  dataRows.forEach((row, idx) => {
+    const r = 6 + idx;
+    const cellAddr = XLSX.utils.encode_cell({ r, c: 0 });
+    if (!worksheet[cellAddr]) return;
+    const cellText = String(row[0] ?? "");
+    const [roleLine, nominativoLine = ""] = cellText.split("\n");
+    worksheet[cellAddr].t = "s";
+    worksheet[cellAddr].v = {
+      richText: [
+        {
+          text: roleLine ? `${roleLine}\n` : "",
+          font: { name: "Calibri", sz: 10, color: { rgb: black } }
+        },
+        {
+          text: nominativoLine,
+          font: { name: "Calibri", sz: 10, bold: true, color: { rgb: black } }
+        }
+      ]
+    };
+  });
   worksheet['!merges'] = merges;
 
   const baseBorder = {
