@@ -125,12 +125,43 @@ const findKey = (keys: string[], ...searchTerms: string[]) => {
 
 const formatExcelDate = (value: unknown) => {
   if (value === null || value === undefined) return "";
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toLocaleDateString("it-IT");
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return "";
+    const numericString = trimmed.replace(",", ".");
+    if (!Number.isNaN(Number(numericString))) {
+      const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+      const date = new Date(excelEpoch.getTime() + Number(numericString) * 86400 * 1000);
+      if (!Number.isNaN(date.getTime())) {
+        return date.toLocaleDateString("it-IT");
+      }
+    }
+
+    const match = trimmed.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})/);
+    if (match) {
+      const [, day, month, yearRaw] = match;
+      const year = yearRaw.length === 2 ? `20${yearRaw}` : yearRaw;
+      const parsed = new Date(Number(year), Number(month) - 1, Number(day));
+      if (!Number.isNaN(parsed.getTime())) {
+        return parsed.toLocaleDateString("it-IT");
+      }
+    }
+
+    const parsed = new Date(trimmed);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toLocaleDateString("it-IT");
+    }
+    return trimmed;
+  }
+
   const numericValue =
     typeof value === "number"
       ? value
-      : typeof value === "string" && value.trim() !== "" && !Number.isNaN(Number(value))
-        ? Number(value)
-        : null;
+      : null;
 
   if (numericValue !== null) {
     const excelEpoch = new Date(Date.UTC(1899, 11, 30));
@@ -1269,21 +1300,10 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
     const englishLevel = englishLevelDigits.length >= 4 ? englishLevelDigits.slice(0, 4) : englishLevelDigits;
     const englishCell = englishLanguage ? `INGLESE\n${englishLevel || englishLevelRaw}` : "";
 
-    const nominativoRichText = {
-      richText: [
-        {
-          text: `${c.rank} ${c.role} ${c.category} ${c.specialty}\n`,
-          font: { name: "Calibri", sz: 10, color: { rgb: black } }
-        },
-        {
-          text: c.nominativo,
-          font: { name: "Calibri", sz: 10, bold: true, color: { rgb: black } }
-        }
-      ]
-    };
+    const nominativoLabel = `${[c.rank, c.role, c.category, c.specialty].filter(Boolean).join(" ")}\n${c.nominativo}`.trim();
 
     const baseValues = [
-       nominativoRichText, // Nominativo
+       nominativoLabel, // Nominativo
        "SI", // Profilo richiesto match placeholder
        "", // Attribuzioni specifiche/Corsi obbligatori (manuale)
        ...(includeOfcn ? [""] : []), // Idoneità OFCN (manuale)
@@ -1299,7 +1319,7 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
        ...essentialReqs.map(r => ev.reqEvaluations[r.id] === 'yes' ? 'SI' : ev.reqEvaluations[r.id] === 'no' ? 'NO' : '-'),
        ...desirableReqs.map(r => ev.reqEvaluations[r.id] === 'yes' ? 'SI' : ev.reqEvaluations[r.id] === 'no' ? 'NO' : '-'),
        corsoGraduat, // Corso/Graduat.
-       formatExcelDate(c.feoDate), // Data FEO
+       c.feoDate, // Data FEO
        c.serviceEntity, // Ente FEO
        mandatesDetail, // Mandati Estero / data ultimo rientro
        mapStatusToText(ev.status), // Parere
@@ -1345,49 +1365,10 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
   ];
 
   const worksheet = XLSX.utils.aoa_to_sheet(wsData);
-  const legendRichText = {
-    richText: [
-      { text: "in " },
-      {
-        text: "ROSSO",
-        font: { name: "Calibri", sz: 9, bold: true, color: { rgb: red } }
-      },
-      {
-        text: " la mancanza (o parziale possesso) di quanto previsto per essere eleggibile per la posizione in titolo\nin "
-      },
-      {
-        text: "VERDE",
-        font: { name: "Calibri", sz: 9, bold: true, color: { rgb: green } }
-      },
-      {
-        text: " l'attinenza dei requisiti degli Ufficiali segnalati a quanto previsto dalla Job description"
-      }
-    ]
-  };
   if (worksheet["A3"]) {
     worksheet["A3"].t = "s";
-    worksheet["A3"].v = legendRichText;
+    worksheet["A3"].v = legendText;
   }
-  dataRows.forEach((row, idx) => {
-    const r = 6 + idx;
-    const cellAddr = XLSX.utils.encode_cell({ r, c: 0 });
-    if (!worksheet[cellAddr]) return;
-    const cellText = String(row[0] ?? "");
-    const [roleLine, nominativoLine = ""] = cellText.split("\n");
-    worksheet[cellAddr].t = "s";
-    worksheet[cellAddr].v = {
-      richText: [
-        {
-          text: roleLine ? `${roleLine}\n` : "",
-          font: { name: "Calibri", sz: 10, color: { rgb: black } }
-        },
-        {
-          text: nominativoLine,
-          font: { name: "Calibri", sz: 10, bold: true, color: { rgb: black } }
-        }
-      ]
-    };
-  });
   worksheet['!merges'] = merges;
 
   const baseBorder = {
@@ -1550,10 +1531,10 @@ const FileUploadView = ({ onDataLoaded }: { onDataLoaded: (c: Candidate[], p: Po
           reader.onload = (e) => {
             try {
               const data = e.target?.result;
-              const workbook = XLSX.read(data, { type: 'binary' });
+              const workbook = XLSX.read(data, { type: 'binary', cellDates: true });
               const firstSheetName = workbook.SheetNames[0];
               const worksheet = workbook.Sheets[firstSheetName];
-              const json = XLSX.utils.sheet_to_json(worksheet);
+              const json = XLSX.utils.sheet_to_json(worksheet, { raw: true });
               resolve(json);
             } catch (err) {
               reject(err);
