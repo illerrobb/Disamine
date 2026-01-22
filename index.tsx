@@ -256,6 +256,10 @@ const parseCandidates = (data: any[]): DedupResult<Candidate> => {
       // We do NOT split by separators here anymore because of complex separators (e.g. " - ").
       // We just store the raw string. The matching logic is now in handleDataLoaded using the known Position list (Reverse Lookup).
       const rawApplied = String(row[poSegnalateKey] || "");
+      const feoRawValue = row[feoDateKey];
+      console.log("parseCandidates feoDate raw:", feoRawValue, "type:", typeof feoRawValue);
+      const formattedFeoDate = formatExcelDate(feoRawValue);
+      console.log("parseCandidates feoDate formatted:", formattedFeoDate);
       
       map.set(id, {
         id,
@@ -271,7 +275,7 @@ const parseCandidates = (data: any[]): DedupResult<Candidate> => {
         nosQual: String(row[nosQualKey] || "").trim(),
         nosExpiry: formatExcelDate(row[nosScadenzaKey]),
         internationalMandates: String(row[mandatiKey] || "").trim(),
-        feoDate: formatExcelDate(row[feoDateKey]),
+        feoDate: formattedFeoDate,
         mixDescription: String(row[mixKey] || "").trim(),
         languages: [],
         rawAppliedString: rawApplied,
