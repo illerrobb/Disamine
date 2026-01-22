@@ -194,6 +194,9 @@ const parseCandidates = (data: any[]): DedupResult<Candidate> => {
 
   data.forEach((row) => {
     const keys = Object.keys(row);
+    const normalizedKeys = keys.map((k) => normalizeHeader(k));
+    console.log("parseCandidates keys:", keys);
+    console.log("parseCandidates normalized keys:", normalizedKeys);
     
     // Core Identity
     const matricolaKey = findKey(keys, "MATRICOLA", "EMPLOYEE ID", "ID");
@@ -225,6 +228,7 @@ const parseCandidates = (data: any[]): DedupResult<Candidate> => {
         "DT FEO",
         "DT. FEO"
       ) ?? keys.find((k) => normalizeHeader(k) === "FEO");
+    console.log("parseCandidates feoDateKey:", feoDateKey);
 
     // History
     const mandatiKey = findKey(keys, "MANDATI", "INTERNAZIONALI", "MANDATES");
