@@ -57,6 +57,10 @@ interface Candidate {
   languages: Language[];
   rawAppliedString: string;
   appliedPositionCodes: string[];
+  commanderOpinion: "FAVOREVOLE" | "FAVOREVOLE CON SOSTITUZIONE CONTESTUALE" | "NON FAVOREVOLE" | "";
+  specificAssignments: "SI" | "NO" | "";
+  ofcnSuitability: "SI" | "NO" | "NO VISITA" | "";
+  globalNotes: string;
   originalData: any;
 }
 
@@ -268,6 +272,10 @@ const parseCandidates = (data: any[]): DedupResult<Candidate> => {
         languages: [],
         rawAppliedString: rawApplied,
         appliedPositionCodes: [], // Will be populated in handleDataLoaded via reverse matching
+        commanderOpinion: "",
+        specificAssignments: "",
+        ofcnSuitability: "",
+        globalNotes: "",
         originalData: row,
       });
     } else {
@@ -530,12 +538,14 @@ const CandidateDetailView = ({
   evaluations,
   allPositions,
   onUpdate,
+  onUpdateCandidate,
   onBack
 }: {
   candidate: Candidate;
   evaluations: Record<string, Evaluation>;
   allPositions: Position[];
   onUpdate: (ev: Evaluation) => void;
+  onUpdateCandidate: (candidate: Candidate) => void;
   onBack: () => void;
 }) => {
   // Find all positions this candidate applied to
@@ -603,6 +613,64 @@ const CandidateDetailView = ({
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">
          <div className="max-w-5xl mx-auto space-y-8">
+            <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-6">
+               <h2 className="text-lg font-bold text-slate-700 flex items-center gap-2 mb-4">
+                  <User className="w-5 h-5" /> Profilo candidato
+               </h2>
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <label className="text-sm text-slate-600 flex flex-col gap-1">
+                     <span className="font-semibold text-slate-500">Parere Comandante</span>
+                     <select
+                        className="border border-slate-300 rounded px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none"
+                        value={candidate.commanderOpinion ?? ""}
+                        onChange={(e) => onUpdateCandidate({ ...candidate, commanderOpinion: e.target.value as Candidate["commanderOpinion"] })}
+                     >
+                        <option value="">-</option>
+                        <option value="FAVOREVOLE">FAVOREVOLE</option>
+                        <option value="FAVOREVOLE CON SOSTITUZIONE CONTESTUALE">FAVOREVOLE CON SOSTITUZIONE CONTESTUALE</option>
+                        <option value="NON FAVOREVOLE">NON FAVOREVOLE</option>
+                     </select>
+                  </label>
+
+                  <label className="text-sm text-slate-600 flex flex-col gap-1">
+                     <span className="font-semibold text-slate-500">Attribuzioni specifiche/Corsi obbligatori</span>
+                     <select
+                        className="border border-slate-300 rounded px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none"
+                        value={candidate.specificAssignments ?? ""}
+                        onChange={(e) => onUpdateCandidate({ ...candidate, specificAssignments: e.target.value as Candidate["specificAssignments"] })}
+                     >
+                        <option value="">-</option>
+                        <option value="SI">SI</option>
+                        <option value="NO">NO</option>
+                     </select>
+                  </label>
+
+                  <label className="text-sm text-slate-600 flex flex-col gap-1">
+                     <span className="font-semibold text-slate-500">Idoneità OFCN</span>
+                     <select
+                        className="border border-slate-300 rounded px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none"
+                        value={candidate.ofcnSuitability ?? ""}
+                        onChange={(e) => onUpdateCandidate({ ...candidate, ofcnSuitability: e.target.value as Candidate["ofcnSuitability"] })}
+                     >
+                        <option value="">-</option>
+                        <option value="SI">SI</option>
+                        <option value="NO">NO</option>
+                        <option value="NO VISITA">NO VISITA</option>
+                     </select>
+                  </label>
+
+                  <label className="text-sm text-slate-600 flex flex-col gap-1 md:col-span-2">
+                     <span className="font-semibold text-slate-500">Note globali</span>
+                     <textarea
+                        className="w-full h-24 border border-slate-300 rounded p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none bg-slate-50 focus:bg-white transition-colors"
+                        placeholder="Note generali sul candidato..."
+                        value={candidate.globalNotes ?? ""}
+                        onChange={(e) => onUpdateCandidate({ ...candidate, globalNotes: e.target.value })}
+                     />
+                  </label>
+               </div>
+            </div>
+
             <h2 className="text-lg font-bold text-slate-700 flex items-center gap-2">
                <Briefcase className="w-5 h-5" /> Applications Evaluation ({relevantPositions.length})
             </h2>
@@ -1323,11 +1391,17 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
     if (!ev) return null;
 
     const otherSel = getOtherSelectionInfo(c.id, position.code, evaluations, positions);
-    let noteText = ev.notes || "";
-    if (otherSel) {
-       const autoText = `INDIVIDUATO PER LA POSIZIONE ${otherSel.code} ${otherSel.title} (${otherSel.entity})`;
-       noteText = noteText ? `${autoText}\n${noteText}` : autoText;
+    const noteParts = [];
+    if (c.globalNotes) {
+       noteParts.push(`NOTE GLOBALI: ${c.globalNotes}`);
     }
+    if (ev.notes) {
+       noteParts.push(ev.notes);
+    }
+    if (otherSel) {
+       noteParts.push(`INDIVIDUATO PER LA POSIZIONE ${otherSel.code} ${otherSel.title} (${otherSel.entity})`);
+    }
+    const noteText = noteParts.join("\n");
 
     const mapStatusToText = (s: string) => {
        if (s === 'selected') return 'FAVOREVOLE';
@@ -1348,8 +1422,8 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
     const baseValues = [
        nominativoLabel, // Nominativo
        "SI", // Profilo richiesto match placeholder
-       "", // Attribuzioni specifiche/Corsi obbligatori (manuale)
-       ...(includeOfcn ? [""] : []), // Idoneità OFCN (manuale)
+       c.specificAssignments || "", // Attribuzioni specifiche/Corsi obbligatori
+       ...(includeOfcn ? [c.ofcnSuitability || ""] : []), // Idoneità OFCN
        c.nosLevel, // NOS
        englishCell // Inglese
     ];
@@ -1365,7 +1439,7 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
        c.feoDate, // Data FEO
        c.serviceEntity, // Ente FEO
        mandatesDetail, // Mandati Estero / data ultimo rientro
-       mapStatusToText(ev.status), // Parere
+       c.commanderOpinion || mapStatusToText(ev.status), // Parere
        noteText // Note
     ];
   }).filter(Boolean);
@@ -2045,6 +2119,13 @@ const RecruitmentApp = () => {
         if (parsed.candidates && parsed.positions) {
           setAppData({
             ...parsed,
+            candidates: (parsed.candidates as Candidate[]).map(candidate => ({
+              ...candidate,
+              commanderOpinion: candidate.commanderOpinion ?? "",
+              specificAssignments: candidate.specificAssignments ?? "",
+              ofcnSuitability: candidate.ofcnSuitability ?? "",
+              globalNotes: candidate.globalNotes ?? ""
+            })),
             cycle: parsed.cycle ?? createDefaultCycle()
           });
           setCurrentView('dashboard');
@@ -2137,6 +2218,19 @@ const RecruitmentApp = () => {
       return {
         ...prev,
         evaluations: newEvaluations,
+        lastUpdated: Date.now()
+      };
+    });
+  };
+
+  const updateCandidate = (candidate: Candidate) => {
+    setAppData(prev => {
+      const updatedCandidates = prev.candidates.map(existing =>
+        existing.id === candidate.id ? candidate : existing
+      );
+      return {
+        ...prev,
+        candidates: updatedCandidates,
         lastUpdated: Date.now()
       };
     });
@@ -2362,6 +2456,7 @@ const RecruitmentApp = () => {
          allPositions={appData.positions}
          evaluations={appData.evaluations}
          onUpdate={updateEvaluation}
+         onUpdateCandidate={updateCandidate}
          onBack={() => setCurrentView('candidates_list')}
       />
     )
