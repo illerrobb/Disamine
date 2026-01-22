@@ -221,7 +221,7 @@ const parseCandidates = (data: any[]): DedupResult<Candidate> => {
         serviceEntity: String(row[enteServizioKey] || "").trim(),
         nosLevel: String(row[nosLivelloKey] || "").trim(),
         nosQual: String(row[nosQualKey] || "").trim(),
-        nosExpiry: String(row[nosScadenzaKey] || "").trim(),
+        nosExpiry: formatExcelDate(row[nosScadenzaKey]),
         internationalMandates: String(row[mandatiKey] || "").trim(),
         feoDate: formatExcelDate(row[feoDateKey]),
         mixDescription: String(row[mixKey] || "").trim(),
