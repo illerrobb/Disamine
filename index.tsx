@@ -1268,8 +1268,21 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
     const englishLevel = englishLevelDigits.length >= 4 ? englishLevelDigits.slice(0, 4) : englishLevelDigits;
     const englishCell = englishLanguage ? `INGLESE\n${englishLevel || englishLevelRaw}` : "";
 
+    const nominativoRichText = {
+      richText: [
+        {
+          text: `${c.rank} ${c.role} ${c.category} ${c.specialty}\n`,
+          font: { name: "Calibri", sz: 10, color: { rgb: black } }
+        },
+        {
+          text: c.nominativo,
+          font: { name: "Calibri", sz: 10, bold: true, color: { rgb: black } }
+        }
+      ]
+    };
+
     const baseValues = [
-       `${c.rank} ${c.role} ${c.category} ${c.specialty}\n${c.nominativo}`, // Nominativo
+       nominativoRichText, // Nominativo
        "SI", // Profilo richiesto match placeholder
        "", // Attribuzioni specifiche/Corsi obbligatori (manuale)
        ...(includeOfcn ? [""] : []), // Idoneità OFCN (manuale)
