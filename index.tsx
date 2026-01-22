@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { createRoot } from "react-dom/client";
+import * as XLSX from "xlsx-js-style";
 import {
   Upload,
   FileSpreadsheet,
@@ -1094,8 +1095,6 @@ const PositionCard: React.FC<{
 // --- Export Logic ---
 
 const getStyledXlsx = () => {
-  // @ts-ignore
-  const XLSX = (window as any).XLSX;
   const hasCoreApi =
     XLSX?.utils?.aoa_to_sheet &&
     XLSX?.utils?.book_new &&
