@@ -94,11 +94,18 @@ interface Evaluation {
   manualOrder?: number;
 }
 
+interface Cycle {
+  name: string;
+  startedAt: number;
+  id: string;
+}
+
 interface AppData {
   candidates: Candidate[];
   positions: Position[];
   evaluations: Record<string, Evaluation>; // Key: `${positionId}_${candidateId}`
   lastUpdated: number;
+  cycle: Cycle;
 }
 
 type PositionStatus = 'todo' | 'inprogress' | 'completed';
@@ -1578,12 +1585,19 @@ const PositionDetailView = ({
 // --- Main App ---
 
 const RecruitmentApp = () => {
-  const [appData, setAppData] = useState<AppData>({
+  const createDefaultCycle = (): Cycle => ({
+    name: "Ciclo disamine 2026/2027",
+    startedAt: Date.now(),
+    id: typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : String(Date.now())
+  });
+
+  const [appData, setAppData] = useState<AppData>(() => ({
     candidates: [],
     positions: [],
     evaluations: {},
-    lastUpdated: 0
-  });
+    lastUpdated: 0,
+    cycle: createDefaultCycle()
+  }));
 
   const [currentView, setCurrentView] = useState<'upload' | 'dashboard' | 'position_detail' | 'candidates_list' | 'candidate_detail'>('upload');
   const [selectedPositionId, setSelectedPositionId] = useState<string | null>(null);
@@ -1591,6 +1605,8 @@ const RecruitmentApp = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [filterEnte, setFilterEnte] = useState("ALL");
   const [filterStatus, setFilterStatus] = useState<PositionStatus | 'all'>('all');
+  const [isNewCycleModalOpen, setIsNewCycleModalOpen] = useState(false);
+  const [newCycleName, setNewCycleName] = useState("");
 
   // Load from LocalStorage
   useEffect(() => {
@@ -1599,7 +1615,10 @@ const RecruitmentApp = () => {
       try {
         const parsed = JSON.parse(saved);
         if (parsed.candidates && parsed.positions) {
-          setAppData(parsed);
+          setAppData({
+            ...parsed,
+            cycle: parsed.cycle ?? createDefaultCycle()
+          });
           setCurrentView('dashboard');
         }
       } catch (e) { console.error("Failed to load DB", e); }
@@ -1608,9 +1627,7 @@ const RecruitmentApp = () => {
 
   // Save to LocalStorage
   useEffect(() => {
-    if (appData.lastUpdated > 0) {
-      localStorage.setItem('recruitment_db', JSON.stringify(appData));
-    }
+    localStorage.setItem('recruitment_db', JSON.stringify(appData));
   }, [appData]);
 
   const handleDataLoaded = (candidates: Candidate[], positions: Position[]) => {
@@ -1653,6 +1670,7 @@ const RecruitmentApp = () => {
     });
 
     setAppData({
+      cycle: appData.cycle,
       candidates,
       positions,
       evaluations,
@@ -1721,6 +1739,36 @@ const RecruitmentApp = () => {
       localStorage.removeItem('recruitment_db');
       window.location.reload();
     }
+  };
+
+  const startNewSearch = () => {
+    const confirmed = confirm("Vuoi avviare una nuova ricerca di personale? I dati attuali verranno svuotati.");
+    if (!confirmed) return;
+    setNewCycleName("");
+    setIsNewCycleModalOpen(true);
+  };
+
+  const applyNewCycle = () => {
+    const trimmedName = newCycleName.trim();
+    if (!trimmedName) return;
+    const nextCycle = {
+      ...createDefaultCycle(),
+      name: trimmedName
+    };
+    setAppData({
+      candidates: [],
+      positions: [],
+      evaluations: {},
+      lastUpdated: Date.now(),
+      cycle: nextCycle
+    });
+    setCurrentView('upload');
+    setSelectedCandidateId(null);
+    setSelectedPositionId(null);
+    setFilterEnte("ALL");
+    setFilterStatus('all');
+    setSearchTerm("");
+    setIsNewCycleModalOpen(false);
   };
 
   // Derived state
@@ -1792,6 +1840,9 @@ const RecruitmentApp = () => {
             <div className="w-8 h-8 bg-blue-600 rounded flex items-center justify-center">SD</div>
             SchedaDisamina
           </h2>
+          <p className="mt-2 text-xs text-slate-400">
+            Ciclo di disamina: <span className="text-slate-200">{appData.cycle.name}</span>
+          </p>
         </div>
         <nav className="flex-1 p-4 space-y-2">
           <button 
@@ -1810,6 +1861,9 @@ const RecruitmentApp = () => {
           </button>
         </nav>
         <div className="p-4 border-t border-slate-800">
+          <button onClick={startNewSearch} className="flex items-center gap-2 text-slate-200 hover:text-white text-sm mb-3">
+            <FileText className="w-4 h-4" /> Avvia nuova ricerca di personale
+          </button>
           <button onClick={resetData} className="flex items-center gap-2 text-red-400 hover:text-red-300 text-sm">
             <Trash2 className="w-4 h-4" /> Reset Data
           </button>
@@ -1821,7 +1875,10 @@ const RecruitmentApp = () => {
         {currentView === 'dashboard' && (
           <>
             <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between">
-              <h1 className="text-2xl font-bold text-slate-800">Recruitment Dashboard</h1>
+              <div>
+                <h1 className="text-2xl font-bold text-slate-800">Dashboard Ricerca di personale</h1>
+                <p className="text-sm text-slate-500">Ciclo di disamina: {appData.cycle.name}</p>
+              </div>
               <div className="flex items-center gap-2 text-sm text-slate-500 bg-slate-50 px-3 py-1 rounded-full border border-slate-200">
                 <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
                 Last saved: {new Date(appData.lastUpdated).toLocaleTimeString()}
@@ -1924,6 +1981,47 @@ const RecruitmentApp = () => {
            />
         )}
       </main>
+
+      {isNewCycleModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+            <h3 className="text-lg font-semibold text-slate-800">Avvia nuova ricerca di personale</h3>
+            <p className="text-sm text-slate-500 mt-1">
+              Inserisci il nome del ciclo per la nuova ricerca.
+            </p>
+            <div className="mt-4">
+              <label className="text-xs font-medium text-slate-500">Nome ciclo</label>
+              <input
+                type="text"
+                className="mt-2 w-full px-3 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Es. Ciclo disamine 2026/2027"
+                value={newCycleName}
+                onChange={(e) => setNewCycleName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    applyNewCycle();
+                  }
+                }}
+              />
+            </div>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                onClick={() => setIsNewCycleModalOpen(false)}
+                className="px-4 py-2 rounded-lg border border-slate-200 text-slate-600 hover:text-slate-800"
+              >
+                Annulla
+              </button>
+              <button
+                onClick={applyNewCycle}
+                disabled={!newCycleName.trim()}
+                className="px-4 py-2 rounded-lg bg-blue-600 text-white disabled:bg-slate-300 disabled:text-slate-500"
+              >
+                Avvia
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
