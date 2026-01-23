@@ -685,18 +685,35 @@ const ScoreBar = ({
     return <div className={`h-2 w-full rounded-full bg-slate-200 ${className}`} />;
   }
 
-  const segments: string[] = [
-    ...Array.from({ length: counts.essentialYes }, () => "bg-blue-500"),
-    ...Array.from({ length: counts.desirableYes }, () => "bg-purple-400"),
-    ...Array.from({ length: counts.partial }, () => "bg-amber-400"),
-    ...Array.from({ length: counts.no }, () => "bg-red-500"),
-    ...Array.from({ length: counts.pending }, () => "bg-slate-300")
-  ];
+  const segments = activeReqs.map((req) => {
+    const status = evaluation.reqEvaluations[req.id] || "pending";
+    if (status === "yes") {
+      return {
+        color: req.type === "essential" ? "bg-blue-500" : "bg-purple-400",
+        label: req.text
+      };
+    }
+
+    if (status === "partial") {
+      return { color: "bg-amber-400", label: req.text };
+    }
+
+    if (status === "no") {
+      return { color: "bg-red-500", label: req.text };
+    }
+
+    return { color: "bg-slate-300", label: req.text };
+  });
 
   return (
     <div className={`flex h-2 w-full gap-0.5 ${className}`}>
-      {segments.map((color, index) => (
-        <div key={`${color}-${index}`} className={`flex-1 rounded-sm ${color}`} />
+      {segments.map((segment, index) => (
+        <div key={`${segment.color}-${index}`} className="relative flex-1 group">
+          <div className={`h-2 w-full rounded-sm ${segment.color}`} title={segment.label} />
+          <div className="pointer-events-none absolute left-1/2 top-full z-20 mt-1 w-max -translate-x-1/2 rounded-md border border-slate-200 bg-white px-2 py-1 text-[10px] text-slate-700 opacity-0 shadow-md transition-opacity duration-150 group-hover:opacity-100">
+            {segment.label}
+          </div>
+        </div>
       ))}
     </div>
   );
