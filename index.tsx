@@ -23,6 +23,7 @@ import {
   EyeOff,
   Globe,
   Shield,
+  ChevronLeft,
   Building,
   LayoutList,
   Table as TableIcon,
@@ -1001,9 +1002,9 @@ const WorksheetRow: React.FC<{
         event.preventDefault();
         onDrop(candidate.id);
       }}
-      className={`border rounded-lg mb-2 shadow-sm overflow-hidden transition-all ${isNonCompatible ? 'bg-gray-50 border-gray-200 opacity-75' : 'bg-white border-slate-200'} ${isDropTarget ? 'ring-2 ring-blue-300' : ''}`}
+      className={`border rounded-lg mb-2 shadow-sm overflow-hidden transition-all duration-200 ease-out transform-gpu ${isNonCompatible ? 'bg-gray-50 border-gray-200 opacity-75' : 'bg-white border-slate-200'} ${isDropTarget ? 'ring-2 ring-blue-300 bg-blue-50/40' : ''} ${isDragging ? 'scale-[1.01] -rotate-[0.2deg] shadow-lg ring-2 ring-blue-200' : ''}`}
     >
-      <div className={`flex items-center p-3 gap-4 hover:bg-slate-50 transition-colors ${isDragging ? 'opacity-60' : ''}`}>
+      <div className={`flex items-center p-3 gap-4 hover:bg-slate-50 transition-colors ${isDragging ? 'opacity-70' : ''}`}>
         <button
           draggable
           onDragStart={(event) => {
@@ -1012,7 +1013,7 @@ const WorksheetRow: React.FC<{
             onDragStart(candidate.id);
           }}
           onDragEnd={onDragEnd}
-          className="cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600"
+          className="cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600 transition-transform duration-200 hover:scale-110 active:scale-95"
           aria-label="Drag to reorder"
         >
           <Menu className="w-4 h-4" />
@@ -1887,6 +1888,7 @@ const PositionDetailView = ({
   const [filter, setFilter] = useState('all'); // all, selected, pending...
   const [draggedCandidateId, setDraggedCandidateId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const [isRequirementsOpen, setIsRequirementsOpen] = useState(true);
   const baseOrderMap = useMemo(() => new Map(allCandidates.map((c, index) => [c.id, index])), [allCandidates]);
 
   const positionCandidates = useMemo(() => {
@@ -2051,43 +2053,60 @@ const PositionDetailView = ({
          </div>
 
          {/* Requirements Sidebar (Right) */}
-         <div className="w-80 bg-white border-l border-slate-200 flex flex-col overflow-hidden shadow-lg">
-            <div className="p-4 border-b border-slate-100 bg-slate-50">
-               <h3 className="font-bold text-slate-700 text-sm uppercase flex items-center gap-2">
-                  <Shield className="w-4 h-4" /> Requirements Config
-               </h3>
-               <p className="text-xs text-slate-500 mt-1">Toggle requirements visibility for the matrix.</p>
+         <div className={`bg-white border-l border-slate-200 flex flex-col overflow-hidden shadow-lg transition-all duration-300 ${isRequirementsOpen ? 'w-80' : 'w-12'}`}>
+            <div className="p-4 border-b border-slate-100 bg-slate-50 flex items-start justify-between gap-2">
+               {isRequirementsOpen ? (
+                  <div>
+                     <h3 className="font-bold text-slate-700 text-sm uppercase flex items-center gap-2">
+                        <Shield className="w-4 h-4" /> Requirements Config
+                     </h3>
+                     <p className="text-xs text-slate-500 mt-1">Toggle requirements visibility for the matrix.</p>
+                  </div>
+               ) : (
+                  <div className="flex items-center justify-center w-full">
+                     <Shield className="w-4 h-4 text-slate-500" />
+                  </div>
+               )}
+               <button
+                  onClick={() => setIsRequirementsOpen((prev) => !prev)}
+                  className="text-slate-400 hover:text-slate-600 transition-colors"
+                  aria-label={isRequirementsOpen ? "Collapse requirements config" : "Expand requirements config"}
+               >
+                  {isRequirementsOpen ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+               </button>
             </div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
-               <div>
-                  <h4 className="text-xs font-bold text-slate-400 uppercase mb-2">Essential</h4>
-                  {position.requirements.filter(r => r.type === 'essential').map(r => (
-                     <div key={r.id} className="flex items-start gap-2 mb-2 group">
-                        <button 
-                           onClick={() => onToggleReqVisibility(position.code, r.id)}
-                           className={`mt-0.5 shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-colors ${!r.hidden ? 'bg-blue-500 border-blue-600 text-white' : 'bg-slate-100 border-slate-300 text-slate-300'}`}
-                        >
-                           {!r.hidden ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-                        </button>
-                        <span className={`text-xs ${r.hidden ? 'text-slate-400 line-through' : 'text-slate-700'}`}>{r.text}</span>
-                     </div>
-                  ))}
+            {isRequirementsOpen && (
+               <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  <div>
+                     <h4 className="text-xs font-bold text-slate-400 uppercase mb-2">Essential</h4>
+                     {position.requirements.filter(r => r.type === 'essential').map(r => (
+                        <div key={r.id} className="flex items-start gap-2 mb-2 group">
+                           <button 
+                              onClick={() => onToggleReqVisibility(position.code, r.id)}
+                              className={`mt-0.5 shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-colors ${!r.hidden ? 'bg-blue-500 border-blue-600 text-white' : 'bg-slate-100 border-slate-300 text-slate-300'}`}
+                           >
+                              {!r.hidden ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                           </button>
+                           <span className={`text-xs ${r.hidden ? 'text-slate-400 line-through' : 'text-slate-700'}`}>{r.text}</span>
+                        </div>
+                     ))}
+                  </div>
+                  <div>
+                     <h4 className="text-xs font-bold text-slate-400 uppercase mb-2">Desirable</h4>
+                     {position.requirements.filter(r => r.type === 'desirable').map(r => (
+                        <div key={r.id} className="flex items-start gap-2 mb-2 group">
+                           <button 
+                              onClick={() => onToggleReqVisibility(position.code, r.id)}
+                              className={`mt-0.5 shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-colors ${!r.hidden ? 'bg-blue-500 border-blue-600 text-white' : 'bg-slate-100 border-slate-300 text-slate-300'}`}
+                           >
+                              {!r.hidden ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                           </button>
+                           <span className={`text-xs ${r.hidden ? 'text-slate-400 line-through' : 'text-slate-700'}`}>{r.text}</span>
+                        </div>
+                     ))}
+                  </div>
                </div>
-               <div>
-                  <h4 className="text-xs font-bold text-slate-400 uppercase mb-2">Desirable</h4>
-                  {position.requirements.filter(r => r.type === 'desirable').map(r => (
-                     <div key={r.id} className="flex items-start gap-2 mb-2 group">
-                        <button 
-                           onClick={() => onToggleReqVisibility(position.code, r.id)}
-                           className={`mt-0.5 shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-colors ${!r.hidden ? 'bg-blue-500 border-blue-600 text-white' : 'bg-slate-100 border-slate-300 text-slate-300'}`}
-                        >
-                           {!r.hidden ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-                        </button>
-                        <span className={`text-xs ${r.hidden ? 'text-slate-400 line-through' : 'text-slate-700'}`}>{r.text}</span>
-                     </div>
-                  ))}
-               </div>
-            </div>
+            )}
          </div>
       </div>
     </div>
