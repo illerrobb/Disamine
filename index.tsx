@@ -2051,6 +2051,20 @@ const PositionDetailView = ({
       .map(c => c.id);
   }, [positionCandidates, evaluations, position.code, baseOrderMap]);
 
+  const {
+    draggedCandidateId,
+    dropTargetId,
+    dragOrderIds,
+    dragOffset,
+    dragStartRect,
+    handleDragHandlePointerDown
+  } = useCandidateReorder({
+    positionCode: position.code,
+    baseOrderedIds,
+    onReorder,
+    viewMode
+  });
+
   const orderedCandidates = useMemo(() => {
     const candidateMap = new Map(positionCandidates.map(c => [c.id, c]));
     const orderedIds = dragOrderIds ?? baseOrderedIds;
@@ -2071,20 +2085,6 @@ const PositionDetailView = ({
      const pending = positionCandidates.filter(c => evaluations[`${position.code}_${c.id}`]?.status === 'pending').length;
      return { total: positionCandidates.length, selected, pending };
   }, [positionCandidates, evaluations, position.code]);
-
-  const {
-    draggedCandidateId,
-    dropTargetId,
-    dragOrderIds,
-    dragOffset,
-    dragStartRect,
-    handleDragHandlePointerDown
-  } = useCandidateReorder({
-    positionCode: position.code,
-    baseOrderedIds,
-    onReorder,
-    viewMode
-  });
 
   useLayoutEffect(() => {
     if (viewMode !== 'list') {
