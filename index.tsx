@@ -2229,8 +2229,7 @@ const PositionDetailView = ({
                   {dragOverlayCandidate &&
                     dragOverlayEvaluation &&
                     dragOffset &&
-                    dragStartRect &&
-                    createPortal(
+                    dragStartRect && (
                       <div
                         style={{
                           position: 'fixed',
@@ -2258,8 +2257,7 @@ const PositionDetailView = ({
                           onDragHandlePointerDown={() => {}}
                           isDragOverlay
                         />
-                      </div>,
-                      document.body
+                      </div>
                     )}
                </>
             ) : (
