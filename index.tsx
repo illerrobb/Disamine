@@ -635,7 +635,13 @@ const Badge = ({ children, color = 'blue' }: any) => {
     slate: "bg-slate-100 text-slate-800",
     purple: "bg-purple-100 text-purple-800"
   };
-  return <span className={`px-2 py-0.5 rounded text-xs font-semibold ${colors[color]}`}>{children}</span>;
+  return (
+    <span
+      className={`px-2 py-0.5 rounded text-xs font-semibold whitespace-nowrap ${colors[color]}`}
+    >
+      {children}
+    </span>
+  );
 };
 
 const ScoreBar = ({
@@ -2975,7 +2981,7 @@ const OverlapKanbanView = ({
           )}
         </aside>
 
-        <div className="flex-1 overflow-x-auto p-6">
+        <div className="flex-1 overflow-x-auto p-6 pt-20">
           {selectedPositions.length === 0 ? (
             <div className="h-full flex items-center justify-center text-slate-500 text-sm">
               Seleziona almeno una posizione per vedere le candidature.
