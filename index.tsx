@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import * as XLSX from "xlsx-js-style";
 import {
@@ -1883,6 +1883,7 @@ const PositionDetailView = ({
   const dragOrderRef = useRef<string[] | null>(null);
   const [isRequirementsOpen, setIsRequirementsOpen] = useState(true);
   const baseOrderMap = useMemo(() => new Map(allCandidates.map((c, index) => [c.id, index])), [allCandidates]);
+  const previousRowPositionsRef = useRef<Map<string, DOMRect>>(new Map());
 
   const positionCandidates = useMemo(() => {
     return allCandidates.filter(c => !!evaluations[`${position.code}_${c.id}`]);
@@ -1938,10 +1939,16 @@ const PositionDetailView = ({
     const handlePointerMove = (event: PointerEvent) => {
       const dragGrab = dragGrabRef.current;
       const dragStartRect = dragStartRectRef.current;
-      if (dragGrab && dragStartRect) {
+      const activeRow = document.querySelector(
+        `[data-drag-row][data-candidate-id="${draggedCandidateId}"]`
+      ) as HTMLElement | null;
+      const activeRect = activeRow?.getBoundingClientRect() ?? null;
+      const rectLeft = activeRect?.left ?? dragStartRect?.left;
+      const rectTop = activeRect?.top ?? dragStartRect?.top;
+      if (dragGrab && rectLeft !== undefined && rectTop !== undefined) {
         setDragOffset({
-          x: event.clientX - dragGrab.x - dragStartRect.left,
-          y: event.clientY - dragGrab.y - dragStartRect.top
+          x: event.clientX - dragGrab.x - rectLeft,
+          y: event.clientY - dragGrab.y - rectTop
         });
       }
 
@@ -2010,6 +2017,47 @@ const PositionDetailView = ({
       window.removeEventListener('pointercancel', handlePointerUp);
     };
   }, [draggedCandidateId, baseOrderedIds, moveCandidateToIndex, onReorder, position.code]);
+
+  useLayoutEffect(() => {
+    if (viewMode !== 'list') {
+      previousRowPositionsRef.current.clear();
+      return;
+    }
+
+    const rows = Array.from(document.querySelectorAll('[data-drag-row]')) as HTMLElement[];
+    const nextPositions = new Map<string, DOMRect>();
+    const rowElements = new Map<string, HTMLElement>();
+
+    rows.forEach(row => {
+      const id = row.dataset.candidateId;
+      if (!id) return;
+      nextPositions.set(id, row.getBoundingClientRect());
+      rowElements.set(id, row);
+    });
+
+    if (previousRowPositionsRef.current.size > 0) {
+      nextPositions.forEach((rect, id) => {
+        if (id === draggedCandidateId) return;
+        const prevRect = previousRowPositionsRef.current.get(id);
+        const el = rowElements.get(id);
+        if (!prevRect || !el) return;
+        const deltaY = prevRect.top - rect.top;
+        if (Math.abs(deltaY) < 1) return;
+        el.animate(
+          [
+            { transform: `translateY(${deltaY}px)` },
+            { transform: 'translateY(0)' }
+          ],
+          {
+            duration: 180,
+            easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
+          }
+        );
+      });
+    }
+
+    previousRowPositionsRef.current = nextPositions;
+  }, [dragOrderIds, filter, viewMode, draggedCandidateId, candidates.length]);
 
   return (
     <div className="flex flex-col h-screen bg-slate-50">
@@ -2106,7 +2154,6 @@ const PositionDetailView = ({
                              }
                              setDraggedCandidateId(candidateId);
                              setDropTargetId(candidateId);
-                             setDragOrderIds(baseOrderedIds);
                              dragOrderRef.current = baseOrderedIds;
                              setDragOffset({ x: 0, y: 0 });
                            }}
