@@ -821,7 +821,7 @@ const CandidateDetailView = ({
                               <option value="selected" disabled={!!otherSelection && ev.status !== 'selected'}>
                                  {!!otherSelection && ev.status !== 'selected' ? 'GIÀ SELEZIONATO' : 'SELECTED'}
                               </option>
-                              <option value="reserve">RESERVE</option>
+                              <option value="reserve">POSSIBILE MATCH</option>
                               <option value="rejected">REJECTED</option>
                               <option value="non-compatible">NON COMPATIBILE</option>
                            </select>
@@ -987,7 +987,7 @@ const CandidatesMatrixView = ({
                        <option value="selected" disabled={!!otherSelection && ev.status !== 'selected'}>
                           {!!otherSelection && ev.status !== 'selected' ? 'GIÀ SELEZIONATO' : 'SELECTED'}
                        </option>
-                       <option value="reserve">RESERVE</option>
+                       <option value="reserve">POSSIBILE MATCH</option>
                        <option value="rejected">REJECTED</option>
                        <option value="non-compatible">NON COMPATIBILE</option>
                      </select>
@@ -1161,7 +1161,7 @@ const WorksheetRow: React.FC<{
              <option value="selected" disabled={!!otherSelection && evaluation.status !== 'selected'}>
                {!!otherSelection && evaluation.status !== 'selected' ? 'GIÀ SELEZIONATO' : 'SELECTED'}
              </option>
-             <option value="reserve">RESERVE</option>
+             <option value="reserve">POSSIBILE MATCH</option>
              <option value="rejected">REJECTED</option>
              <option value="non-compatible">NON COMPATIBILE</option>
            </select>
@@ -1661,7 +1661,7 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
     const mapStatusToText = (s: string) => {
        if (s === 'selected') return 'FAVOREVOLE';
        if (s === 'rejected') return 'NON FAVOREVOLE';
-       if (s === 'reserve') return 'RISERVA';
+       if (s === 'reserve') return 'POSSIBILE MATCH';
        if (s === 'non-compatible') return 'NON COMPATIBILE';
        return '';
     };
@@ -2158,7 +2158,7 @@ const OverlapKanbanView = ({
       case "selected":
         return { label: "Selected", color: "green" };
       case "reserve":
-        return { label: "Reserve", color: "amber" };
+        return { label: "POSSIBILE MATCH", color: "amber" };
       case "rejected":
         return { label: "Rejected", color: "slate" };
       case "non-compatible":
@@ -2514,7 +2514,7 @@ const PositionDetailView = ({
                    <option value="all">All Candidates</option>
                    <option value="pending">Pending Only</option>
                    <option value="selected">Selected Only</option>
-                   <option value="reserve">Reserve Only</option>
+                   <option value="reserve">Solo Possibile match</option>
                    <option value="rejected">Rejected Only</option>
                 </select>
              </div>
