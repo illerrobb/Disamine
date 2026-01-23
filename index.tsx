@@ -1879,7 +1879,7 @@ const PositionDetailView = ({
   const [dragOrderIds, setDragOrderIds] = useState<string[] | null>(null);
   const [dragOffset, setDragOffset] = useState<{ x: number; y: number } | null>(null);
   const dragGrabRef = useRef<{ x: number; y: number } | null>(null);
-  const dragOffsetRef = useRef<{ x: number; y: number } | null>(null);
+  const dragStartRectRef = useRef<{ left: number; top: number } | null>(null);
   const dragOrderRef = useRef<string[] | null>(null);
   const [isRequirementsOpen, setIsRequirementsOpen] = useState(true);
   const baseOrderMap = useMemo(() => new Map(allCandidates.map((c, index) => [c.id, index])), [allCandidates]);
@@ -1921,12 +1921,10 @@ const PositionDetailView = ({
      return { total: positionCandidates.length, selected, pending };
   }, [positionCandidates, evaluations, position.code]);
 
-  const moveCandidate = useCallback((order: string[], activeId: string, targetId: string) => {
-    if (activeId === targetId) return order;
+  const moveCandidateToIndex = useCallback((order: string[], activeId: string, targetIndex: number) => {
     const next = order.filter(id => id !== activeId);
-    const targetIndex = next.indexOf(targetId);
-    if (targetIndex === -1) return order;
-    next.splice(targetIndex, 0, activeId);
+    const clampedIndex = Math.max(0, Math.min(targetIndex, next.length));
+    next.splice(clampedIndex, 0, activeId);
     return next;
   }, []);
 
@@ -1935,42 +1933,54 @@ const PositionDetailView = ({
   }, [dragOrderIds]);
 
   useEffect(() => {
-    dragOffsetRef.current = dragOffset;
-  }, [dragOffset]);
-
-  useEffect(() => {
     if (!draggedCandidateId) return;
 
     const handlePointerMove = (event: PointerEvent) => {
       const dragGrab = dragGrabRef.current;
-      const draggedRow = document.querySelector(`[data-candidate-id="${draggedCandidateId}"]`) as HTMLElement | null;
-      if (dragGrab && draggedRow) {
-        const rect = draggedRow.getBoundingClientRect();
-        const currentOffset = dragOffsetRef.current ?? { x: 0, y: 0 };
-        const baseLeft = rect.left - currentOffset.x;
-        const baseTop = rect.top - currentOffset.y;
+      const dragStartRect = dragStartRectRef.current;
+      if (dragGrab && dragStartRect) {
         setDragOffset({
-          x: event.clientX - dragGrab.x - baseLeft,
-          y: event.clientY - dragGrab.y - baseTop
+          x: event.clientX - dragGrab.x - dragStartRect.left,
+          y: event.clientY - dragGrab.y - dragStartRect.top
         });
       }
 
-      const target = document.elementFromPoint(event.clientX, event.clientY);
-      const row = target?.closest('[data-drag-row]') as HTMLElement | null;
-      const targetId = row?.dataset.candidateId;
-
-      if (!targetId) {
+      const rows = Array.from(document.querySelectorAll('[data-drag-row]')) as HTMLElement[];
+      const activeRows = rows.filter(row => row.dataset.candidateId !== draggedCandidateId);
+      if (activeRows.length === 0) {
         setDropTargetId(null);
         return;
       }
 
-      setDropTargetId(targetId);
-      if (targetId === draggedCandidateId) return;
+      const orderedRows = activeRows
+        .map(row => ({
+          row,
+          rect: row.getBoundingClientRect(),
+          id: row.dataset.candidateId || ""
+        }))
+        .filter(entry => entry.id);
+
+      const pointerY = event.clientY;
+      let targetId: string | null = null;
+      for (const entry of orderedRows) {
+        if (pointerY < entry.rect.top + entry.rect.height / 2) {
+          targetId = entry.id;
+          break;
+        }
+      }
+
+      const orderBase = dragOrderRef.current ?? baseOrderedIds;
+      const orderWithoutActive = orderBase.filter(id => id !== draggedCandidateId);
+      const indexMap = new Map(orderWithoutActive.map((id, index) => [id, index]));
+      const targetIndex = targetId ? indexMap.get(targetId) ?? orderWithoutActive.length : orderWithoutActive.length;
+      const finalTargetId = targetId ?? orderWithoutActive[orderWithoutActive.length - 1] ?? null;
+
+      setDropTargetId(finalTargetId);
 
       setDragOrderIds((prev) => {
         const currentOrder = prev ?? baseOrderedIds;
-        const nextOrder = moveCandidate(currentOrder, draggedCandidateId, targetId);
-        if (nextOrder === currentOrder) {
+        const nextOrder = moveCandidateToIndex(currentOrder, draggedCandidateId, targetIndex);
+        if (nextOrder.join("|") === currentOrder.join("|")) {
           return prev;
         }
         dragOrderRef.current = nextOrder;
@@ -1986,6 +1996,7 @@ const PositionDetailView = ({
       setDragOrderIds(null);
       setDragOffset(null);
       dragGrabRef.current = null;
+      dragStartRectRef.current = null;
       dragOrderRef.current = null;
     };
 
@@ -1998,7 +2009,7 @@ const PositionDetailView = ({
       window.removeEventListener('pointerup', handlePointerUp);
       window.removeEventListener('pointercancel', handlePointerUp);
     };
-  }, [draggedCandidateId, baseOrderedIds, moveCandidate, onReorder, position.code]);
+  }, [draggedCandidateId, baseOrderedIds, moveCandidateToIndex, onReorder, position.code]);
 
   return (
     <div className="flex flex-col h-screen bg-slate-50">
@@ -2088,8 +2099,10 @@ const PositionDetailView = ({
                              if (row) {
                                const rect = row.getBoundingClientRect();
                                dragGrabRef.current = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+                               dragStartRectRef.current = { left: rect.left, top: rect.top };
                              } else {
                                dragGrabRef.current = { x: 0, y: 0 };
+                               dragStartRectRef.current = { left: event.clientX, top: event.clientY };
                              }
                              setDraggedCandidateId(candidateId);
                              setDropTargetId(candidateId);
