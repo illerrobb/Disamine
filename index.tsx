@@ -943,10 +943,11 @@ const WorksheetRow: React.FC<{
   onUpdate: (e: Evaluation) => void;
   isDragging: boolean;
   isDropTarget: boolean;
-  onDragStart: (candidateId: string) => void;
+  onDragStart: (candidateId: string, event: React.DragEvent<HTMLButtonElement>) => void;
   onDragEnd: () => void;
   onDrop: (candidateId: string) => void;
-  onDragOver: (candidateId: string) => void;
+  onDragOver: (candidateId: string, event: React.DragEvent<HTMLDivElement>) => void;
+  dragOffset?: { x: number; y: number } | null;
 }> = ({ 
   candidate, 
   evaluation, 
@@ -958,7 +959,8 @@ const WorksheetRow: React.FC<{
   onDragStart,
   onDragEnd,
   onDrop,
-  onDragOver
+  onDragOver,
+  dragOffset
 }) => {
   const [expanded, setExpanded] = useState(false);
   const isNonCompatible = evaluation.status === 'non-compatible';
@@ -994,15 +996,17 @@ const WorksheetRow: React.FC<{
 
   return (
     <div
+      data-drag-row
       onDragOver={(event) => {
         event.preventDefault();
-        onDragOver(candidate.id);
+        onDragOver(candidate.id, event);
       }}
       onDrop={(event) => {
         event.preventDefault();
         onDrop(candidate.id);
       }}
-      className={`border rounded-lg mb-2 shadow-sm overflow-hidden transition-all duration-200 ease-out transform-gpu ${isNonCompatible ? 'bg-gray-50 border-gray-200 opacity-75' : 'bg-white border-slate-200'} ${isDropTarget ? 'ring-2 ring-blue-300 bg-blue-50/40' : ''} ${isDragging ? 'scale-[1.01] -rotate-[0.2deg] shadow-lg ring-2 ring-blue-200' : ''}`}
+      className={`border rounded-lg mb-2 shadow-sm overflow-hidden transition-all duration-200 ease-out transform-gpu ${isNonCompatible ? 'bg-gray-50 border-gray-200 opacity-75' : 'bg-white border-slate-200'} ${isDropTarget ? 'ring-2 ring-blue-300 bg-blue-50/40' : ''} ${isDragging ? 'shadow-xl ring-2 ring-blue-200 pointer-events-none z-20' : ''}`}
+      style={isDragging && dragOffset ? { transform: `translate3d(${dragOffset.x}px, ${dragOffset.y}px, 0)` } : undefined}
     >
       <div className={`flex items-center p-3 gap-4 hover:bg-slate-50 transition-colors ${isDragging ? 'opacity-70' : ''}`}>
         <button
@@ -1010,7 +1014,7 @@ const WorksheetRow: React.FC<{
           onDragStart={(event) => {
             event.dataTransfer.effectAllowed = "move";
             event.dataTransfer.setData("text/plain", candidate.id);
-            onDragStart(candidate.id);
+            onDragStart(candidate.id, event);
           }}
           onDragEnd={onDragEnd}
           className="cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600 transition-transform duration-200 hover:scale-110 active:scale-95"
@@ -1889,6 +1893,8 @@ const PositionDetailView = ({
   const [draggedCandidateId, setDraggedCandidateId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [dragOrderIds, setDragOrderIds] = useState<string[] | null>(null);
+  const [dragOffset, setDragOffset] = useState<{ x: number; y: number } | null>(null);
+  const dragStartRef = useRef<{ x: number; y: number } | null>(null);
   const [isRequirementsOpen, setIsRequirementsOpen] = useState(true);
   const baseOrderMap = useMemo(() => new Map(allCandidates.map((c, index) => [c.id, index])), [allCandidates]);
 
@@ -1942,6 +1948,8 @@ const PositionDetailView = ({
     if (!draggedCandidateId) {
       setDragOrderIds(null);
       setDropTargetId(null);
+      setDragOffset(null);
+      dragStartRef.current = null;
       return;
     }
     const currentOrder = dragOrderIds ?? baseOrderedIds;
@@ -1950,6 +1958,8 @@ const PositionDetailView = ({
     setDraggedCandidateId(null);
     setDropTargetId(null);
     setDragOrderIds(null);
+    setDragOffset(null);
+    dragStartRef.current = null;
   };
 
   return (
@@ -2035,19 +2045,28 @@ const PositionDetailView = ({
                            onUpdate={onUpdate}
                            isDragging={draggedCandidateId === c.id}
                            isDropTarget={dropTargetId === c.id}
-                           onDragStart={(candidateId) => {
+                           onDragStart={(candidateId, event) => {
                              setDraggedCandidateId(candidateId);
                              setDropTargetId(candidateId);
                              setDragOrderIds(baseOrderedIds);
+                             dragStartRef.current = { x: event.clientX, y: event.clientY };
+                             setDragOffset({ x: 0, y: 0 });
                            }}
                            onDragEnd={() => {
                              setDraggedCandidateId(null);
                              setDropTargetId(null);
                              setDragOrderIds(null);
+                             setDragOffset(null);
+                             dragStartRef.current = null;
                            }}
                            onDrop={handleDropCandidate}
-                           onDragOver={(candidateId) => {
-                             if (!draggedCandidateId || draggedCandidateId === candidateId) return;
+                           onDragOver={(candidateId, event) => {
+                             if (!draggedCandidateId) return;
+                             const dragStart = dragStartRef.current;
+                             if (dragStart) {
+                               setDragOffset({ x: event.clientX - dragStart.x, y: event.clientY - dragStart.y });
+                             }
+                             if (draggedCandidateId === candidateId) return;
                              const currentOrder = dragOrderIds ?? baseOrderedIds;
                              const nextOrder = moveCandidate(currentOrder, draggedCandidateId, candidateId);
                              if (nextOrder !== currentOrder) {
@@ -2055,6 +2074,7 @@ const PositionDetailView = ({
                              }
                              setDropTargetId(candidateId);
                            }}
+                           dragOffset={draggedCandidateId === c.id ? dragOffset : null}
                         />
                      );
                   })}
