@@ -1888,6 +1888,7 @@ const PositionDetailView = ({
   const [filter, setFilter] = useState('all'); // all, selected, pending...
   const [draggedCandidateId, setDraggedCandidateId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const [dragOrderIds, setDragOrderIds] = useState<string[] | null>(null);
   const [isRequirementsOpen, setIsRequirementsOpen] = useState(true);
   const baseOrderMap = useMemo(() => new Map(allCandidates.map((c, index) => [c.id, index])), [allCandidates]);
 
@@ -1895,15 +1896,23 @@ const PositionDetailView = ({
     return allCandidates.filter(c => !!evaluations[`${position.code}_${c.id}`]);
   }, [allCandidates, evaluations, position.code]);
 
-  const orderedCandidates = useMemo(() => {
-    return [...positionCandidates].sort((a, b) => {
-      const evA = evaluations[`${position.code}_${a.id}`];
-      const evB = evaluations[`${position.code}_${b.id}`];
-      const orderA = evA?.manualOrder ?? baseOrderMap.get(a.id) ?? 0;
-      const orderB = evB?.manualOrder ?? baseOrderMap.get(b.id) ?? 0;
-      return orderA - orderB;
-    });
+  const baseOrderedIds = useMemo(() => {
+    return [...positionCandidates]
+      .sort((a, b) => {
+        const evA = evaluations[`${position.code}_${a.id}`];
+        const evB = evaluations[`${position.code}_${b.id}`];
+        const orderA = evA?.manualOrder ?? baseOrderMap.get(a.id) ?? 0;
+        const orderB = evB?.manualOrder ?? baseOrderMap.get(b.id) ?? 0;
+        return orderA - orderB;
+      })
+      .map(c => c.id);
   }, [positionCandidates, evaluations, position.code, baseOrderMap]);
+
+  const orderedCandidates = useMemo(() => {
+    const candidateMap = new Map(positionCandidates.map(c => [c.id, c]));
+    const orderedIds = dragOrderIds ?? baseOrderedIds;
+    return orderedIds.map(id => candidateMap.get(id)).filter(Boolean) as Candidate[];
+  }, [positionCandidates, baseOrderedIds, dragOrderIds]);
 
   const candidates = useMemo(() => {
     return orderedCandidates.filter(c => {
@@ -1920,24 +1929,27 @@ const PositionDetailView = ({
      return { total: positionCandidates.length, selected, pending };
   }, [positionCandidates, evaluations, position.code]);
 
+  const moveCandidate = (order: string[], activeId: string, targetId: string) => {
+    if (activeId === targetId) return order;
+    const next = order.filter(id => id !== activeId);
+    const targetIndex = next.indexOf(targetId);
+    if (targetIndex === -1) return order;
+    next.splice(targetIndex, 0, activeId);
+    return next;
+  };
+
   const handleDropCandidate = (targetCandidateId: string) => {
-    if (!draggedCandidateId || draggedCandidateId === targetCandidateId) {
-      setDraggedCandidateId(null);
+    if (!draggedCandidateId) {
+      setDragOrderIds(null);
       setDropTargetId(null);
       return;
     }
-    const fullIds = orderedCandidates.map(c => c.id);
-    const nextIds = fullIds.filter(id => id !== draggedCandidateId);
-    const targetIndex = nextIds.indexOf(targetCandidateId);
-    if (targetIndex === -1) {
-      setDraggedCandidateId(null);
-      setDropTargetId(null);
-      return;
-    }
-    nextIds.splice(targetIndex, 0, draggedCandidateId);
-    onReorder(position.code, nextIds);
+    const currentOrder = dragOrderIds ?? baseOrderedIds;
+    const finalOrder = dragOrderIds ?? moveCandidate(currentOrder, draggedCandidateId, targetCandidateId);
+    onReorder(position.code, finalOrder);
     setDraggedCandidateId(null);
     setDropTargetId(null);
+    setDragOrderIds(null);
   };
 
   return (
@@ -2026,16 +2038,22 @@ const PositionDetailView = ({
                            onDragStart={(candidateId) => {
                              setDraggedCandidateId(candidateId);
                              setDropTargetId(candidateId);
+                             setDragOrderIds(baseOrderedIds);
                            }}
                            onDragEnd={() => {
                              setDraggedCandidateId(null);
                              setDropTargetId(null);
+                             setDragOrderIds(null);
                            }}
                            onDrop={handleDropCandidate}
                            onDragOver={(candidateId) => {
-                             if (draggedCandidateId && draggedCandidateId !== candidateId) {
-                               setDropTargetId(candidateId);
+                             if (!draggedCandidateId || draggedCandidateId === candidateId) return;
+                             const currentOrder = dragOrderIds ?? baseOrderedIds;
+                             const nextOrder = moveCandidate(currentOrder, draggedCandidateId, candidateId);
+                             if (nextOrder !== currentOrder) {
+                               setDragOrderIds(nextOrder);
                              }
+                             setDropTargetId(candidateId);
                            }}
                         />
                      );
