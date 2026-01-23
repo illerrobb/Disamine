@@ -803,6 +803,152 @@ const RequirementsDrawer = ({
   );
 };
 
+const CandidateMatchDrawer = ({
+  isOpen,
+  candidate,
+  position,
+  evaluation,
+  onClose
+}: {
+  isOpen: boolean;
+  candidate: Candidate | null;
+  position: Position | null;
+  evaluation: Evaluation | null;
+  onClose: () => void;
+}) => {
+  if (!isOpen || !candidate || !position || !evaluation) return null;
+
+  const activeReqs = position.requirements.filter(req => !req.hidden);
+  const {
+    essentialYes,
+    essentialTotal,
+    essentialScore,
+    desirableYes,
+    desirableTotal,
+    desirableScore
+  } = getRequirementScores(evaluation, position);
+  const fitPercent = Math.round(getFitScore(evaluation, position) * 100);
+
+  const statusLabel = {
+    pending: "Pending",
+    selected: "Selected",
+    reserve: "Possibile match",
+    rejected: "Rejected",
+    "non-compatible": "Non compatibile"
+  }[evaluation.status];
+
+  const renderRequirementRow = (req: Requirement) => {
+    const status = evaluation.reqEvaluations[req.id] || "pending";
+    return (
+      <div key={req.id} className="flex items-start gap-3 p-2 rounded border border-slate-200 bg-white">
+        <div
+          className={`mt-0.5 shrink-0 w-6 h-6 rounded flex items-center justify-center border
+            ${
+              status === "yes"
+                ? "bg-green-500 border-green-600 text-white"
+                : status === "no"
+                ? "bg-red-500 border-red-600 text-white"
+                : status === "partial"
+                ? "bg-amber-400 border-amber-500 text-white"
+                : "bg-white border-slate-300 text-slate-400"
+            }`}
+        >
+          {status === "yes" && <Check className="w-4 h-4" />}
+          {status === "no" && <X className="w-4 h-4" />}
+          {status === "partial" && <div className="w-2 h-2 rounded-full bg-white opacity-70" />}
+        </div>
+        <div>
+          <p className={`text-sm ${status === "no" ? "text-slate-400 line-through" : "text-slate-700"}`}>
+            {req.text}
+          </p>
+          <span className={`text-[10px] font-bold uppercase ${req.type === "essential" ? "text-red-500" : "text-amber-600"}`}>
+            {req.type === "essential" ? "Essential" : "Desirable"}
+          </span>
+        </div>
+      </div>
+    );
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex">
+      <button
+        className="absolute inset-0 bg-slate-900/40"
+        onClick={onClose}
+        aria-label="Chiudi dettaglio match"
+      />
+      <aside className="ml-auto w-full max-w-2xl h-full bg-white shadow-2xl border-l border-slate-200 flex flex-col relative">
+        <div className="p-6 border-b border-slate-200 flex items-start justify-between gap-4">
+          <div>
+            <p className="text-xs uppercase text-slate-400 font-semibold">Disamina requisiti</p>
+            <h3 className="text-lg font-bold text-slate-800">
+              {candidate.nominativo} • {position.code}
+            </h3>
+            <p className="text-xs text-slate-500 mt-1">
+              {position.title} • {position.entity}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-slate-400 hover:text-slate-600"
+            aria-label="Chiudi"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 flex flex-col gap-3">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-slate-500">Status posizione</span>
+              <span className="font-semibold text-slate-700">{statusLabel}</span>
+            </div>
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-slate-500">Fit complessivo</span>
+              <span className="font-semibold text-slate-700">{fitPercent}%</span>
+            </div>
+            <div className="flex items-center justify-between text-xs text-slate-500">
+              <span className="font-medium">Essential {essentialYes}/{essentialTotal}</span>
+              <span className="font-medium">Desirable {desirableYes}/{desirableTotal}</span>
+            </div>
+            <ScoreBar
+              essentialScore={essentialScore}
+              desirableScore={desirableScore}
+              essentialTotal={essentialTotal}
+              desirableTotal={desirableTotal}
+            />
+          </div>
+
+          {activeReqs.length === 0 ? (
+            <div className="text-sm text-slate-400 italic">Nessun requisito visibile.</div>
+          ) : (
+            <div className="space-y-4">
+              <div>
+                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Essential</h4>
+                <div className="space-y-2">
+                  {activeReqs.filter(req => req.type === "essential").map(renderRequirementRow)}
+                </div>
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Desirable</h4>
+                <div className="space-y-2">
+                  {activeReqs.filter(req => req.type === "desirable").map(renderRequirementRow)}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="p-6 border-t border-slate-200 flex items-center justify-end">
+          <Button variant="secondary" onClick={onClose}>
+            Chiudi
+          </Button>
+        </div>
+      </aside>
+    </div>,
+    document.body
+  );
+};
+
 // --- New Component: Candidate Detail View (Multi-Position Evaluation) ---
 
 const CandidateDetailView = ({
@@ -2292,8 +2438,7 @@ const OverlapKanbanView = ({
   evaluations,
   selectedPositionIds,
   onSelectedPositionsChange,
-  onUpdate,
-  onUpdateRequirements
+  onUpdate
 }: {
   candidates: Candidate[];
   positions: Position[];
@@ -2301,10 +2446,14 @@ const OverlapKanbanView = ({
   selectedPositionIds: string[];
   onSelectedPositionsChange: (ids: string[]) => void;
   onUpdate: (ev: Evaluation) => void;
-  onUpdateRequirements: (positionCode: string, requirements: Requirement[]) => void;
 }) => {
   const [onlyPossibleMatch, setOnlyPossibleMatch] = useState(false);
-  const [drawerPosition, setDrawerPosition] = useState<Position | null>(null);
+  const [positionSearch, setPositionSearch] = useState("");
+  const [matchDrawerData, setMatchDrawerData] = useState<{
+    candidate: Candidate;
+    position: Position;
+    evaluation: Evaluation;
+  } | null>(null);
   const [draggingCandidateId, setDraggingCandidateId] = useState<string | null>(null);
 
   const candidateIdsByPosition = useMemo(() => {
@@ -2355,6 +2504,15 @@ const OverlapKanbanView = ({
     () => [...positions].sort((a, b) => a.code.localeCompare(b.code)),
     [positions]
   );
+
+  const filteredPositions = useMemo(() => {
+    const term = positionSearch.trim().toLowerCase();
+    if (!term) return sortedPositions;
+    return sortedPositions.filter(pos => {
+      const haystack = `${pos.code} ${pos.title} ${pos.entity} ${pos.location}`.toLowerCase();
+      return haystack.includes(term);
+    });
+  }, [positionSearch, sortedPositions]);
 
   const selectedPositions = useMemo(
     () => sortedPositions.filter(pos => selectedPositionIds.includes(pos.code)),
@@ -2434,6 +2592,25 @@ const OverlapKanbanView = ({
     [draggingCandidateId, evaluations, onUpdate]
   );
 
+  const getOverlapMetric = useCallback(
+    (positionCode: string) => {
+      const candidateIds = candidateIdsByPosition.get(positionCode) ?? new Set<string>();
+      if (candidateIds.size === 0) return { sharedCount: 0, overlapPercent: 0 };
+      const otherSelectedIds = new Set<string>();
+      selectedPositionIds.forEach(code => {
+        if (code === positionCode) return;
+        candidateIdsByPosition.get(code)?.forEach(candidateId => otherSelectedIds.add(candidateId));
+      });
+      let sharedCount = 0;
+      candidateIds.forEach(candidateId => {
+        if (otherSelectedIds.has(candidateId)) sharedCount += 1;
+      });
+      const overlapPercent = Math.round((sharedCount / candidateIds.size) * 100);
+      return { sharedCount, overlapPercent };
+    },
+    [candidateIdsByPosition, selectedPositionIds]
+  );
+
   return (
     <div className="flex flex-col h-full bg-slate-50">
       <header className="bg-white border-b border-slate-200 px-8 py-4">
@@ -2468,8 +2645,18 @@ const OverlapKanbanView = ({
               </button>
             </div>
           </div>
+          <div className="relative mb-3">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={positionSearch}
+              onChange={(event) => setPositionSearch(event.target.value)}
+              placeholder="Cerca posizione..."
+              className="w-full border border-slate-200 rounded-md py-2 pl-9 pr-3 text-xs text-slate-600 focus:ring-2 focus:ring-blue-500 outline-none"
+            />
+          </div>
           <div className="space-y-2">
-            {sortedPositions.map(pos => (
+            {filteredPositions.map(pos => (
               <label key={pos.code} className="flex items-start gap-2 text-sm text-slate-600">
                 <input
                   type="checkbox"
@@ -2483,6 +2670,9 @@ const OverlapKanbanView = ({
                 </span>
               </label>
             ))}
+            {filteredPositions.length === 0 && (
+              <div className="text-xs text-slate-400 italic">Nessuna posizione trovata.</div>
+            )}
           </div>
 
           <div className="mt-6 pt-4 border-t border-slate-200">
@@ -2554,6 +2744,7 @@ const OverlapKanbanView = ({
                     if (b.fitScore !== a.fitScore) return b.fitScore - a.fitScore;
                     return a.candidate.nominativo.localeCompare(b.candidate.nominativo);
                   });
+                const overlapMetric = getOverlapMetric(position.code);
 
                 return (
                   <div key={position.code} className={`w-72 shrink-0 ${isDropDisabled ? 'opacity-40' : ''}`}>
@@ -2568,8 +2759,11 @@ const OverlapKanbanView = ({
                         <div className="text-xs text-slate-500 mt-2">
                           {position.entity} • {position.location}
                         </div>
-                        <div className="text-xs text-slate-400 mt-2">
-                          {orderedCandidates.length} candidature
+                        <div className="text-xs text-slate-400 mt-2 flex items-center justify-between">
+                          <span>{orderedCandidates.length} candidature</span>
+                          <span className="text-[10px] text-slate-500 font-semibold">
+                            Overlap: {overlapMetric.sharedCount} ({overlapMetric.overlapPercent}%)
+                          </span>
                         </div>
                       </div>
                       <div className="p-3 space-y-3 max-h-[60vh] overflow-y-auto">
@@ -2635,6 +2829,24 @@ const OverlapKanbanView = ({
                                 </div>
                                 <Badge color={badge.color}>{badge.label}</Badge>
                               </div>
+                              <div className="mt-3">
+                                <label className="text-[10px] uppercase text-slate-400 font-semibold">
+                                  Stato candidatura
+                                </label>
+                                <select
+                                  value={evaluation.status}
+                                  onChange={(event) =>
+                                    onUpdate({ ...evaluation, status: event.target.value as Evaluation["status"] })
+                                  }
+                                  className="mt-1 w-full text-xs border border-slate-200 rounded px-2 py-1 bg-white text-slate-600 focus:ring-2 focus:ring-blue-500 outline-none"
+                                >
+                                  <option value="pending">Pending</option>
+                                  <option value="selected">Selected</option>
+                                  <option value="reserve">Possibile match</option>
+                                  <option value="rejected">Rejected</option>
+                                  <option value="non-compatible">Non compatibile</option>
+                                </select>
+                              </div>
                               <div className="mt-3 flex items-center justify-between text-xs">
                                 <span className="text-slate-500">Fit</span>
                                 <span className="font-semibold text-slate-700">{fitPercent}%</span>
@@ -2653,10 +2865,16 @@ const OverlapKanbanView = ({
                                 />
                               </div>
                               <button
-                                onClick={() => setDrawerPosition(position)}
+                                onClick={() =>
+                                  setMatchDrawerData({
+                                    candidate,
+                                    position,
+                                    evaluation
+                                  })
+                                }
                                 className="mt-3 text-[11px] text-blue-600 hover:text-blue-700 font-semibold flex items-center gap-1"
                               >
-                                <FileText className="w-3 h-3" /> Requisiti
+                                <Eye className="w-3 h-3" /> Disamina requisiti
                               </button>
                             </div>
                           );
@@ -2671,11 +2889,12 @@ const OverlapKanbanView = ({
         </div>
       </div>
 
-      <RequirementsDrawer
-        isOpen={!!drawerPosition}
-        position={drawerPosition}
-        onClose={() => setDrawerPosition(null)}
-        onSave={onUpdateRequirements}
+      <CandidateMatchDrawer
+        isOpen={!!matchDrawerData}
+        candidate={matchDrawerData?.candidate ?? null}
+        position={matchDrawerData?.position ?? null}
+        evaluation={matchDrawerData?.evaluation ?? null}
+        onClose={() => setMatchDrawerData(null)}
       />
     </div>
   );
@@ -3631,7 +3850,6 @@ const RecruitmentApp = () => {
             selectedPositionIds={overlapPositionIds}
             onSelectedPositionsChange={setOverlapPositionIds}
             onUpdate={updateEvaluation}
-            onUpdateRequirements={updatePositionRequirements}
           />
         )}
       </main>
