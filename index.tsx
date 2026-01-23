@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import * as XLSX from "xlsx-js-style";
 import {
@@ -945,6 +945,7 @@ const WorksheetRow: React.FC<{
   isDropTarget: boolean;
   onDragHandlePointerDown: (candidateId: string, event: React.PointerEvent<HTMLButtonElement>) => void;
   dragOffset?: { x: number; y: number } | null;
+  dragStartRect?: { left: number; top: number; width: number } | null;
 }> = ({ 
   candidate, 
   evaluation, 
@@ -954,7 +955,8 @@ const WorksheetRow: React.FC<{
   isDragging,
   isDropTarget,
   onDragHandlePointerDown,
-  dragOffset
+  dragOffset,
+  dragStartRect
 }) => {
   const [expanded, setExpanded] = useState(false);
   const isNonCompatible = evaluation.status === 'non-compatible';
@@ -992,8 +994,18 @@ const WorksheetRow: React.FC<{
     <div
       data-drag-row
       data-candidate-id={candidate.id}
-      className={`border rounded-lg mb-2 shadow-sm overflow-hidden transition-all duration-200 ease-out transform-gpu ${isNonCompatible ? 'bg-gray-50 border-gray-200 opacity-75' : 'bg-white border-slate-200'} ${isDropTarget ? 'ring-2 ring-blue-300 bg-blue-50/40' : ''} ${isDragging ? 'shadow-xl ring-2 ring-blue-200 pointer-events-none z-20' : ''}`}
-      style={isDragging && dragOffset ? { transform: `translate3d(${dragOffset.x}px, ${dragOffset.y}px, 0)` } : undefined}
+      className={`border rounded-lg mb-2 shadow-sm overflow-hidden transition-all duration-200 ease-out transform-gpu ${isNonCompatible ? 'bg-gray-50 border-gray-200 opacity-75' : 'bg-white border-slate-200'} ${isDropTarget ? 'ring-2 ring-blue-300 bg-blue-50/40' : ''} ${isDragging ? 'shadow-xl ring-2 ring-blue-200 pointer-events-none z-50' : ''}`}
+      style={
+        isDragging && dragOffset && dragStartRect
+          ? {
+              position: 'fixed',
+              top: dragStartRect.top,
+              left: dragStartRect.left,
+              width: dragStartRect.width,
+              transform: `translate3d(${dragOffset.x}px, ${dragOffset.y}px, 0)`
+            }
+          : undefined
+      }
     >
       <div className={`flex items-center p-3 gap-4 hover:bg-slate-50 transition-colors ${isDragging ? 'opacity-70' : ''}`}>
         <button
@@ -1878,11 +1890,13 @@ const PositionDetailView = ({
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [dragOrderIds, setDragOrderIds] = useState<string[] | null>(null);
   const [dragOffset, setDragOffset] = useState<{ x: number; y: number } | null>(null);
+  const [dragStartRect, setDragStartRect] = useState<{ left: number; top: number; width: number } | null>(null);
   const dragGrabRef = useRef<{ x: number; y: number } | null>(null);
   const dragStartRectRef = useRef<{ left: number; top: number } | null>(null);
   const dragOrderRef = useRef<string[] | null>(null);
   const [isRequirementsOpen, setIsRequirementsOpen] = useState(true);
   const baseOrderMap = useMemo(() => new Map(allCandidates.map((c, index) => [c.id, index])), [allCandidates]);
+  const previousRowPositionsRef = useRef<Map<string, DOMRect>>(new Map());
 
   const positionCandidates = useMemo(() => {
     return allCandidates.filter(c => !!evaluations[`${position.code}_${c.id}`]);
@@ -1995,6 +2009,7 @@ const PositionDetailView = ({
       setDropTargetId(null);
       setDragOrderIds(null);
       setDragOffset(null);
+      setDragStartRect(null);
       dragGrabRef.current = null;
       dragStartRectRef.current = null;
       dragOrderRef.current = null;
@@ -2010,6 +2025,47 @@ const PositionDetailView = ({
       window.removeEventListener('pointercancel', handlePointerUp);
     };
   }, [draggedCandidateId, baseOrderedIds, moveCandidateToIndex, onReorder, position.code]);
+
+  useLayoutEffect(() => {
+    if (viewMode !== 'list') {
+      previousRowPositionsRef.current.clear();
+      return;
+    }
+
+    const rows = Array.from(document.querySelectorAll('[data-drag-row]')) as HTMLElement[];
+    const nextPositions = new Map<string, DOMRect>();
+    const rowElements = new Map<string, HTMLElement>();
+
+    rows.forEach(row => {
+      const id = row.dataset.candidateId;
+      if (!id) return;
+      nextPositions.set(id, row.getBoundingClientRect());
+      rowElements.set(id, row);
+    });
+
+    if (previousRowPositionsRef.current.size > 0) {
+      nextPositions.forEach((rect, id) => {
+        if (id === draggedCandidateId) return;
+        const prevRect = previousRowPositionsRef.current.get(id);
+        const el = rowElements.get(id);
+        if (!prevRect || !el) return;
+        const deltaY = prevRect.top - rect.top;
+        if (Math.abs(deltaY) < 1) return;
+        el.animate(
+          [
+            { transform: `translateY(${deltaY}px)` },
+            { transform: 'translateY(0)' }
+          ],
+          {
+            duration: 180,
+            easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
+          }
+        );
+      });
+    }
+
+    previousRowPositionsRef.current = nextPositions;
+  }, [dragOrderIds, filter, viewMode, draggedCandidateId, candidates.length]);
 
   return (
     <div className="flex flex-col h-screen bg-slate-50">
@@ -2100,9 +2156,11 @@ const PositionDetailView = ({
                                const rect = row.getBoundingClientRect();
                                dragGrabRef.current = { x: event.clientX - rect.left, y: event.clientY - rect.top };
                                dragStartRectRef.current = { left: rect.left, top: rect.top };
+                               setDragStartRect({ left: rect.left, top: rect.top, width: rect.width });
                              } else {
                                dragGrabRef.current = { x: 0, y: 0 };
                                dragStartRectRef.current = { left: event.clientX, top: event.clientY };
+                               setDragStartRect({ left: event.clientX, top: event.clientY, width: 0 });
                              }
                              setDraggedCandidateId(candidateId);
                              setDropTargetId(candidateId);
@@ -2111,6 +2169,7 @@ const PositionDetailView = ({
                              setDragOffset({ x: 0, y: 0 });
                            }}
                            dragOffset={draggedCandidateId === c.id ? dragOffset : null}
+                           dragStartRect={draggedCandidateId === c.id ? dragStartRect : null}
                         />
                      );
                   })}
