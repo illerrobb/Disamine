@@ -2584,6 +2584,8 @@ const OverlapKanbanView = ({
   const [draggingCandidateId, setDraggingCandidateId] = useState<string | null>(null);
   const [isPositionsOpen, setIsPositionsOpen] = useState(true);
   const [focusedCandidateId, setFocusedCandidateId] = useState<string | null>(null);
+  const [openStatusCandidateId, setOpenStatusCandidateId] = useState<string | null>(null);
+  const [isSuggestionsOpen, setIsSuggestionsOpen] = useState(true);
 
   const candidateIdsByPosition = useMemo(() => {
     const map = new Map<string, Set<string>>();
@@ -2686,6 +2688,14 @@ const OverlapKanbanView = ({
     }
   };
 
+  const statusOptions: { value: Evaluation["status"]; label: string }[] = [
+    { value: "pending", label: "Pending" },
+    { value: "selected", label: "Selected" },
+    { value: "reserve", label: "Possibile match" },
+    { value: "rejected", label: "Rejected" },
+    { value: "non-compatible", label: "Non compatibile" }
+  ];
+
   const handleDragStart = useCallback(
     (candidateId: string) => (event: React.DragEvent<HTMLDivElement>) => {
       event.dataTransfer.effectAllowed = "move";
@@ -2778,7 +2788,102 @@ const OverlapKanbanView = ({
   }, [focusedCandidateId, positions, evaluations, selectedPositionIds, getOverlapCountForPosition]);
 
   return (
-    <div className="flex flex-col h-full bg-slate-50">
+    <div className="flex flex-col h-full bg-slate-50 relative">
+      <div className="absolute right-4 top-4 z-20">
+        <div className="bg-white border border-slate-200 shadow-lg rounded-lg overflow-hidden w-72">
+          <div className="px-3 py-2 flex items-center justify-between gap-2">
+            <div>
+              <div className="text-xs font-semibold text-slate-700">Posizioni suggerite</div>
+              {focusedCandidateId && (
+                <div className="text-[10px] text-slate-500">
+                  per {candidateById.get(focusedCandidateId)?.nominativo}
+                </div>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {focusedCandidateId && (
+                <button
+                  type="button"
+                  onClick={() => setFocusedCandidateId(null)}
+                  className="text-[10px] text-slate-400 hover:text-slate-600"
+                >
+                  Rimuovi candidato
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setIsSuggestionsOpen((prev) => !prev)}
+                className="text-slate-400 hover:text-slate-600"
+                aria-label={isSuggestionsOpen ? "Comprimi suggerimenti" : "Espandi suggerimenti"}
+              >
+                <ChevronRight className={`w-4 h-4 transition-transform ${isSuggestionsOpen ? "rotate-90" : ""}`} />
+              </button>
+            </div>
+          </div>
+          {isSuggestionsOpen && (
+            <div className="px-3 pb-3 space-y-2">
+              {focusedCandidateId && candidateOverlapSuggestions.length === 0 && (
+                <p className="text-xs text-slate-400 italic">
+                  Nessuna posizione suggerita per il candidato selezionato.
+                </p>
+              )}
+              {focusedCandidateId && candidateOverlapSuggestions.length > 0 && (
+                <div className="space-y-2">
+                  {candidateOverlapSuggestions.map(({ position, overlapCount }) => (
+                    <button
+                      key={position.code}
+                      onClick={() => onSelectedPositionsChange([...selectedPositionIds, position.code])}
+                      className="w-full text-left border border-slate-200 rounded-md px-3 py-2 hover:border-blue-300 hover:bg-blue-50 transition-colors"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-mono text-xs text-slate-500">{position.code}</span>
+                        <span className="text-[10px] font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
+                          {overlapCount} in overlap
+                        </span>
+                      </div>
+                      <div className="text-xs text-slate-700 font-medium leading-snug mt-1">
+                        {position.title}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {!focusedCandidateId && selectedPositionIds.length === 0 && (
+                <p className="text-xs text-slate-400 italic">
+                  Seleziona una posizione o un candidato per vedere i suggerimenti.
+                </p>
+              )}
+              {!focusedCandidateId && selectedPositionIds.length > 0 && suggestedPositions.length === 0 && (
+                <p className="text-xs text-slate-400 italic">
+                  Nessuna posizione suggerita con candidati in comune.
+                </p>
+              )}
+              {!focusedCandidateId && selectedPositionIds.length > 0 && suggestedPositions.length > 0 && (
+                <div className="space-y-2">
+                  {suggestedPositions.map(({ position, sharedCount }) => (
+                    <button
+                      key={position.code}
+                      onClick={() => onSelectedPositionsChange([...selectedPositionIds, position.code])}
+                      className="w-full text-left border border-slate-200 rounded-md px-3 py-2 hover:border-blue-300 hover:bg-blue-50 transition-colors"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-mono text-xs text-slate-500">{position.code}</span>
+                        <span className="text-[10px] font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
+                          {sharedCount} in comune
+                        </span>
+                      </div>
+                      <div className="text-xs text-slate-700 font-medium leading-snug mt-1">
+                        {position.title}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
       <div className="flex-1 overflow-hidden flex">
         <aside
           className={`border-r border-slate-200 bg-white overflow-y-auto transition-all duration-300 ${
@@ -2866,83 +2971,6 @@ const OverlapKanbanView = ({
                 )}
               </div>
 
-              <div className="pt-4 border-t border-slate-200 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-sm font-semibold text-slate-700">Aggiungi posizione</h4>
-                  {focusedCandidateId && (
-                    <button
-                      type="button"
-                      onClick={() => setFocusedCandidateId(null)}
-                      className="text-[10px] text-slate-400 hover:text-slate-600"
-                    >
-                      Rimuovi candidato
-                    </button>
-                  )}
-                </div>
-                {focusedCandidateId && (
-                  <div className="rounded border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-700">
-                    Suggerimenti per{" "}
-                    <span className="font-semibold">{candidateById.get(focusedCandidateId)?.nominativo}</span>
-                  </div>
-                )}
-                {focusedCandidateId && candidateOverlapSuggestions.length === 0 && (
-                  <p className="text-xs text-slate-400 italic">
-                    Nessuna posizione suggerita per il candidato selezionato.
-                  </p>
-                )}
-                {focusedCandidateId && candidateOverlapSuggestions.length > 0 && (
-                  <div className="space-y-2">
-                    {candidateOverlapSuggestions.map(({ position, overlapCount }) => (
-                      <button
-                        key={position.code}
-                        onClick={() => onSelectedPositionsChange([...selectedPositionIds, position.code])}
-                        className="w-full text-left border border-slate-200 rounded-md px-3 py-2 hover:border-blue-300 hover:bg-blue-50 transition-colors"
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="font-mono text-xs text-slate-500">{position.code}</span>
-                          <span className="text-[10px] font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
-                            {overlapCount} in overlap
-                          </span>
-                        </div>
-                        <div className="text-xs text-slate-700 font-medium leading-snug mt-1">
-                          {position.title}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {!focusedCandidateId && selectedPositionIds.length === 0 && (
-                  <p className="text-xs text-slate-400 italic">
-                    Seleziona una posizione o un candidato per vedere i suggerimenti.
-                  </p>
-                )}
-                {!focusedCandidateId && selectedPositionIds.length > 0 && suggestedPositions.length === 0 && (
-                  <p className="text-xs text-slate-400 italic">
-                    Nessuna posizione suggerita con candidati in comune.
-                  </p>
-                )}
-                {!focusedCandidateId && suggestedPositions.length > 0 && (
-                  <div className="space-y-2">
-                    {suggestedPositions.map(({ position, sharedCount }) => (
-                      <button
-                        key={position.code}
-                        onClick={() => onSelectedPositionsChange([...selectedPositionIds, position.code])}
-                        className="w-full text-left border border-slate-200 rounded-md px-3 py-2 hover:border-blue-300 hover:bg-blue-50 transition-colors"
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="font-mono text-xs text-slate-500">{position.code}</span>
-                          <span className="text-[10px] font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
-                            {sharedCount} in comune
-                          </span>
-                        </div>
-                        <div className="text-xs text-slate-700 font-medium leading-snug mt-1">
-                          {position.title}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
             </div>
           )}
         </aside>
@@ -3103,25 +3131,42 @@ const OverlapKanbanView = ({
                                     {candidate.rank} • {candidate.role} {candidate.category} {candidate.specialty}
                                   </div>
                                 </div>
-                                <Badge color={badge.color}>{badge.label}</Badge>
-                              </div>
-                              <div className="mt-3">
-                                <label className="text-[10px] uppercase text-slate-400 font-semibold">
-                                  Stato candidatura
-                                </label>
-                                <select
-                                  value={evaluation.status}
-                                  onChange={(event) =>
-                                    onUpdate({ ...evaluation, status: event.target.value as Evaluation["status"] })
-                                  }
-                                  className="mt-1 w-full text-xs border border-slate-200 rounded px-2 py-1 bg-white text-slate-600 focus:ring-2 focus:ring-blue-500 outline-none"
-                                >
-                                  <option value="pending">Pending</option>
-                                  <option value="selected">Selected</option>
-                                  <option value="reserve">Possibile match</option>
-                                  <option value="rejected">Rejected</option>
-                                  <option value="non-compatible">Non compatibile</option>
-                                </select>
+                                <div className="relative">
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      setOpenStatusCandidateId((prev) =>
+                                        prev === candidate.id ? null : candidate.id
+                                      );
+                                    }}
+                                    className="focus:outline-none"
+                                  >
+                                    <Badge color={badge.color}>{badge.label}</Badge>
+                                  </button>
+                                  {openStatusCandidateId === candidate.id && (
+                                    <div className="absolute right-0 mt-2 w-40 rounded-md border border-slate-200 bg-white shadow-lg z-10">
+                                      {statusOptions.map((option) => (
+                                        <button
+                                          key={option.value}
+                                          type="button"
+                                          onClick={(event) => {
+                                            event.stopPropagation();
+                                            onUpdate({ ...evaluation, status: option.value });
+                                            setOpenStatusCandidateId(null);
+                                          }}
+                                          className={`w-full text-left px-3 py-2 text-xs hover:bg-slate-50 ${
+                                            option.value === evaluation.status
+                                              ? "text-slate-800 font-semibold"
+                                              : "text-slate-600"
+                                          }`}
+                                        >
+                                          {option.label}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
                               </div>
                               <div className="mt-3 flex items-center justify-between text-xs">
                                 <span className="text-slate-500">Fit</span>
