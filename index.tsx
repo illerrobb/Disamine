@@ -1878,7 +1878,8 @@ const PositionDetailView = ({
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [dragOrderIds, setDragOrderIds] = useState<string[] | null>(null);
   const [dragOffset, setDragOffset] = useState<{ x: number; y: number } | null>(null);
-  const dragStartRef = useRef<{ x: number; y: number } | null>(null);
+  const dragGrabRef = useRef<{ x: number; y: number } | null>(null);
+  const dragOffsetRef = useRef<{ x: number; y: number } | null>(null);
   const dragOrderRef = useRef<string[] | null>(null);
   const [isRequirementsOpen, setIsRequirementsOpen] = useState(true);
   const baseOrderMap = useMemo(() => new Map(allCandidates.map((c, index) => [c.id, index])), [allCandidates]);
@@ -1934,12 +1935,24 @@ const PositionDetailView = ({
   }, [dragOrderIds]);
 
   useEffect(() => {
+    dragOffsetRef.current = dragOffset;
+  }, [dragOffset]);
+
+  useEffect(() => {
     if (!draggedCandidateId) return;
 
     const handlePointerMove = (event: PointerEvent) => {
-      const dragStart = dragStartRef.current;
-      if (dragStart) {
-        setDragOffset({ x: event.clientX - dragStart.x, y: event.clientY - dragStart.y });
+      const dragGrab = dragGrabRef.current;
+      const draggedRow = document.querySelector(`[data-candidate-id="${draggedCandidateId}"]`) as HTMLElement | null;
+      if (dragGrab && draggedRow) {
+        const rect = draggedRow.getBoundingClientRect();
+        const currentOffset = dragOffsetRef.current ?? { x: 0, y: 0 };
+        const baseLeft = rect.left - currentOffset.x;
+        const baseTop = rect.top - currentOffset.y;
+        setDragOffset({
+          x: event.clientX - dragGrab.x - baseLeft,
+          y: event.clientY - dragGrab.y - baseTop
+        });
       }
 
       const target = document.elementFromPoint(event.clientX, event.clientY);
@@ -1972,7 +1985,7 @@ const PositionDetailView = ({
       setDropTargetId(null);
       setDragOrderIds(null);
       setDragOffset(null);
-      dragStartRef.current = null;
+      dragGrabRef.current = null;
       dragOrderRef.current = null;
     };
 
@@ -2071,11 +2084,17 @@ const PositionDetailView = ({
                            isDragging={draggedCandidateId === c.id}
                            isDropTarget={dropTargetId === c.id}
                            onDragHandlePointerDown={(candidateId, event) => {
+                             const row = (event.currentTarget as HTMLElement).closest('[data-drag-row]') as HTMLElement | null;
+                             if (row) {
+                               const rect = row.getBoundingClientRect();
+                               dragGrabRef.current = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+                             } else {
+                               dragGrabRef.current = { x: 0, y: 0 };
+                             }
                              setDraggedCandidateId(candidateId);
                              setDropTargetId(candidateId);
                              setDragOrderIds(baseOrderedIds);
                              dragOrderRef.current = baseOrderedIds;
-                             dragStartRef.current = { x: event.clientX, y: event.clientY };
                              setDragOffset({ x: 0, y: 0 });
                            }}
                            dragOffset={draggedCandidateId === c.id ? dragOffset : null}
