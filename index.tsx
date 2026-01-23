@@ -513,16 +513,52 @@ const getOtherSelectionInfo = (candidateId: string, currentPositionId: string, e
   return null;
 };
 
-const getFitScore = (evaluation: Evaluation, position: Position) => {
+const FIT_WEIGHTS = {
+  essential: 0.7,
+  desirable: 0.3
+};
+
+const getRequirementScores = (evaluation: Evaluation, position: Position) => {
   const activeReqs = position.requirements.filter(req => !req.hidden);
-  if (activeReqs.length === 0) return 0;
-  const score = activeReqs.reduce((acc, req) => {
-    const status = evaluation.reqEvaluations[req.id];
-    if (status === 'yes') return acc + 1;
-    if (status === 'partial') return acc + 0.5;
-    return acc;
-  }, 0);
-  return score / activeReqs.length;
+  const essentialReqs = activeReqs.filter(req => req.type === 'essential');
+  const desirableReqs = activeReqs.filter(req => req.type === 'desirable');
+
+  const essentialYes = essentialReqs.filter(req => evaluation.reqEvaluations[req.id] === 'yes').length;
+  const desirableYes = desirableReqs.filter(req => evaluation.reqEvaluations[req.id] === 'yes').length;
+  const essentialTotal = essentialReqs.length;
+  const desirableTotal = desirableReqs.length;
+
+  const essentialScore = essentialTotal > 0 ? essentialYes / essentialTotal : 0;
+  const desirableScore = desirableTotal > 0 ? desirableYes / desirableTotal : 0;
+
+  return {
+    essentialYes,
+    essentialTotal,
+    essentialScore,
+    desirableYes,
+    desirableTotal,
+    desirableScore
+  };
+};
+
+const getFitScore = (evaluation: Evaluation, position: Position) => {
+  const {
+    essentialScore,
+    desirableScore,
+    essentialTotal,
+    desirableTotal
+  } = getRequirementScores(evaluation, position);
+
+  const essentialWeight = essentialTotal > 0 ? FIT_WEIGHTS.essential : 0;
+  const desirableWeight = desirableTotal > 0 ? FIT_WEIGHTS.desirable : 0;
+  const weightTotal = essentialWeight + desirableWeight;
+
+  if (weightTotal === 0) return 0;
+
+  return (
+    essentialScore * essentialWeight +
+    desirableScore * desirableWeight
+  ) / weightTotal;
 };
 
 // --- Components ---
@@ -551,6 +587,48 @@ const Badge = ({ children, color = 'blue' }: any) => {
     purple: "bg-purple-100 text-purple-800"
   };
   return <span className={`px-2 py-0.5 rounded text-xs font-semibold ${colors[color]}`}>{children}</span>;
+};
+
+const ScoreBar = ({
+  essentialScore,
+  desirableScore,
+  essentialTotal,
+  desirableTotal,
+  className = ''
+}: {
+  essentialScore: number;
+  desirableScore: number;
+  essentialTotal: number;
+  desirableTotal: number;
+  className?: string;
+}) => {
+  const essentialWeight = essentialTotal > 0 ? FIT_WEIGHTS.essential : 0;
+  const desirableWeight = desirableTotal > 0 ? FIT_WEIGHTS.desirable : 0;
+  const weightTotal = essentialWeight + desirableWeight || 1;
+  const essentialWidth = (essentialWeight / weightTotal) * 100;
+  const desirableWidth = (desirableWeight / weightTotal) * 100;
+
+  const essentialColor =
+    essentialTotal === 0 ? 'bg-slate-200' : essentialScore < 1 ? 'bg-red-500' : 'bg-green-500';
+  const desirableColor =
+    desirableTotal === 0
+      ? 'bg-slate-200'
+      : desirableScore === 1
+      ? 'bg-green-400'
+      : desirableScore > 0
+      ? 'bg-amber-400'
+      : 'bg-slate-300';
+
+  return (
+    <div className={`flex h-2 w-full overflow-hidden rounded-full bg-slate-100 ${className}`}>
+      {essentialWidth > 0 && (
+        <div className={essentialColor} style={{ width: `${essentialWidth}%` }} />
+      )}
+      {desirableWidth > 0 && (
+        <div className={desirableColor} style={{ width: `${desirableWidth}%` }} />
+      )}
+    </div>
+  );
 };
 
 // --- New Component: Candidate Detail View (Multi-Position Evaluation) ---
@@ -974,8 +1052,14 @@ const WorksheetRow: React.FC<{
 
   // Only count non-hidden requirements
   const activeReqs = position.requirements.filter(r => !r.hidden);
-  const reqScore = activeReqs.filter(r => evaluation.reqEvaluations[r.id] === 'yes').length;
-  const totalReqs = activeReqs.length;
+  const {
+    essentialYes,
+    essentialTotal,
+    essentialScore,
+    desirableYes,
+    desirableTotal,
+    desirableScore
+  } = getRequirementScores(evaluation, position);
 
   const handleReqToggle = (reqId: string) => {
     if (isNonCompatible) return;
@@ -1056,10 +1140,15 @@ const WorksheetRow: React.FC<{
         <div className="flex gap-2 mr-4">
            {!isNonCompatible && (
              <div className="flex flex-col items-center px-3 border-l border-slate-100">
-                <span className="text-xs text-slate-400 uppercase font-bold">Match</span>
-                <span className={`font-bold text-sm ${reqScore === totalReqs && totalReqs > 0 ? 'text-green-600' : 'text-slate-700'}`}>
-                  {reqScore}/{totalReqs}
-                </span>
+                <span className="text-[10px] text-slate-500 uppercase font-bold">E {essentialYes}/{essentialTotal}</span>
+                <span className="text-[10px] text-slate-500 uppercase font-bold">D {desirableYes}/{desirableTotal}</span>
+                <ScoreBar
+                  essentialScore={essentialScore}
+                  desirableScore={desirableScore}
+                  essentialTotal={essentialTotal}
+                  desirableTotal={desirableTotal}
+                  className="mt-1 w-20"
+                />
              </div>
            )}
            
@@ -2187,6 +2276,14 @@ const OverlapKanbanView = ({
                         {orderedCandidates.map(({ candidate, evaluation, fitScore }) => {
                           const badge = getStatusBadge(evaluation.status);
                           const fitPercent = Math.round(fitScore * 100);
+                          const {
+                            essentialYes,
+                            essentialTotal,
+                            essentialScore,
+                            desirableYes,
+                            desirableTotal,
+                            desirableScore
+                          } = getRequirementScores(evaluation, position);
 
                           return (
                             <div key={candidate.id} className="border border-slate-200 rounded-lg p-3 bg-white shadow-sm">
@@ -2202,6 +2299,19 @@ const OverlapKanbanView = ({
                               <div className="mt-3 flex items-center justify-between text-xs">
                                 <span className="text-slate-500">Fit</span>
                                 <span className="font-semibold text-slate-700">{fitPercent}%</span>
+                              </div>
+                              <div className="mt-2">
+                                <div className="flex items-center justify-between text-[11px] text-slate-500">
+                                  <span className="font-medium">E {essentialYes}/{essentialTotal}</span>
+                                  <span className="font-medium">D {desirableYes}/{desirableTotal}</span>
+                                </div>
+                                <ScoreBar
+                                  essentialScore={essentialScore}
+                                  desirableScore={desirableScore}
+                                  essentialTotal={essentialTotal}
+                                  desirableTotal={desirableTotal}
+                                  className="mt-1"
+                                />
                               </div>
                             </div>
                           );
