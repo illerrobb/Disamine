@@ -3022,11 +3022,25 @@ const OverlapKanbanView = ({
                   <div key={position.code} className={`w-72 shrink-0 ${isDropDisabled ? 'opacity-40' : ''}`}>
                     <div className="bg-white border border-slate-200 rounded-lg shadow-sm">
                       <div className="border-b border-slate-100 p-4">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
-                            {position.code}
-                          </span>
-                          <h3 className="font-semibold text-slate-800 text-sm line-clamp-2">{position.title}</h3>
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
+                              {position.code}
+                            </span>
+                            <h3 className="font-semibold text-slate-800 text-sm line-clamp-2">{position.title}</h3>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onSelectedPositionsChange(
+                                selectedPositionIds.filter((id) => id !== position.code)
+                              )
+                            }
+                            className="text-slate-300 hover:text-slate-500 transition-colors"
+                            aria-label={`Rimuovi ${position.code} dal kanban`}
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
                         </div>
                         <div className="text-xs text-slate-500 mt-2">
                           {position.entity} • {position.location}
@@ -3077,20 +3091,36 @@ const OverlapKanbanView = ({
                           }`}
                         >
                           {selectedEntry ? (
-                            <button
-                              type="button"
-                              onClick={() => setFocusedCandidateId(selectedEntry.candidate.id)}
-                              className="text-left w-full"
-                            >
-                              <div className="text-[10px] uppercase text-slate-400">Selected</div>
-                              <div className="font-semibold text-slate-700">
-                                {selectedEntry.candidate.nominativo}
-                              </div>
-                              <div className="text-[10px] text-slate-500">
-                                {selectedEntry.candidate.rank} • {selectedEntry.candidate.role}{" "}
-                                {selectedEntry.candidate.category}
-                              </div>
-                            </button>
+                            <div className="relative">
+                              <button
+                                type="button"
+                                onClick={() => setFocusedCandidateId(selectedEntry.candidate.id)}
+                                className="text-left w-full"
+                              >
+                                <div className="text-[10px] uppercase text-slate-400">Selected</div>
+                                <div className="font-semibold text-slate-700">
+                                  {selectedEntry.candidate.nominativo}
+                                </div>
+                                <div className="text-[10px] text-slate-500">
+                                  {selectedEntry.candidate.rank} • {selectedEntry.candidate.role}{" "}
+                                  {selectedEntry.candidate.category}
+                                </div>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  onUpdate({ ...selectedEntry.evaluation, status: "pending" });
+                                  if (focusedCandidateId === selectedEntry.candidate.id) {
+                                    setFocusedCandidateId(null);
+                                  }
+                                }}
+                                className="absolute top-1 right-1 text-slate-300 hover:text-slate-500"
+                                aria-label={`Rimuovi ${selectedEntry.candidate.nominativo} dalla selezione`}
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
                           ) : (
                             <div>
                               <div className="font-semibold">Slot selected</div>
