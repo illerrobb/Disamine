@@ -513,6 +513,18 @@ const getOtherSelectionInfo = (candidateId: string, currentPositionId: string, e
   return null;
 };
 
+const getFitScore = (evaluation: Evaluation, position: Position) => {
+  const activeReqs = position.requirements.filter(req => !req.hidden);
+  if (activeReqs.length === 0) return 0;
+  const score = activeReqs.reduce((acc, req) => {
+    const status = evaluation.reqEvaluations[req.id];
+    if (status === 'yes') return acc + 1;
+    if (status === 'partial') return acc + 0.5;
+    return acc;
+  }, 0);
+  return score / activeReqs.length;
+};
+
 // --- Components ---
 
 const Button = ({ children, onClick, variant = 'primary', className = '', disabled = false }: any) => {
@@ -2008,6 +2020,205 @@ const CandidatesListView = ({
    );
 };
 
+const OverlapKanbanView = ({
+  candidates,
+  positions,
+  evaluations,
+  selectedPositionIds,
+  onSelectedPositionsChange
+}: {
+  candidates: Candidate[];
+  positions: Position[];
+  evaluations: Record<string, Evaluation>;
+  selectedPositionIds: string[];
+  onSelectedPositionsChange: (ids: string[]) => void;
+}) => {
+  const [onlyPossibleMatch, setOnlyPossibleMatch] = useState(false);
+
+  const sortedPositions = useMemo(
+    () => [...positions].sort((a, b) => a.code.localeCompare(b.code)),
+    [positions]
+  );
+
+  const selectedPositions = useMemo(
+    () => sortedPositions.filter(pos => selectedPositionIds.includes(pos.code)),
+    [sortedPositions, selectedPositionIds]
+  );
+
+  const handleTogglePosition = (code: string) => {
+    if (selectedPositionIds.includes(code)) {
+      onSelectedPositionsChange(selectedPositionIds.filter(id => id !== code));
+    } else {
+      onSelectedPositionsChange([...selectedPositionIds, code]);
+    }
+  };
+
+  const handleSelectAll = () => {
+    onSelectedPositionsChange(sortedPositions.map(pos => pos.code));
+  };
+
+  const handleClearAll = () => {
+    onSelectedPositionsChange([]);
+  };
+
+  const matchesPossible = (status: Evaluation["status"]) =>
+    status !== "rejected" && status !== "non-compatible";
+
+  const getStatusBadge = (status: Evaluation["status"]) => {
+    switch (status) {
+      case "selected":
+        return { label: "Selected", color: "green" };
+      case "reserve":
+        return { label: "Reserve", color: "amber" };
+      case "rejected":
+        return { label: "Rejected", color: "slate" };
+      case "non-compatible":
+        return { label: "Non compatibile", color: "slate" };
+      default:
+        return { label: "Pending", color: "blue" };
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-full bg-slate-50">
+      <header className="bg-white border-b border-slate-200 px-8 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-800">Overlap Kanban</h1>
+            <p className="text-sm text-slate-500">Visualizza candidature per posizione selezionata.</p>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-slate-600">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+              checked={onlyPossibleMatch}
+              onChange={(event) => setOnlyPossibleMatch(event.target.checked)}
+            />
+            Solo Possibile match
+          </label>
+        </div>
+      </header>
+
+      <div className="flex-1 overflow-hidden flex">
+        <aside className="w-72 border-r border-slate-200 bg-white p-4 overflow-y-auto">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-slate-700">Posizioni selezionate</h3>
+            <div className="flex items-center gap-2 text-xs">
+              <button onClick={handleSelectAll} className="text-blue-600 hover:underline">
+                Seleziona tutte
+              </button>
+              <span className="text-slate-300">|</span>
+              <button onClick={handleClearAll} className="text-slate-500 hover:underline">
+                Pulisci
+              </button>
+            </div>
+          </div>
+          <div className="space-y-2">
+            {sortedPositions.map(pos => (
+              <label key={pos.code} className="flex items-start gap-2 text-sm text-slate-600">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                  checked={selectedPositionIds.includes(pos.code)}
+                  onChange={() => handleTogglePosition(pos.code)}
+                />
+                <span>
+                  <span className="font-mono text-xs text-slate-500">{pos.code}</span>
+                  <span className="block text-slate-700 font-medium leading-snug">{pos.title}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </aside>
+
+        <div className="flex-1 overflow-x-auto p-6">
+          {selectedPositions.length === 0 ? (
+            <div className="h-full flex items-center justify-center text-slate-500 text-sm">
+              Seleziona almeno una posizione per vedere le candidature.
+            </div>
+          ) : (
+            <div className="flex gap-4">
+              {selectedPositions.map(position => {
+                const positionCandidates = candidates
+                  .map(candidate => ({
+                    candidate,
+                    evaluation: evaluations[`${position.code}_${candidate.id}`]
+                  }))
+                  .filter(entry => entry.evaluation);
+
+                const filteredCandidates = positionCandidates.filter(({ evaluation }) =>
+                  onlyPossibleMatch ? matchesPossible(evaluation!.status) : true
+                );
+
+                const orderedCandidates = filteredCandidates
+                  .map(({ candidate, evaluation }) => ({
+                    candidate,
+                    evaluation: evaluation as Evaluation,
+                    fitScore: getFitScore(evaluation as Evaluation, position)
+                  }))
+                  .sort((a, b) => {
+                    if (b.fitScore !== a.fitScore) return b.fitScore - a.fitScore;
+                    return a.candidate.nominativo.localeCompare(b.candidate.nominativo);
+                  });
+
+                return (
+                  <div key={position.code} className="w-72 shrink-0">
+                    <div className="bg-white border border-slate-200 rounded-lg shadow-sm">
+                      <div className="border-b border-slate-100 p-4">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
+                            {position.code}
+                          </span>
+                          <h3 className="font-semibold text-slate-800 text-sm line-clamp-2">{position.title}</h3>
+                        </div>
+                        <div className="text-xs text-slate-500 mt-2">
+                          {position.entity} • {position.location}
+                        </div>
+                        <div className="text-xs text-slate-400 mt-2">
+                          {orderedCandidates.length} candidature
+                        </div>
+                      </div>
+                      <div className="p-3 space-y-3 max-h-[60vh] overflow-y-auto">
+                        {orderedCandidates.length === 0 && (
+                          <div className="text-xs text-slate-400 italic text-center py-6">
+                            Nessuna candidatura disponibile.
+                          </div>
+                        )}
+                        {orderedCandidates.map(({ candidate, evaluation, fitScore }) => {
+                          const badge = getStatusBadge(evaluation.status);
+                          const fitPercent = Math.round(fitScore * 100);
+
+                          return (
+                            <div key={candidate.id} className="border border-slate-200 rounded-lg p-3 bg-white shadow-sm">
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <div className="font-semibold text-slate-800 text-sm">{candidate.nominativo}</div>
+                                  <div className="text-[10px] text-slate-500 mt-0.5">
+                                    {candidate.rank} • {candidate.role} {candidate.category} {candidate.specialty}
+                                  </div>
+                                </div>
+                                <Badge color={badge.color}>{badge.label}</Badge>
+                              </div>
+                              <div className="mt-3 flex items-center justify-between text-xs">
+                                <span className="text-slate-500">Fit</span>
+                                <span className="font-semibold text-slate-700">{fitPercent}%</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const PositionDetailView = ({
   position,
   allCandidates,
@@ -2350,9 +2561,10 @@ const RecruitmentApp = () => {
     cycle: createDefaultCycle()
   }));
 
-  const [currentView, setCurrentView] = useState<'upload' | 'dashboard' | 'position_detail' | 'candidates_list' | 'candidate_detail'>('upload');
+  const [currentView, setCurrentView] = useState<'upload' | 'dashboard' | 'position_detail' | 'candidates_list' | 'candidate_detail' | 'overlap_kanban'>('upload');
   const [selectedPositionId, setSelectedPositionId] = useState<string | null>(null);
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
+  const [overlapPositionIds, setOverlapPositionIds] = useState<string[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterEnte, setFilterEnte] = useState("ALL");
   const [filterStatus, setFilterStatus] = useState<PositionStatus | 'all'>('all');
@@ -2441,6 +2653,7 @@ const RecruitmentApp = () => {
       lastUpdated: Date.now()
     });
     setLastImportStats(stats);
+    setOverlapPositionIds(positions.slice(0, 3).map(pos => pos.code));
     setCurrentView('dashboard');
   };
 
@@ -2603,6 +2816,7 @@ const RecruitmentApp = () => {
         });
         setSelectedCandidateId(null);
         setSelectedPositionId(null);
+        setOverlapPositionIds([]);
         setFilterEnte("ALL");
         setFilterStatus('all');
         setSearchTerm("");
@@ -2650,6 +2864,7 @@ const RecruitmentApp = () => {
     setCurrentView('upload');
     setSelectedCandidateId(null);
     setSelectedPositionId(null);
+    setOverlapPositionIds([]);
     setFilterEnte("ALL");
     setFilterStatus('all');
     setSearchTerm("");
@@ -2743,6 +2958,13 @@ const RecruitmentApp = () => {
           >
             <Users className="w-5 h-5" />
             Candidates <span className="text-xs ml-auto bg-slate-700 px-2 py-0.5 rounded">{appData.candidates.length}</span>
+          </button>
+          <button 
+             onClick={() => setCurrentView('overlap_kanban')}
+             className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${currentView === 'overlap_kanban' ? 'bg-slate-800 text-white' : 'hover:bg-slate-800 text-slate-400'}`}
+          >
+            <TableIcon className="w-5 h-5" />
+            Overlap Kanban
           </button>
         </nav>
         <div className="p-4 border-t border-slate-800">
@@ -2907,6 +3129,16 @@ const RecruitmentApp = () => {
                  setCurrentView('candidate_detail');
               }}
            />
+        )}
+
+        {currentView === 'overlap_kanban' && (
+          <OverlapKanbanView
+            candidates={appData.candidates}
+            positions={appData.positions}
+            evaluations={appData.evaluations}
+            selectedPositionIds={overlapPositionIds}
+            onSelectedPositionsChange={setOverlapPositionIds}
+          />
         )}
       </main>
 
