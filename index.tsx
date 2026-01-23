@@ -1952,10 +1952,16 @@ const PositionDetailView = ({
     const handlePointerMove = (event: PointerEvent) => {
       const dragGrab = dragGrabRef.current;
       const dragStartRect = dragStartRectRef.current;
-      if (dragGrab && dragStartRect) {
+      const activeRow = document.querySelector(
+        `[data-drag-row][data-candidate-id="${draggedCandidateId}"]`
+      ) as HTMLElement | null;
+      const activeRect = activeRow?.getBoundingClientRect() ?? null;
+      const rectLeft = activeRect?.left ?? dragStartRect?.left;
+      const rectTop = activeRect?.top ?? dragStartRect?.top;
+      if (dragGrab && rectLeft !== undefined && rectTop !== undefined) {
         setDragOffset({
-          x: event.clientX - dragGrab.x - dragStartRect.left,
-          y: event.clientY - dragGrab.y - dragStartRect.top
+          x: event.clientX - dragGrab.x - rectLeft,
+          y: event.clientY - dragGrab.y - rectTop
         });
       }
 
@@ -2164,7 +2170,6 @@ const PositionDetailView = ({
                              }
                              setDraggedCandidateId(candidateId);
                              setDropTargetId(candidateId);
-                             setDragOrderIds(baseOrderedIds);
                              dragOrderRef.current = baseOrderedIds;
                              setDragOffset({ x: 0, y: 0 });
                            }}
