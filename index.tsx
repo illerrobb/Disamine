@@ -631,6 +631,129 @@ const ScoreBar = ({
   );
 };
 
+const RequirementsDrawer = ({
+  isOpen,
+  position,
+  onClose,
+  onSave
+}: {
+  isOpen: boolean;
+  position: Position | null;
+  onClose: () => void;
+  onSave: (positionCode: string, requirements: Requirement[]) => void;
+}) => {
+  const [draftRequirements, setDraftRequirements] = useState<Requirement[]>([]);
+  const [hasChanges, setHasChanges] = useState(false);
+
+  useEffect(() => {
+    if (!position || !isOpen) return;
+    setDraftRequirements(position.requirements.map(req => ({ ...req })));
+    setHasChanges(false);
+  }, [position, isOpen]);
+
+  const updateRequirement = (id: string, changes: Partial<Requirement>) => {
+    setDraftRequirements(prev => {
+      const next = prev.map(req => (req.id === id ? { ...req, ...changes } : req));
+      return next;
+    });
+    setHasChanges(true);
+  };
+
+  const handleSave = () => {
+    if (!position) return;
+    onSave(position.code, draftRequirements);
+    setHasChanges(false);
+    onClose();
+  };
+
+  if (!isOpen || !position) return null;
+
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex">
+      <button
+        className="absolute inset-0 bg-slate-900/40"
+        onClick={onClose}
+        aria-label="Chiudi drawer requisiti"
+      />
+      <aside className="ml-auto w-full max-w-xl h-full bg-white shadow-2xl border-l border-slate-200 flex flex-col relative">
+        <div className="p-6 border-b border-slate-200 flex items-start justify-between gap-4">
+          <div>
+            <p className="text-xs uppercase text-slate-400 font-semibold">Requisiti posizione</p>
+            <h3 className="text-lg font-bold text-slate-800">
+              {position.code} • {position.title}
+            </h3>
+            <p className="text-xs text-slate-500 mt-1">
+              Modifica i requisiti E/D. Salva per aggiornare il fit score.
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-slate-400 hover:text-slate-600"
+            aria-label="Chiudi"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          {draftRequirements.length === 0 && (
+            <div className="text-sm text-slate-400 italic">Nessun requisito presente.</div>
+          )}
+          {["essential", "desirable"].map(type => (
+            <div key={type} className="space-y-3">
+              <h4 className="text-xs font-bold text-slate-500 uppercase">
+                {type === "essential" ? "Essential (E)" : "Desirable (D)"}
+              </h4>
+              {draftRequirements
+                .filter(req => req.type === type)
+                .map(req => (
+                  <div key={req.id} className="rounded-lg border border-slate-200 bg-white p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <select
+                        value={req.type}
+                        onChange={(event) =>
+                          updateRequirement(req.id, { type: event.target.value as Requirement["type"] })
+                        }
+                        className="text-xs font-semibold uppercase text-slate-600 border border-slate-200 rounded px-2 py-1 bg-slate-50"
+                      >
+                        <option value="essential">Essential</option>
+                        <option value="desirable">Desirable</option>
+                      </select>
+                      {req.hidden && (
+                        <span className="text-[10px] uppercase text-slate-400">Hidden</span>
+                      )}
+                    </div>
+                    <textarea
+                      value={req.text}
+                      onChange={(event) => updateRequirement(req.id, { text: event.target.value })}
+                      className="w-full text-sm text-slate-700 border border-slate-200 rounded-md px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none resize-none"
+                      rows={3}
+                    />
+                  </div>
+                ))}
+            </div>
+          ))}
+        </div>
+
+        <div className="p-6 border-t border-slate-200 flex items-center justify-between gap-3">
+          <span className="text-xs text-slate-400">
+            {hasChanges ? "Modifiche non salvate" : "Nessuna modifica da salvare"}
+          </span>
+          <div className="flex items-center gap-3">
+            <Button variant="secondary" onClick={onClose}>
+              Annulla
+            </Button>
+            <Button variant="primary" onClick={handleSave} disabled={!hasChanges}>
+              <Save className="w-4 h-4" /> Salva
+            </Button>
+          </div>
+        </div>
+      </aside>
+    </div>,
+    document.body
+  );
+};
+
 // --- New Component: Candidate Detail View (Multi-Position Evaluation) ---
 
 const CandidateDetailView = ({
@@ -1032,6 +1155,7 @@ const WorksheetRow: React.FC<{
   position: Position; 
   otherSelection: Position | null;
   onUpdate: (e: Evaluation) => void;
+  onOpenRequirementsDrawer: () => void;
   isDragging: boolean;
   isDropTarget: boolean;
   onDragHandlePointerDown: (candidateId: string, event: React.PointerEvent<HTMLButtonElement>) => void;
@@ -1042,6 +1166,7 @@ const WorksheetRow: React.FC<{
   position, 
   otherSelection,
   onUpdate,
+  onOpenRequirementsDrawer,
   isDragging,
   isDropTarget,
   onDragHandlePointerDown,
@@ -1166,6 +1291,13 @@ const WorksheetRow: React.FC<{
              <option value="non-compatible">NON COMPATIBILE</option>
            </select>
         </div>
+        <button
+          onClick={onOpenRequirementsDrawer}
+          className="text-xs text-blue-600 hover:text-blue-700 font-semibold border border-blue-100 bg-blue-50 px-2 py-1 rounded"
+        >
+          <FileText className="w-3 h-3 inline-block mr-1" />
+          Requisiti
+        </button>
       </div>
 
       {expanded && (
@@ -2114,15 +2246,18 @@ const OverlapKanbanView = ({
   positions,
   evaluations,
   selectedPositionIds,
-  onSelectedPositionsChange
+  onSelectedPositionsChange,
+  onUpdateRequirements
 }: {
   candidates: Candidate[];
   positions: Position[];
   evaluations: Record<string, Evaluation>;
   selectedPositionIds: string[];
   onSelectedPositionsChange: (ids: string[]) => void;
+  onUpdateRequirements: (positionCode: string, requirements: Requirement[]) => void;
 }) => {
   const [onlyPossibleMatch, setOnlyPossibleMatch] = useState(false);
+  const [drawerPosition, setDrawerPosition] = useState<Position | null>(null);
 
   const sortedPositions = useMemo(
     () => [...positions].sort((a, b) => a.code.localeCompare(b.code)),
@@ -2313,6 +2448,12 @@ const OverlapKanbanView = ({
                                   className="mt-1"
                                 />
                               </div>
+                              <button
+                                onClick={() => setDrawerPosition(position)}
+                                className="mt-3 text-[11px] text-blue-600 hover:text-blue-700 font-semibold flex items-center gap-1"
+                              >
+                                <FileText className="w-3 h-3" /> Requisiti
+                              </button>
                             </div>
                           );
                         })}
@@ -2325,6 +2466,13 @@ const OverlapKanbanView = ({
           )}
         </div>
       </div>
+
+      <RequirementsDrawer
+        isOpen={!!drawerPosition}
+        position={drawerPosition}
+        onClose={() => setDrawerPosition(null)}
+        onSave={onUpdateRequirements}
+      />
     </div>
   );
 };
@@ -2338,6 +2486,7 @@ const PositionDetailView = ({
   onReorder,
   onBack,
   onToggleReqVisibility,
+  onUpdateRequirements,
   onExport
 }: {
   position: Position;
@@ -2348,11 +2497,13 @@ const PositionDetailView = ({
   onReorder: (positionId: string, orderedCandidateIds: string[]) => void;
   onBack: () => void;
   onToggleReqVisibility: (posCode: string, reqId: string) => void;
+  onUpdateRequirements: (positionCode: string, requirements: Requirement[]) => void;
   onExport: (p: Position, c: Candidate[], e: Record<string, Evaluation>, pos: Position[]) => void;
 }) => {
   const [viewMode, setViewMode] = useState<'list' | 'matrix'>('list');
   const [filter, setFilter] = useState('all'); // all, selected, pending...
   const [isRequirementsOpen, setIsRequirementsOpen] = useState(true);
+  const [isRequirementsDrawerOpen, setIsRequirementsDrawerOpen] = useState(false);
   const baseOrderMap = useMemo(() => new Map(allCandidates.map((c, index) => [c.id, index])), [allCandidates]);
   const previousRowPositionsRef = useRef<Map<string, DOMRect>>(new Map());
 
@@ -2537,9 +2688,10 @@ const PositionDetailView = ({
                               key={c.id}
                               candidate={c}
                               evaluation={ev}
-                              position={position}
-                              otherSelection={other}
-                              onUpdate={onUpdate}
+                             position={position}
+                             otherSelection={other}
+                             onUpdate={onUpdate}
+                              onOpenRequirementsDrawer={() => setIsRequirementsDrawerOpen(true)}
                               isDragging={draggedCandidateId === c.id}
                               isDropTarget={dropTargetId === c.id}
                               onDragHandlePointerDown={handleDragHandlePointerDown}
@@ -2573,6 +2725,7 @@ const PositionDetailView = ({
                             allPositions
                           )}
                           onUpdate={() => {}}
+                          onOpenRequirementsDrawer={() => {}}
                           isDragging={false}
                           isDropTarget={false}
                           onDragHandlePointerDown={() => {}}
@@ -2649,6 +2802,13 @@ const PositionDetailView = ({
             )}
          </div>
       </div>
+
+      <RequirementsDrawer
+        isOpen={isRequirementsDrawerOpen}
+        position={position}
+        onClose={() => setIsRequirementsDrawerOpen(false)}
+        onSave={onUpdateRequirements}
+      />
     </div>
   );
 };
@@ -2856,6 +3016,23 @@ const RecruitmentApp = () => {
     });
   };
 
+  const updatePositionRequirements = (positionCode: string, requirements: Requirement[]) => {
+    setAppData(prev => {
+      const positionIndex = prev.positions.findIndex(p => p.code === positionCode);
+      if (positionIndex === -1) return prev;
+      const newPositions = [...prev.positions];
+      newPositions[positionIndex] = {
+        ...newPositions[positionIndex],
+        requirements
+      };
+      return {
+        ...prev,
+        positions: newPositions,
+        lastUpdated: Date.now()
+      };
+    });
+  };
+
   const resetData = () => {
     if (confirm("Are you sure? This will delete all evaluations.")) {
       localStorage.removeItem('recruitment_db');
@@ -3021,6 +3198,7 @@ const RecruitmentApp = () => {
           onReorder={updateManualOrder}
           onBack={() => setCurrentView('dashboard')}
           onToggleReqVisibility={toggleRequirementVisibility}
+          onUpdateRequirements={updatePositionRequirements}
           onExport={exportToExcel}
        />
     );
@@ -3248,6 +3426,7 @@ const RecruitmentApp = () => {
             evaluations={appData.evaluations}
             selectedPositionIds={overlapPositionIds}
             onSelectedPositionsChange={setOverlapPositionIds}
+            onUpdateRequirements={updatePositionRequirements}
           />
         )}
       </main>
