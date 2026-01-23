@@ -967,23 +967,97 @@ const CandidateMatchDrawer = ({
         </div>
 
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 flex flex-col gap-3">
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-slate-500">Status posizione</span>
-              <span className="font-semibold text-slate-700">{statusLabel}</span>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-slate-500">Status posizione</span>
+                <span className="font-semibold text-slate-700">{statusLabel}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-slate-500">Fit complessivo</span>
+                <span className="font-semibold text-slate-700">{fitPercent}%</span>
+              </div>
+              <div className="flex items-center justify-between gap-3 text-xs text-slate-500">
+                <span className="font-medium">Essential {essentialYes}/{essentialTotal}</span>
+                <span className="font-medium">Desirable {desirableYes}/{desirableTotal}</span>
+              </div>
             </div>
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-slate-500">Fit complessivo</span>
-              <span className="font-semibold text-slate-700">{fitPercent}%</span>
+            <ScoreBar evaluation={evaluation} position={position} />
+          </div>
+
+          <div className="rounded-lg border border-slate-200 bg-white p-4 space-y-3">
+            <div className="flex items-center justify-between text-xs font-semibold text-slate-500 uppercase">
+              <span>Dettagli candidato</span>
+              <span className="font-mono text-[10px] text-slate-400">{candidate.id}</span>
             </div>
-            <div className="flex items-center justify-between text-xs text-slate-500">
-              <span className="font-medium">Essential {essentialYes}/{essentialTotal}</span>
-              <span className="font-medium">Desirable {desirableYes}/{desirableTotal}</span>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs text-slate-600">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-slate-400">Grado</span>
+                <span className="font-semibold text-slate-700">{candidate.rank || "-"}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-slate-400">Ruolo/Cat.</span>
+                <span className="font-semibold text-slate-700">
+                  {[candidate.role, candidate.category, candidate.specialty].filter(Boolean).join(" ") || "-"}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-slate-400">Ente di servizio</span>
+                <span className="font-semibold text-slate-700">{candidate.serviceEntity || "-"}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-slate-400">NOS</span>
+                <span className="font-semibold text-slate-700">
+                  {[candidate.nosLevel, candidate.nosQual].filter(Boolean).join(" ") || "-"}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-slate-400">Scadenza NOS</span>
+                <span className="font-semibold text-slate-700">{candidate.nosExpiry || "-"}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-slate-400">Mandati estero</span>
+                <span className="font-semibold text-slate-700">{candidate.internationalMandates || "-"}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-slate-400">Data FEO</span>
+                <span className="font-semibold text-slate-700">{candidate.feoDate || "-"}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-slate-400">Mix</span>
+                <span className="font-semibold text-slate-700">{candidate.mixDescription || "-"}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3 sm:col-span-2">
+                <span className="text-slate-400">Lingue</span>
+                <span className="font-semibold text-slate-700">
+                  {candidate.languages.length > 0
+                    ? candidate.languages.map(lang => `${lang.language} (${lang.level})`).join(", ")
+                    : "-"}
+                </span>
+              </div>
             </div>
-            <ScoreBar
-              evaluation={evaluation}
-              position={position}
-            />
+            {(candidate.commanderOpinion || candidate.specificAssignments || candidate.ofcnSuitability) && (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-slate-600">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-slate-400">Parere Com.</span>
+                  <span className="font-semibold text-slate-700">{candidate.commanderOpinion || "-"}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-slate-400">Attribuzioni</span>
+                  <span className="font-semibold text-slate-700">{candidate.specificAssignments || "-"}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-slate-400">Idoneità OFCN</span>
+                  <span className="font-semibold text-slate-700">{candidate.ofcnSuitability || "-"}</span>
+                </div>
+              </div>
+            )}
+            {candidate.globalNotes && (
+              <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                <span className="block text-[10px] uppercase text-slate-400 font-semibold mb-1">Note</span>
+                {candidate.globalNotes}
+              </div>
+            )}
           </div>
 
           {activeReqs.length === 0 ? (
@@ -2600,9 +2674,8 @@ const OverlapKanbanView = ({
   const [onlyPossibleMatch, setOnlyPossibleMatch] = useState(false);
   const [positionSearch, setPositionSearch] = useState("");
   const [matchDrawerData, setMatchDrawerData] = useState<{
-    candidate: Candidate;
-    position: Position;
-    evaluation: Evaluation;
+    candidateId: string;
+    positionId: string;
   } | null>(null);
   const [draggingCandidateId, setDraggingCandidateId] = useState<string | null>(null);
   const [isPositionsOpen, setIsPositionsOpen] = useState(true);
@@ -2625,6 +2698,10 @@ const OverlapKanbanView = ({
   const candidateById = useMemo(() => {
     return new Map(candidates.map(candidate => [candidate.id, candidate]));
   }, [candidates]);
+
+  const positionById = useMemo(() => {
+    return new Map(positions.map(position => [position.code, position]));
+  }, [positions]);
 
   const overlapData = useMemo(() => computeOverlaps(positions, evaluations), [positions, evaluations]);
 
@@ -2809,6 +2886,22 @@ const OverlapKanbanView = ({
         return a.position.code.localeCompare(b.position.code);
       });
   }, [focusedCandidateId, positions, evaluations, selectedPositionIds, getOverlapCountForPosition]);
+
+  const matchDrawerCandidate = matchDrawerData
+    ? candidateById.get(matchDrawerData.candidateId) ?? null
+    : null;
+  const matchDrawerPosition = matchDrawerData
+    ? positionById.get(matchDrawerData.positionId) ?? null
+    : null;
+  const matchDrawerEvaluation = matchDrawerData
+    ? evaluations[`${matchDrawerData.positionId}_${matchDrawerData.candidateId}`] ?? null
+    : null;
+
+  useEffect(() => {
+    if (matchDrawerData && (!matchDrawerCandidate || !matchDrawerPosition || !matchDrawerEvaluation)) {
+      setMatchDrawerData(null);
+    }
+  }, [matchDrawerData, matchDrawerCandidate, matchDrawerPosition, matchDrawerEvaluation]);
 
   return (
     <div className="flex flex-col h-full bg-slate-50 relative">
@@ -3239,9 +3332,8 @@ const OverlapKanbanView = ({
                               <button
                                 onClick={() =>
                                   setMatchDrawerData({
-                                    candidate,
-                                    position,
-                                    evaluation
+                                    candidateId: candidate.id,
+                                    positionId: position.code
                                   })
                                 }
                                 className="mt-3 text-[11px] text-blue-600 hover:text-blue-700 font-semibold flex items-center gap-1"
@@ -3263,9 +3355,9 @@ const OverlapKanbanView = ({
 
       <CandidateMatchDrawer
         isOpen={!!matchDrawerData}
-        candidate={matchDrawerData?.candidate ?? null}
-        position={matchDrawerData?.position ?? null}
-        evaluation={matchDrawerData?.evaluation ?? null}
+        candidate={matchDrawerCandidate}
+        position={matchDrawerPosition}
+        evaluation={matchDrawerEvaluation}
         onClose={() => setMatchDrawerData(null)}
         onUpdate={onUpdate}
       />
