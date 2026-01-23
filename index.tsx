@@ -1484,12 +1484,8 @@ const useCandidateReorder = ({
     const handlePointerMove = (event: PointerEvent) => {
       const dragGrab = dragGrabRef.current;
       const dragStartRectValue = dragStartRectRef.current;
-      const activeRow = document.querySelector(
-        `[data-drag-row][data-candidate-id="${draggedCandidateId}"]`
-      ) as HTMLElement | null;
-      const activeRect = activeRow?.getBoundingClientRect() ?? null;
-      const rectLeft = activeRect?.left ?? dragStartRectValue?.left;
-      const rectTop = activeRect?.top ?? dragStartRectValue?.top;
+      const rectLeft = dragStartRectValue?.left;
+      const rectTop = dragStartRectValue?.top;
       if (dragGrab && rectLeft !== undefined && rectTop !== undefined) {
         setDragOffset({
           x: event.clientX - dragGrab.x - rectLeft,
