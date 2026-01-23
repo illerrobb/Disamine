@@ -499,6 +499,55 @@ const getPositionStatus = (position: Position, evaluations: Record<string, Evalu
   return 'todo';
 };
 
+interface OverlapResult {
+  position: Position;
+  overlapCount: number;
+  candidateIds: string[];
+  sharedCandidateIds: string[];
+}
+
+const computeOverlaps = (positions: Position[], evaluations: Record<string, Evaluation>): OverlapResult[] => {
+  const candidateIdsByPosition = new Map<string, Set<string>>();
+
+  positions.forEach(position => {
+    candidateIdsByPosition.set(position.code, new Set());
+  });
+
+  Object.values(evaluations).forEach(ev => {
+    const candidateSet = candidateIdsByPosition.get(ev.positionId);
+    if (!candidateSet) return;
+    candidateSet.add(ev.candidateId);
+  });
+
+  const overlaps = positions.map(position => {
+    const candidateIds = candidateIdsByPosition.get(position.code) ?? new Set<string>();
+    const sharedCandidateIds = new Set<string>();
+
+    candidateIdsByPosition.forEach((otherCandidates, otherCode) => {
+      if (otherCode === position.code) return;
+      otherCandidates.forEach(candidateId => {
+        if (candidateIds.has(candidateId)) {
+          sharedCandidateIds.add(candidateId);
+        }
+      });
+    });
+
+    return {
+      position,
+      overlapCount: sharedCandidateIds.size,
+      candidateIds: Array.from(candidateIds),
+      sharedCandidateIds: Array.from(sharedCandidateIds)
+    };
+  });
+
+  return overlaps
+    .filter(entry => entry.overlapCount > 0)
+    .sort((a, b) => {
+      if (b.overlapCount !== a.overlapCount) return b.overlapCount - a.overlapCount;
+      return a.position.code.localeCompare(b.position.code);
+    });
+};
+
 const getOtherSelectionInfo = (candidateId: string, currentPositionId: string, evaluations: Record<string, Evaluation>, positions: Position[]) => {
   const otherSelection = Object.values(evaluations).find(ev => 
     ev.candidateId === candidateId && 
@@ -2247,6 +2296,7 @@ const OverlapKanbanView = ({
   evaluations,
   selectedPositionIds,
   onSelectedPositionsChange,
+  onUpdate,
   onUpdateRequirements
 }: {
   candidates: Candidate[];
@@ -2254,10 +2304,56 @@ const OverlapKanbanView = ({
   evaluations: Record<string, Evaluation>;
   selectedPositionIds: string[];
   onSelectedPositionsChange: (ids: string[]) => void;
+  onUpdate: (ev: Evaluation) => void;
   onUpdateRequirements: (positionCode: string, requirements: Requirement[]) => void;
 }) => {
   const [onlyPossibleMatch, setOnlyPossibleMatch] = useState(false);
   const [drawerPosition, setDrawerPosition] = useState<Position | null>(null);
+  const [draggingCandidateId, setDraggingCandidateId] = useState<string | null>(null);
+
+  const candidateIdsByPosition = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    positions.forEach(position => map.set(position.code, new Set()));
+    Object.values(evaluations).forEach(ev => {
+      const candidateSet = map.get(ev.positionId);
+      if (candidateSet) {
+        candidateSet.add(ev.candidateId);
+      }
+    });
+    return map;
+  }, [positions, evaluations]);
+
+  const overlapData = useMemo(() => computeOverlaps(positions, evaluations), [positions, evaluations]);
+
+  const selectedCandidateIds = useMemo(() => {
+    const ids = new Set<string>();
+    selectedPositionIds.forEach(code => {
+      candidateIdsByPosition.get(code)?.forEach(candidateId => ids.add(candidateId));
+    });
+    return ids;
+  }, [selectedPositionIds, candidateIdsByPosition]);
+
+  const suggestedPositions = useMemo(() => {
+    if (selectedPositionIds.length === 0) return [];
+
+    return overlapData
+      .filter(({ position }) => !selectedPositionIds.includes(position.code))
+      .map(({ position }) => {
+        const candidateIds = candidateIdsByPosition.get(position.code) ?? new Set<string>();
+        let sharedCount = 0;
+        candidateIds.forEach(candidateId => {
+          if (selectedCandidateIds.has(candidateId)) {
+            sharedCount += 1;
+          }
+        });
+        return { position, sharedCount };
+      })
+      .filter(entry => entry.sharedCount > 0)
+      .sort((a, b) => {
+        if (b.sharedCount !== a.sharedCount) return b.sharedCount - a.sharedCount;
+        return a.position.code.localeCompare(b.position.code);
+      });
+  }, [overlapData, selectedPositionIds, candidateIdsByPosition, selectedCandidateIds]);
 
   const sortedPositions = useMemo(
     () => [...positions].sort((a, b) => a.code.localeCompare(b.code)),
@@ -2302,6 +2398,45 @@ const OverlapKanbanView = ({
         return { label: "Pending", color: "blue" };
     }
   };
+
+  const handleDragStart = useCallback(
+    (candidateId: string) => (event: React.DragEvent<HTMLDivElement>) => {
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", candidateId);
+      setDraggingCandidateId(candidateId);
+    },
+    []
+  );
+
+  const handleDragEnd = useCallback(() => {
+    setDraggingCandidateId(null);
+  }, []);
+
+  const handleDragOverSlot = useCallback(
+    (positionCode: string) => (event: React.DragEvent<HTMLDivElement>) => {
+      if (!draggingCandidateId) return;
+      if (!evaluations[`${positionCode}_${draggingCandidateId}`]) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+    },
+    [draggingCandidateId, evaluations]
+  );
+
+  const handleDropSlot = useCallback(
+    (positionCode: string) => (event: React.DragEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      const candidateId = draggingCandidateId || event.dataTransfer.getData("text/plain");
+      if (!candidateId) return;
+      const evaluation = evaluations[`${positionCode}_${candidateId}`];
+      if (!evaluation) {
+        setDraggingCandidateId(null);
+        return;
+      }
+      onUpdate({ ...evaluation, status: "selected" });
+      setDraggingCandidateId(null);
+    },
+    [draggingCandidateId, evaluations, onUpdate]
+  );
 
   return (
     <div className="flex flex-col h-full bg-slate-50">
@@ -2353,6 +2488,39 @@ const OverlapKanbanView = ({
               </label>
             ))}
           </div>
+
+          <div className="mt-6 pt-4 border-t border-slate-200">
+            <h4 className="text-sm font-semibold text-slate-700 mb-2">Aggiungi posizione</h4>
+            {selectedPositionIds.length === 0 && (
+              <p className="text-xs text-slate-400 italic">
+                Seleziona almeno una posizione per vedere i suggerimenti.
+              </p>
+            )}
+            {selectedPositionIds.length > 0 && suggestedPositions.length === 0 && (
+              <p className="text-xs text-slate-400 italic">
+                Nessuna posizione suggerita con candidati in comune.
+              </p>
+            )}
+            <div className="space-y-2">
+              {suggestedPositions.map(({ position, sharedCount }) => (
+                <button
+                  key={position.code}
+                  onClick={() => onSelectedPositionsChange([...selectedPositionIds, position.code])}
+                  className="w-full text-left border border-slate-200 rounded-md px-3 py-2 hover:border-blue-300 hover:bg-blue-50 transition-colors"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-xs text-slate-500">{position.code}</span>
+                    <span className="text-[10px] font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
+                      {sharedCount} in comune
+                    </span>
+                  </div>
+                  <div className="text-xs text-slate-700 font-medium leading-snug mt-1">
+                    {position.title}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
         </aside>
 
         <div className="flex-1 overflow-x-auto p-6">
@@ -2374,6 +2542,12 @@ const OverlapKanbanView = ({
                   onlyPossibleMatch ? matchesPossible(evaluation!.status) : true
                 );
 
+                const selectedEntry = positionCandidates.find(({ evaluation }) => evaluation?.status === "selected");
+                const isDropDisabled =
+                  draggingCandidateId && !evaluations[`${position.code}_${draggingCandidateId}`];
+                const canDrop =
+                  !!draggingCandidateId && !!evaluations[`${position.code}_${draggingCandidateId}`];
+
                 const orderedCandidates = filteredCandidates
                   .map(({ candidate, evaluation }) => ({
                     candidate,
@@ -2386,7 +2560,7 @@ const OverlapKanbanView = ({
                   });
 
                 return (
-                  <div key={position.code} className="w-72 shrink-0">
+                  <div key={position.code} className={`w-72 shrink-0 ${isDropDisabled ? 'opacity-40' : ''}`}>
                     <div className="bg-white border border-slate-200 rounded-lg shadow-sm">
                       <div className="border-b border-slate-100 p-4">
                         <div className="flex items-center gap-2">
@@ -2403,6 +2577,34 @@ const OverlapKanbanView = ({
                         </div>
                       </div>
                       <div className="p-3 space-y-3 max-h-[60vh] overflow-y-auto">
+                        <div
+                          onDragOver={handleDragOverSlot(position.code)}
+                          onDrop={handleDropSlot(position.code)}
+                          className={`rounded-md border-2 border-dashed px-3 py-2 text-[11px] transition-colors ${
+                            canDrop
+                              ? "border-blue-400 bg-blue-50 text-blue-700"
+                              : isDropDisabled
+                                ? "border-slate-200 bg-slate-50 text-slate-400"
+                                : "border-slate-200 bg-slate-50 text-slate-500"
+                          }`}
+                        >
+                          {selectedEntry ? (
+                            <div>
+                              <div className="text-[10px] uppercase text-slate-400">Selected</div>
+                              <div className="font-semibold text-slate-700">
+                                {selectedEntry.candidate.nominativo}
+                              </div>
+                              <div className="text-[10px] text-slate-500">
+                                {selectedEntry.candidate.rank} • {selectedEntry.candidate.role} {selectedEntry.candidate.category}
+                              </div>
+                            </div>
+                          ) : (
+                            <div>
+                              <div className="font-semibold">Slot selected</div>
+                              <div>Trascina qui il candidato selezionato.</div>
+                            </div>
+                          )}
+                        </div>
                         {orderedCandidates.length === 0 && (
                           <div className="text-xs text-slate-400 italic text-center py-6">
                             Nessuna candidatura disponibile.
@@ -2421,7 +2623,13 @@ const OverlapKanbanView = ({
                           } = getRequirementScores(evaluation, position);
 
                           return (
-                            <div key={candidate.id} className="border border-slate-200 rounded-lg p-3 bg-white shadow-sm">
+                            <div
+                              key={candidate.id}
+                              draggable
+                              onDragStart={handleDragStart(candidate.id)}
+                              onDragEnd={handleDragEnd}
+                              className="border border-slate-200 rounded-lg p-3 bg-white shadow-sm cursor-grab active:cursor-grabbing"
+                            >
                               <div className="flex items-start justify-between gap-2">
                                 <div>
                                   <div className="font-semibold text-slate-800 text-sm">{candidate.nominativo}</div>
@@ -3426,6 +3634,7 @@ const RecruitmentApp = () => {
             evaluations={appData.evaluations}
             selectedPositionIds={overlapPositionIds}
             onSelectedPositionsChange={setOverlapPositionIds}
+            onUpdate={updateEvaluation}
             onUpdateRequirements={updatePositionRequirements}
           />
         )}
