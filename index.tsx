@@ -824,13 +824,15 @@ const CandidateMatchDrawer = ({
   candidate,
   position,
   evaluation,
-  onClose
+  onClose,
+  onUpdate
 }: {
   isOpen: boolean;
   candidate: Candidate | null;
   position: Position | null;
   evaluation: Evaluation | null;
   onClose: () => void;
+  onUpdate: (ev: Evaluation) => void;
 }) => {
   if (!isOpen || !candidate || !position || !evaluation) return null;
 
@@ -855,8 +857,37 @@ const CandidateMatchDrawer = ({
 
   const renderRequirementRow = (req: Requirement) => {
     const status = evaluation.reqEvaluations[req.id] || "pending";
+    const isDisabled = evaluation.status === "non-compatible";
     return (
-      <div key={req.id} className="flex items-start gap-3 p-2 rounded border border-slate-200 bg-white">
+      <button
+        key={req.id}
+        type="button"
+        onClick={() => {
+          if (isDisabled) return;
+          const current = evaluation.reqEvaluations[req.id] || "pending";
+          const next =
+            current === "pending"
+              ? "yes"
+              : current === "yes"
+              ? "no"
+              : current === "no"
+              ? "partial"
+              : "pending";
+          onUpdate({
+            ...evaluation,
+            reqEvaluations: {
+              ...evaluation.reqEvaluations,
+              [req.id]: next
+            }
+          });
+        }}
+        className={`flex w-full items-start gap-3 p-2 rounded border transition-colors ${
+          isDisabled
+            ? "border-slate-200 bg-slate-100 cursor-not-allowed"
+            : "border-slate-200 bg-white hover:bg-slate-50"
+        }`}
+        aria-disabled={isDisabled}
+      >
         <div
           className={`mt-0.5 shrink-0 w-6 h-6 rounded flex items-center justify-center border
             ${
@@ -881,7 +912,7 @@ const CandidateMatchDrawer = ({
             {req.type === "essential" ? "Essential" : "Desirable"}
           </span>
         </div>
-      </div>
+      </button>
     );
   };
 
@@ -963,6 +994,108 @@ const CandidateMatchDrawer = ({
   );
 };
 
+const StatusPicker = ({
+  status,
+  otherSelection,
+  onChange
+}: {
+  status: Evaluation["status"];
+  otherSelection: Position | null;
+  onChange: (status: Evaluation["status"]) => void;
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  const getStatusColor = (value: Evaluation["status"]) => {
+    switch (value) {
+      case "selected":
+        return "bg-green-100 text-green-800 border-green-200";
+      case "rejected":
+        return "bg-red-100 text-red-800 border-red-200";
+      case "reserve":
+        return "bg-amber-100 text-amber-800 border-amber-200";
+      case "non-compatible":
+        return "bg-gray-200 text-gray-800 border-gray-300";
+      default:
+        return "bg-white text-slate-600 border-slate-200";
+    }
+  };
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (!menuRef.current) return;
+      if (!menuRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const handleSelect = (value: Evaluation["status"]) => {
+    setIsOpen(false);
+    onChange(value);
+  };
+
+  return (
+    <div ref={menuRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setIsOpen((prev) => !prev)}
+        className={`text-sm font-bold uppercase px-3 py-1.5 rounded border cursor-pointer focus:outline-none focus:ring-2 ${getStatusColor(status)}`}
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
+      >
+        {status === "pending" ? "PENDING" : status === "selected" ? "SELECTED" : status === "reserve" ? "POSSIBILE MATCH" : status === "rejected" ? "REJECTED" : "NON COMPATIBILE"}
+      </button>
+      {isOpen && (
+        <div className="absolute right-0 mt-2 w-48 bg-white border border-slate-200 rounded shadow-lg z-20 p-2 space-y-1">
+          <button
+            type="button"
+            onClick={() => handleSelect("pending")}
+            className="w-full text-left text-xs px-2 py-1 rounded hover:bg-slate-50"
+          >
+            PENDING
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSelect("selected")}
+            disabled={!!otherSelection && status !== "selected"}
+            className={`w-full text-left text-xs px-2 py-1 rounded ${
+              !!otherSelection && status !== "selected"
+                ? "text-slate-300 cursor-not-allowed"
+                : "hover:bg-slate-50"
+            }`}
+          >
+            {!!otherSelection && status !== "selected" ? "GIÀ SELEZIONATO" : "SELECTED"}
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSelect("reserve")}
+            className="w-full text-left text-xs px-2 py-1 rounded hover:bg-slate-50"
+          >
+            POSSIBILE MATCH
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSelect("rejected")}
+            className="w-full text-left text-xs px-2 py-1 rounded hover:bg-slate-50"
+          >
+            REJECTED
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSelect("non-compatible")}
+            className="w-full text-left text-xs px-2 py-1 rounded hover:bg-slate-50"
+          >
+            NON COMPATIBILE
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // --- New Component: Candidate Detail View (Multi-Position Evaluation) ---
 
 const CandidateDetailView = ({
@@ -987,16 +1120,6 @@ const CandidateDetailView = ({
        return !!evaluations[`${p.code}_${candidate.id}`];
     });
   }, [allPositions, evaluations, candidate.id]);
-
-  const getStatusColor = (s: string) => {
-    switch(s) {
-      case 'selected': return 'bg-green-100 text-green-800 border-green-200';
-      case 'rejected': return 'bg-red-100 text-red-800 border-red-200';
-      case 'reserve': return 'bg-amber-100 text-amber-800 border-amber-200';
-      case 'non-compatible': return 'bg-gray-200 text-gray-800 border-gray-300';
-      default: return 'bg-white text-slate-600 border-slate-200';
-    }
-  };
 
   const handleReqToggle = (ev: Evaluation, reqId: string) => {
     if (ev.status === 'non-compatible') return;
@@ -1144,19 +1267,11 @@ const CandidateDetailView = ({
                         </div>
                         
                         <div className="flex flex-col items-end gap-2">
-                           <select 
-                              value={ev.status}
-                              onChange={(e) => onUpdate({...ev, status: e.target.value as any})}
-                              className={`text-sm font-bold uppercase px-3 py-1.5 rounded border cursor-pointer focus:outline-none focus:ring-2 ${getStatusColor(ev.status)}`}
-                           >
-                              <option value="pending">PENDING</option>
-                              <option value="selected" disabled={!!otherSelection && ev.status !== 'selected'}>
-                                 {!!otherSelection && ev.status !== 'selected' ? 'GIÀ SELEZIONATO' : 'SELECTED'}
-                              </option>
-                              <option value="reserve">POSSIBILE MATCH</option>
-                              <option value="rejected">REJECTED</option>
-                              <option value="non-compatible">NON COMPATIBILE</option>
-                           </select>
+                           <StatusPicker
+                              status={ev.status}
+                              otherSelection={otherSelection}
+                              onChange={(status) => onUpdate({ ...ev, status })}
+                           />
                            
                            {!isNonCompatible && (
                               <div className="text-xs font-medium text-slate-500">
@@ -2467,6 +2582,8 @@ const OverlapKanbanView = ({
     evaluation: Evaluation;
   } | null>(null);
   const [draggingCandidateId, setDraggingCandidateId] = useState<string | null>(null);
+  const [isPositionsOpen, setIsPositionsOpen] = useState(true);
+  const [focusedCandidateId, setFocusedCandidateId] = useState<string | null>(null);
 
   const candidateIdsByPosition = useMemo(() => {
     const map = new Map<string, Set<string>>();
@@ -2479,6 +2596,10 @@ const OverlapKanbanView = ({
     });
     return map;
   }, [positions, evaluations]);
+
+  const candidateById = useMemo(() => {
+    return new Map(candidates.map(candidate => [candidate.id, candidate]));
+  }, [candidates]);
 
   const overlapData = useMemo(() => computeOverlaps(positions, evaluations), [positions, evaluations]);
 
@@ -2623,102 +2744,207 @@ const OverlapKanbanView = ({
     [candidateIdsByPosition, selectedPositionIds]
   );
 
+  const getOverlapCountForPosition = useCallback(
+    (positionCode: string) => {
+      if (selectedPositionIds.length === 0) return 0;
+      const candidateIds = candidateIdsByPosition.get(positionCode) ?? new Set<string>();
+      const otherSelectedIds = new Set<string>();
+      selectedPositionIds.forEach(code => {
+        if (code === positionCode) return;
+        candidateIdsByPosition.get(code)?.forEach(candidateId => otherSelectedIds.add(candidateId));
+      });
+      let sharedCount = 0;
+      candidateIds.forEach(candidateId => {
+        if (otherSelectedIds.has(candidateId)) sharedCount += 1;
+      });
+      return sharedCount;
+    },
+    [candidateIdsByPosition, selectedPositionIds]
+  );
+
+  const candidateOverlapSuggestions = useMemo(() => {
+    if (!focusedCandidateId) return [];
+    return positions
+      .filter(position => !!evaluations[`${position.code}_${focusedCandidateId}`])
+      .filter(position => !selectedPositionIds.includes(position.code))
+      .map(position => ({
+        position,
+        overlapCount: getOverlapCountForPosition(position.code)
+      }))
+      .sort((a, b) => {
+        if (b.overlapCount !== a.overlapCount) return b.overlapCount - a.overlapCount;
+        return a.position.code.localeCompare(b.position.code);
+      });
+  }, [focusedCandidateId, positions, evaluations, selectedPositionIds, getOverlapCountForPosition]);
+
   return (
     <div className="flex flex-col h-full bg-slate-50">
-      <header className="bg-white border-b border-slate-200 px-8 py-4">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-800">Overlap Kanban</h1>
-            <p className="text-sm text-slate-500">Visualizza candidature per posizione selezionata.</p>
-          </div>
-          <label className="flex items-center gap-2 text-sm text-slate-600">
-            <input
-              type="checkbox"
-              className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-              checked={onlyPossibleMatch}
-              onChange={(event) => setOnlyPossibleMatch(event.target.checked)}
-            />
-            Solo Possibile match
-          </label>
-        </div>
-      </header>
-
       <div className="flex-1 overflow-hidden flex">
-        <aside className="w-72 border-r border-slate-200 bg-white p-4 overflow-y-auto">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold text-slate-700">Posizioni selezionate</h3>
-            <div className="flex items-center gap-2 text-xs">
-              <button onClick={handleSelectAll} className="text-blue-600 hover:underline">
-                Seleziona tutte
-              </button>
-              <span className="text-slate-300">|</span>
-              <button onClick={handleClearAll} className="text-slate-500 hover:underline">
-                Pulisci
-              </button>
-            </div>
+        <aside
+          className={`border-r border-slate-200 bg-white overflow-y-auto transition-all duration-300 ${
+            isPositionsOpen ? "w-80" : "w-12"
+          }`}
+        >
+          <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+            {isPositionsOpen ? (
+              <div>
+                <h3 className="text-sm font-semibold text-slate-700">Posizioni selezionate</h3>
+                <p className="text-xs text-slate-400">Filtra e suggerimenti overlap.</p>
+              </div>
+            ) : (
+              <div className="w-full flex items-center justify-center">
+                <Briefcase className="w-4 h-4 text-slate-400" />
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => setIsPositionsOpen((prev) => !prev)}
+              className="text-slate-400 hover:text-slate-600"
+              aria-label={isPositionsOpen ? "Comprimi pannello posizioni" : "Espandi pannello posizioni"}
+            >
+              {isPositionsOpen ? <ChevronLeft className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+            </button>
           </div>
-          <div className="relative mb-3">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={positionSearch}
-              onChange={(event) => setPositionSearch(event.target.value)}
-              placeholder="Cerca posizione..."
-              className="w-full border border-slate-200 rounded-md py-2 pl-9 pr-3 text-xs text-slate-600 focus:ring-2 focus:ring-blue-500 outline-none"
-            />
-          </div>
-          <div className="space-y-2">
-            {filteredPositions.map(pos => (
-              <label key={pos.code} className="flex items-start gap-2 text-sm text-slate-600">
+          {isPositionsOpen && (
+            <div className="p-4 space-y-4">
+              <label className="flex items-center gap-2 text-xs text-slate-600">
                 <input
                   type="checkbox"
-                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                  checked={selectedPositionIds.includes(pos.code)}
-                  onChange={() => handleTogglePosition(pos.code)}
+                  className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                  checked={onlyPossibleMatch}
+                  onChange={(event) => setOnlyPossibleMatch(event.target.checked)}
                 />
-                <span>
-                  <span className="font-mono text-xs text-slate-500">{pos.code}</span>
-                  <span className="block text-slate-700 font-medium leading-snug">{pos.title}</span>
-                </span>
+                Solo Possibile match
               </label>
-            ))}
-            {filteredPositions.length === 0 && (
-              <div className="text-xs text-slate-400 italic">Nessuna posizione trovata.</div>
-            )}
-          </div>
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-xs text-slate-500">Gestione selezioni</div>
+                <div className="flex items-center gap-2 text-xs">
+                  <button onClick={handleSelectAll} className="text-blue-600 hover:underline">
+                    Seleziona tutte
+                  </button>
+                  <span className="text-slate-300">|</span>
+                  <button onClick={handleClearAll} className="text-slate-500 hover:underline">
+                    Pulisci
+                  </button>
+                </div>
+              </div>
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={positionSearch}
+                  onChange={(event) => setPositionSearch(event.target.value)}
+                  placeholder="Cerca posizione..."
+                  className="w-full border border-slate-200 rounded-md py-2 pl-9 pr-3 text-xs text-slate-600 focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+              </div>
+              <div className="space-y-2">
+                {filteredPositions.map(pos => {
+                  const totalCandidates = candidateIdsByPosition.get(pos.code)?.size ?? 0;
+                  const overlapCount = getOverlapCountForPosition(pos.code);
+                  return (
+                    <label key={pos.code} className="flex items-start gap-2 text-sm text-slate-600">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                        checked={selectedPositionIds.includes(pos.code)}
+                        onChange={() => handleTogglePosition(pos.code)}
+                      />
+                      <span className="flex-1">
+                        <span className="font-mono text-xs text-slate-500">{pos.code}</span>
+                        <span className="block text-slate-700 font-medium leading-snug">{pos.title}</span>
+                        <span className="mt-1 text-[10px] text-slate-400 flex gap-2">
+                          <span>Segnalati: {totalCandidates}</span>
+                          <span>Overlap: {overlapCount}</span>
+                        </span>
+                      </span>
+                    </label>
+                  );
+                })}
+                {filteredPositions.length === 0 && (
+                  <div className="text-xs text-slate-400 italic">Nessuna posizione trovata.</div>
+                )}
+              </div>
 
-          <div className="mt-6 pt-4 border-t border-slate-200">
-            <h4 className="text-sm font-semibold text-slate-700 mb-2">Aggiungi posizione</h4>
-            {selectedPositionIds.length === 0 && (
-              <p className="text-xs text-slate-400 italic">
-                Seleziona almeno una posizione per vedere i suggerimenti.
-              </p>
-            )}
-            {selectedPositionIds.length > 0 && suggestedPositions.length === 0 && (
-              <p className="text-xs text-slate-400 italic">
-                Nessuna posizione suggerita con candidati in comune.
-              </p>
-            )}
-            <div className="space-y-2">
-              {suggestedPositions.map(({ position, sharedCount }) => (
-                <button
-                  key={position.code}
-                  onClick={() => onSelectedPositionsChange([...selectedPositionIds, position.code])}
-                  className="w-full text-left border border-slate-200 rounded-md px-3 py-2 hover:border-blue-300 hover:bg-blue-50 transition-colors"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-mono text-xs text-slate-500">{position.code}</span>
-                    <span className="text-[10px] font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
-                      {sharedCount} in comune
-                    </span>
+              <div className="pt-4 border-t border-slate-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-semibold text-slate-700">Aggiungi posizione</h4>
+                  {focusedCandidateId && (
+                    <button
+                      type="button"
+                      onClick={() => setFocusedCandidateId(null)}
+                      className="text-[10px] text-slate-400 hover:text-slate-600"
+                    >
+                      Rimuovi candidato
+                    </button>
+                  )}
+                </div>
+                {focusedCandidateId && (
+                  <div className="rounded border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+                    Suggerimenti per{" "}
+                    <span className="font-semibold">{candidateById.get(focusedCandidateId)?.nominativo}</span>
                   </div>
-                  <div className="text-xs text-slate-700 font-medium leading-snug mt-1">
-                    {position.title}
+                )}
+                {focusedCandidateId && candidateOverlapSuggestions.length === 0 && (
+                  <p className="text-xs text-slate-400 italic">
+                    Nessuna posizione suggerita per il candidato selezionato.
+                  </p>
+                )}
+                {focusedCandidateId && candidateOverlapSuggestions.length > 0 && (
+                  <div className="space-y-2">
+                    {candidateOverlapSuggestions.map(({ position, overlapCount }) => (
+                      <button
+                        key={position.code}
+                        onClick={() => onSelectedPositionsChange([...selectedPositionIds, position.code])}
+                        className="w-full text-left border border-slate-200 rounded-md px-3 py-2 hover:border-blue-300 hover:bg-blue-50 transition-colors"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-mono text-xs text-slate-500">{position.code}</span>
+                          <span className="text-[10px] font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
+                            {overlapCount} in overlap
+                          </span>
+                        </div>
+                        <div className="text-xs text-slate-700 font-medium leading-snug mt-1">
+                          {position.title}
+                        </div>
+                      </button>
+                    ))}
                   </div>
-                </button>
-              ))}
+                )}
+                {!focusedCandidateId && selectedPositionIds.length === 0 && (
+                  <p className="text-xs text-slate-400 italic">
+                    Seleziona una posizione o un candidato per vedere i suggerimenti.
+                  </p>
+                )}
+                {!focusedCandidateId && selectedPositionIds.length > 0 && suggestedPositions.length === 0 && (
+                  <p className="text-xs text-slate-400 italic">
+                    Nessuna posizione suggerita con candidati in comune.
+                  </p>
+                )}
+                {!focusedCandidateId && suggestedPositions.length > 0 && (
+                  <div className="space-y-2">
+                    {suggestedPositions.map(({ position, sharedCount }) => (
+                      <button
+                        key={position.code}
+                        onClick={() => onSelectedPositionsChange([...selectedPositionIds, position.code])}
+                        className="w-full text-left border border-slate-200 rounded-md px-3 py-2 hover:border-blue-300 hover:bg-blue-50 transition-colors"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-mono text-xs text-slate-500">{position.code}</span>
+                          <span className="text-[10px] font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
+                            {sharedCount} in comune
+                          </span>
+                        </div>
+                        <div className="text-xs text-slate-700 font-medium leading-snug mt-1">
+                          {position.title}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
+          )}
         </aside>
 
         <div className="flex-1 overflow-x-auto p-6">
@@ -2771,6 +2997,32 @@ const OverlapKanbanView = ({
                         <div className="text-xs text-slate-500 mt-2">
                           {position.entity} • {position.location}
                         </div>
+                        <div className="mt-2 text-[10px] text-slate-500 space-y-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="uppercase text-slate-400">Profilo richiesto</span>
+                            <span className="font-medium text-slate-600">{position.rankReq || "-"}</span>
+                          </div>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-slate-400">Cat/Spec</span>
+                            <span className="font-medium text-slate-600 truncate max-w-[140px]">
+                              {position.catSpecQualReq || "-"}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-slate-400">NOS</span>
+                            <span className="font-medium text-slate-600">{position.nosReq || "-"}</span>
+                          </div>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-slate-400">Inglese</span>
+                            <span className="font-medium text-slate-600">{position.englishReq || "-"}</span>
+                          </div>
+                          {position.ofcn && (
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-slate-400">OFCN</span>
+                              <span className="font-medium text-slate-600">{position.ofcn}</span>
+                            </div>
+                          )}
+                        </div>
                         <div className="text-xs text-slate-400 mt-2 flex items-center justify-between">
                           <span>{orderedCandidates.length} candidature</span>
                           <span className="text-[10px] text-slate-500 font-semibold">
@@ -2778,7 +3030,7 @@ const OverlapKanbanView = ({
                           </span>
                         </div>
                       </div>
-                      <div className="p-3 space-y-3 max-h-[60vh] overflow-y-auto">
+                      <div className="px-3 pt-3">
                         <div
                           onDragOver={handleDragOverSlot(position.code)}
                           onDrop={handleDropSlot(position.code)}
@@ -2791,15 +3043,20 @@ const OverlapKanbanView = ({
                           }`}
                         >
                           {selectedEntry ? (
-                            <div>
+                            <button
+                              type="button"
+                              onClick={() => setFocusedCandidateId(selectedEntry.candidate.id)}
+                              className="text-left w-full"
+                            >
                               <div className="text-[10px] uppercase text-slate-400">Selected</div>
                               <div className="font-semibold text-slate-700">
                                 {selectedEntry.candidate.nominativo}
                               </div>
                               <div className="text-[10px] text-slate-500">
-                                {selectedEntry.candidate.rank} • {selectedEntry.candidate.role} {selectedEntry.candidate.category}
+                                {selectedEntry.candidate.rank} • {selectedEntry.candidate.role}{" "}
+                                {selectedEntry.candidate.category}
                               </div>
-                            </div>
+                            </button>
                           ) : (
                             <div>
                               <div className="font-semibold">Slot selected</div>
@@ -2807,6 +3064,8 @@ const OverlapKanbanView = ({
                             </div>
                           )}
                         </div>
+                      </div>
+                      <div className="p-3 space-y-3 max-h-[50vh] overflow-y-auto">
                         {orderedCandidates.length === 0 && (
                           <div className="text-xs text-slate-400 italic text-center py-6">
                             Nessuna candidatura disponibile.
@@ -2830,7 +3089,12 @@ const OverlapKanbanView = ({
                               draggable
                               onDragStart={handleDragStart(candidate.id)}
                               onDragEnd={handleDragEnd}
-                              className="border border-slate-200 rounded-lg p-3 bg-white shadow-sm cursor-grab active:cursor-grabbing"
+                              onClick={() => setFocusedCandidateId(candidate.id)}
+                              className={`border rounded-lg p-3 bg-white shadow-sm cursor-grab active:cursor-grabbing transition-colors ${
+                                focusedCandidateId === candidate.id
+                                  ? "border-blue-400 bg-blue-50/40"
+                                  : "border-slate-200"
+                              }`}
                             >
                               <div className="flex items-start justify-between gap-2">
                                 <div>
@@ -2905,6 +3169,7 @@ const OverlapKanbanView = ({
         position={matchDrawerData?.position ?? null}
         evaluation={matchDrawerData?.evaluation ?? null}
         onClose={() => setMatchDrawerData(null)}
+        onUpdate={onUpdate}
       />
     </div>
   );
