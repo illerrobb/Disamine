@@ -639,43 +639,59 @@ const Badge = ({ children, color = 'blue' }: any) => {
 };
 
 const ScoreBar = ({
-  essentialScore,
-  desirableScore,
-  essentialTotal,
-  desirableTotal,
+  evaluation,
+  position,
   className = ''
 }: {
-  essentialScore: number;
-  desirableScore: number;
-  essentialTotal: number;
-  desirableTotal: number;
+  evaluation: Evaluation;
+  position: Position;
   className?: string;
 }) => {
-  const essentialWeight = essentialTotal > 0 ? FIT_WEIGHTS.essential : 0;
-  const desirableWeight = desirableTotal > 0 ? FIT_WEIGHTS.desirable : 0;
-  const weightTotal = essentialWeight + desirableWeight || 1;
-  const essentialWidth = (essentialWeight / weightTotal) * 100;
-  const desirableWidth = (desirableWeight / weightTotal) * 100;
+  const activeReqs = position.requirements.filter(req => !req.hidden);
+  const counts = activeReqs.reduce(
+    (acc, req) => {
+      const status = evaluation.reqEvaluations[req.id] || "pending";
+      if (status === "yes") {
+        if (req.type === "essential") {
+          acc.essentialYes += 1;
+        } else {
+          acc.desirableYes += 1;
+        }
+      } else if (status === "partial") {
+        acc.partial += 1;
+      } else if (status === "no") {
+        acc.no += 1;
+      } else {
+        acc.pending += 1;
+      }
+      return acc;
+    },
+    {
+      essentialYes: 0,
+      desirableYes: 0,
+      partial: 0,
+      no: 0,
+      pending: 0
+    }
+  );
 
-  const essentialColor =
-    essentialTotal === 0 ? 'bg-slate-200' : essentialScore < 1 ? 'bg-red-500' : 'bg-green-500';
-  const desirableColor =
-    desirableTotal === 0
-      ? 'bg-slate-200'
-      : desirableScore === 1
-      ? 'bg-green-400'
-      : desirableScore > 0
-      ? 'bg-amber-400'
-      : 'bg-slate-300';
+  if (activeReqs.length === 0) {
+    return <div className={`h-2 w-full rounded-full bg-slate-200 ${className}`} />;
+  }
+
+  const segments: string[] = [
+    ...Array.from({ length: counts.essentialYes }, () => "bg-blue-500"),
+    ...Array.from({ length: counts.desirableYes }, () => "bg-purple-400"),
+    ...Array.from({ length: counts.partial }, () => "bg-amber-400"),
+    ...Array.from({ length: counts.no }, () => "bg-red-500"),
+    ...Array.from({ length: counts.pending }, () => "bg-slate-300")
+  ];
 
   return (
-    <div className={`flex h-2 w-full overflow-hidden rounded-full bg-slate-100 ${className}`}>
-      {essentialWidth > 0 && (
-        <div className={essentialColor} style={{ width: `${essentialWidth}%` }} />
-      )}
-      {desirableWidth > 0 && (
-        <div className={desirableColor} style={{ width: `${desirableWidth}%` }} />
-      )}
+    <div className={`flex h-2 w-full gap-0.5 ${className}`}>
+      {segments.map((color, index) => (
+        <div key={`${color}-${index}`} className={`flex-1 rounded-sm ${color}`} />
+      ))}
     </div>
   );
 };
@@ -911,10 +927,8 @@ const CandidateMatchDrawer = ({
               <span className="font-medium">Desirable {desirableYes}/{desirableTotal}</span>
             </div>
             <ScoreBar
-              essentialScore={essentialScore}
-              desirableScore={desirableScore}
-              essentialTotal={essentialTotal}
-              desirableTotal={desirableTotal}
+              evaluation={evaluation}
+              position={position}
             />
           </div>
 
@@ -1463,10 +1477,8 @@ const WorksheetRow: React.FC<{
                 <span className="text-[10px] text-slate-500 uppercase font-bold">E {essentialYes}/{essentialTotal}</span>
                 <span className="text-[10px] text-slate-500 uppercase font-bold">D {desirableYes}/{desirableTotal}</span>
                 <ScoreBar
-                  essentialScore={essentialScore}
-                  desirableScore={desirableScore}
-                  essentialTotal={essentialTotal}
-                  desirableTotal={desirableTotal}
+                  evaluation={evaluation}
+                  position={position}
                   className="mt-1 w-20"
                 />
              </div>
@@ -2857,10 +2869,8 @@ const OverlapKanbanView = ({
                                   <span className="font-medium">D {desirableYes}/{desirableTotal}</span>
                                 </div>
                                 <ScoreBar
-                                  essentialScore={essentialScore}
-                                  desirableScore={desirableScore}
-                                  essentialTotal={essentialTotal}
-                                  desirableTotal={desirableTotal}
+                                  evaluation={evaluation}
+                                  position={position}
                                   className="mt-1"
                                 />
                               </div>
