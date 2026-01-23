@@ -944,8 +944,7 @@ const WorksheetRow: React.FC<{
   isDragging: boolean;
   isDropTarget: boolean;
   onDragHandlePointerDown: (candidateId: string, event: React.PointerEvent<HTMLButtonElement>) => void;
-  dragOffset?: { x: number; y: number } | null;
-  dragStartRect?: { left: number; top: number; width: number } | null;
+  isDragOverlay?: boolean;
 }> = ({ 
   candidate, 
   evaluation, 
@@ -955,8 +954,7 @@ const WorksheetRow: React.FC<{
   isDragging,
   isDropTarget,
   onDragHandlePointerDown,
-  dragOffset,
-  dragStartRect
+  isDragOverlay = false
 }) => {
   const [expanded, setExpanded] = useState(false);
   const isNonCompatible = evaluation.status === 'non-compatible';
@@ -992,22 +990,10 @@ const WorksheetRow: React.FC<{
 
   return (
     <div
-      data-drag-row
-      data-candidate-id={candidate.id}
-      className={`border rounded-lg mb-2 shadow-sm overflow-hidden transition-all duration-200 ease-out transform-gpu ${isNonCompatible ? 'bg-gray-50 border-gray-200 opacity-75' : 'bg-white border-slate-200'} ${isDropTarget ? 'ring-2 ring-blue-300 bg-blue-50/40' : ''} ${isDragging ? 'shadow-xl ring-2 ring-blue-200 pointer-events-none z-50' : ''}`}
-      style={
-        isDragging && dragOffset && dragStartRect
-          ? {
-              position: 'fixed',
-              top: dragStartRect.top,
-              left: dragStartRect.left,
-              width: dragStartRect.width,
-              transform: `translate3d(${dragOffset.x}px, ${dragOffset.y}px, 0)`
-            }
-          : undefined
-      }
+      {...(!isDragOverlay ? { "data-drag-row": true, "data-candidate-id": candidate.id } : {})}
+      className={`border rounded-lg mb-2 shadow-sm overflow-hidden transition-all duration-200 ease-out transform-gpu ${isNonCompatible ? 'bg-gray-50 border-gray-200 opacity-75' : 'bg-white border-slate-200'} ${isDropTarget ? 'ring-2 ring-blue-300 bg-blue-50/40' : ''} ${isDragOverlay ? 'shadow-xl ring-2 ring-blue-200 pointer-events-none' : ''} ${isDragging && !isDragOverlay ? 'opacity-0 pointer-events-none' : ''}`}
     >
-      <div className={`flex items-center p-3 gap-4 hover:bg-slate-50 transition-colors ${isDragging ? 'opacity-70' : ''}`}>
+      <div className={`flex items-center p-3 gap-4 hover:bg-slate-50 transition-colors ${isDragging && !isDragOverlay ? 'opacity-70' : ''}`}>
         <button
           onPointerDown={(event) => {
             event.preventDefault();
@@ -1165,6 +1151,164 @@ const WorksheetRow: React.FC<{
       )}
     </div>
   );
+};
+
+const useCandidateReorder = ({
+  positionCode,
+  baseOrderedIds,
+  onReorder,
+  viewMode
+}: {
+  positionCode: string;
+  baseOrderedIds: string[];
+  onReorder: (positionId: string, orderedCandidateIds: string[]) => void;
+  viewMode: 'list' | 'matrix';
+}) => {
+  const [draggedCandidateId, setDraggedCandidateId] = useState<string | null>(null);
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const [dragOrderIds, setDragOrderIds] = useState<string[] | null>(null);
+  const [dragOffset, setDragOffset] = useState<{ x: number; y: number } | null>(null);
+  const [dragStartRect, setDragStartRect] = useState<{ left: number; top: number; width: number } | null>(null);
+  const dragGrabRef = useRef<{ x: number; y: number } | null>(null);
+  const dragStartRectRef = useRef<{ left: number; top: number } | null>(null);
+  const dragOrderRef = useRef<string[] | null>(null);
+
+  const moveCandidateToIndex = useCallback((order: string[], activeId: string, targetIndex: number) => {
+    const next = order.filter(id => id !== activeId);
+    const clampedIndex = Math.max(0, Math.min(targetIndex, next.length));
+    next.splice(clampedIndex, 0, activeId);
+    return next;
+  }, []);
+
+  const resetDragState = useCallback(() => {
+    setDraggedCandidateId(null);
+    setDropTargetId(null);
+    setDragOrderIds(null);
+    setDragOffset(null);
+    setDragStartRect(null);
+    dragGrabRef.current = null;
+    dragStartRectRef.current = null;
+    dragOrderRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    dragOrderRef.current = dragOrderIds;
+  }, [dragOrderIds]);
+
+  useEffect(() => {
+    if (!draggedCandidateId) return;
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const dragGrab = dragGrabRef.current;
+      const dragStartRectValue = dragStartRectRef.current;
+      const activeRow = document.querySelector(
+        `[data-drag-row][data-candidate-id="${draggedCandidateId}"]`
+      ) as HTMLElement | null;
+      const activeRect = activeRow?.getBoundingClientRect() ?? null;
+      const rectLeft = activeRect?.left ?? dragStartRectValue?.left;
+      const rectTop = activeRect?.top ?? dragStartRectValue?.top;
+      if (dragGrab && rectLeft !== undefined && rectTop !== undefined) {
+        setDragOffset({
+          x: event.clientX - dragGrab.x - rectLeft,
+          y: event.clientY - dragGrab.y - rectTop
+        });
+      }
+
+      const rows = Array.from(document.querySelectorAll('[data-drag-row]')) as HTMLElement[];
+      const activeRows = rows.filter(row => row.dataset.candidateId !== draggedCandidateId);
+      if (activeRows.length === 0) {
+        setDropTargetId(null);
+        return;
+      }
+
+      const orderedRows = activeRows
+        .map(row => ({
+          row,
+          rect: row.getBoundingClientRect(),
+          id: row.dataset.candidateId || ""
+        }))
+        .filter(entry => entry.id);
+
+      const pointerY = event.clientY;
+      let targetId: string | null = null;
+      for (const entry of orderedRows) {
+        if (pointerY < entry.rect.top + entry.rect.height / 2) {
+          targetId = entry.id;
+          break;
+        }
+      }
+
+      const orderBase = dragOrderRef.current ?? baseOrderedIds;
+      const orderWithoutActive = orderBase.filter(id => id !== draggedCandidateId);
+      const indexMap = new Map(orderWithoutActive.map((id, index) => [id, index]));
+      const targetIndex = targetId ? indexMap.get(targetId) ?? orderWithoutActive.length : orderWithoutActive.length;
+      const finalTargetId = targetId ?? orderWithoutActive[orderWithoutActive.length - 1] ?? null;
+
+      setDropTargetId(finalTargetId);
+
+      setDragOrderIds((prev) => {
+        const currentOrder = prev ?? baseOrderedIds;
+        const nextOrder = moveCandidateToIndex(currentOrder, draggedCandidateId, targetIndex);
+        if (nextOrder.join("|") === currentOrder.join("|")) {
+          return prev;
+        }
+        dragOrderRef.current = nextOrder;
+        return nextOrder;
+      });
+    };
+
+    const handlePointerUp = () => {
+      const finalOrder = dragOrderRef.current ?? baseOrderedIds;
+      onReorder(positionCode, finalOrder);
+      resetDragState();
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
+    };
+  }, [draggedCandidateId, baseOrderedIds, moveCandidateToIndex, onReorder, positionCode, resetDragState]);
+
+  useEffect(() => {
+    if (viewMode !== 'list' && draggedCandidateId) {
+      resetDragState();
+    }
+  }, [draggedCandidateId, resetDragState, viewMode]);
+
+  const handleDragHandlePointerDown = useCallback(
+    (candidateId: string, event: React.PointerEvent<HTMLButtonElement>) => {
+      const row = (event.currentTarget as HTMLElement).closest('[data-drag-row]') as HTMLElement | null;
+      if (row) {
+        const rect = row.getBoundingClientRect();
+        dragGrabRef.current = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+        dragStartRectRef.current = { left: rect.left, top: rect.top };
+        setDragStartRect({ left: rect.left, top: rect.top, width: rect.width });
+      } else {
+        dragGrabRef.current = { x: 0, y: 0 };
+        dragStartRectRef.current = { left: event.clientX, top: event.clientY };
+        setDragStartRect({ left: event.clientX, top: event.clientY, width: 0 });
+      }
+      setDraggedCandidateId(candidateId);
+      setDropTargetId(candidateId);
+      dragOrderRef.current = baseOrderedIds;
+      setDragOffset({ x: 0, y: 0 });
+    },
+    [baseOrderedIds]
+  );
+
+  return {
+    draggedCandidateId,
+    dropTargetId,
+    dragOrderIds,
+    dragOffset,
+    dragStartRect,
+    handleDragHandlePointerDown
+  };
 };
 
 const PositionCard: React.FC<{ 
@@ -1886,14 +2030,6 @@ const PositionDetailView = ({
 }) => {
   const [viewMode, setViewMode] = useState<'list' | 'matrix'>('list');
   const [filter, setFilter] = useState('all'); // all, selected, pending...
-  const [draggedCandidateId, setDraggedCandidateId] = useState<string | null>(null);
-  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
-  const [dragOrderIds, setDragOrderIds] = useState<string[] | null>(null);
-  const [dragOffset, setDragOffset] = useState<{ x: number; y: number } | null>(null);
-  const [dragStartRect, setDragStartRect] = useState<{ left: number; top: number; width: number } | null>(null);
-  const dragGrabRef = useRef<{ x: number; y: number } | null>(null);
-  const dragStartRectRef = useRef<{ left: number; top: number } | null>(null);
-  const dragOrderRef = useRef<string[] | null>(null);
   const [isRequirementsOpen, setIsRequirementsOpen] = useState(true);
   const baseOrderMap = useMemo(() => new Map(allCandidates.map((c, index) => [c.id, index])), [allCandidates]);
   const previousRowPositionsRef = useRef<Map<string, DOMRect>>(new Map());
@@ -1935,102 +2071,19 @@ const PositionDetailView = ({
      return { total: positionCandidates.length, selected, pending };
   }, [positionCandidates, evaluations, position.code]);
 
-  const moveCandidateToIndex = useCallback((order: string[], activeId: string, targetIndex: number) => {
-    const next = order.filter(id => id !== activeId);
-    const clampedIndex = Math.max(0, Math.min(targetIndex, next.length));
-    next.splice(clampedIndex, 0, activeId);
-    return next;
-  }, []);
-
-  useEffect(() => {
-    dragOrderRef.current = dragOrderIds;
-  }, [dragOrderIds]);
-
-  useEffect(() => {
-    if (!draggedCandidateId) return;
-
-    const handlePointerMove = (event: PointerEvent) => {
-      const dragGrab = dragGrabRef.current;
-      const dragStartRect = dragStartRectRef.current;
-      const activeRow = document.querySelector(
-        `[data-drag-row][data-candidate-id="${draggedCandidateId}"]`
-      ) as HTMLElement | null;
-      const activeRect = activeRow?.getBoundingClientRect() ?? null;
-      const rectLeft = activeRect?.left ?? dragStartRect?.left;
-      const rectTop = activeRect?.top ?? dragStartRect?.top;
-      if (dragGrab && rectLeft !== undefined && rectTop !== undefined) {
-        setDragOffset({
-          x: event.clientX - dragGrab.x - rectLeft,
-          y: event.clientY - dragGrab.y - rectTop
-        });
-      }
-
-      const rows = Array.from(document.querySelectorAll('[data-drag-row]')) as HTMLElement[];
-      const activeRows = rows.filter(row => row.dataset.candidateId !== draggedCandidateId);
-      if (activeRows.length === 0) {
-        setDropTargetId(null);
-        return;
-      }
-
-      const orderedRows = activeRows
-        .map(row => ({
-          row,
-          rect: row.getBoundingClientRect(),
-          id: row.dataset.candidateId || ""
-        }))
-        .filter(entry => entry.id);
-
-      const pointerY = event.clientY;
-      let targetId: string | null = null;
-      for (const entry of orderedRows) {
-        if (pointerY < entry.rect.top + entry.rect.height / 2) {
-          targetId = entry.id;
-          break;
-        }
-      }
-
-      const orderBase = dragOrderRef.current ?? baseOrderedIds;
-      const orderWithoutActive = orderBase.filter(id => id !== draggedCandidateId);
-      const indexMap = new Map(orderWithoutActive.map((id, index) => [id, index]));
-      const targetIndex = targetId ? indexMap.get(targetId) ?? orderWithoutActive.length : orderWithoutActive.length;
-      const finalTargetId = targetId ?? orderWithoutActive[orderWithoutActive.length - 1] ?? null;
-
-      setDropTargetId(finalTargetId);
-
-      setDragOrderIds((prev) => {
-        const currentOrder = prev ?? baseOrderedIds;
-        const nextOrder = moveCandidateToIndex(currentOrder, draggedCandidateId, targetIndex);
-        if (nextOrder.join("|") === currentOrder.join("|")) {
-          return prev;
-        }
-        dragOrderRef.current = nextOrder;
-        return nextOrder;
-      });
-    };
-
-    const handlePointerUp = () => {
-      const finalOrder = dragOrderRef.current ?? baseOrderedIds;
-      onReorder(position.code, finalOrder);
-      setDraggedCandidateId(null);
-      setDropTargetId(null);
-      setDragOrderIds(null);
-      setDragOffset(null);
-      setDragStartRect(null);
-      dragGrabRef.current = null;
-      dragStartRectRef.current = null;
-      dragOrderRef.current = null;
-    };
-
-    window.addEventListener('pointermove', handlePointerMove);
-    window.addEventListener('pointerup', handlePointerUp);
-    window.addEventListener('pointercancel', handlePointerUp);
-
-    return () => {
-      window.removeEventListener('pointermove', handlePointerMove);
-      window.removeEventListener('pointerup', handlePointerUp);
-      window.removeEventListener('pointercancel', handlePointerUp);
-    };
-  }, [draggedCandidateId, baseOrderedIds, moveCandidateToIndex, onReorder, position.code]);
+  const {
+    draggedCandidateId,
+    dropTargetId,
+    dragOrderIds,
+    dragOffset,
+    dragStartRect,
+    handleDragHandlePointerDown
+  } = useCandidateReorder({
+    positionCode: position.code,
+    baseOrderedIds,
+    onReorder,
+    viewMode
+  });
 
   useLayoutEffect(() => {
     if (viewMode !== 'list') {
@@ -2072,6 +2125,16 @@ const PositionDetailView = ({
 
     previousRowPositionsRef.current = nextPositions;
   }, [dragOrderIds, filter, viewMode, draggedCandidateId, candidates.length]);
+
+  const dragOverlayCandidate = useMemo(() => {
+    if (!draggedCandidateId) return null;
+    return positionCandidates.find(candidate => candidate.id === draggedCandidateId) ?? null;
+  }, [draggedCandidateId, positionCandidates]);
+
+  const dragOverlayEvaluation = useMemo(() => {
+    if (!dragOverlayCandidate) return null;
+    return evaluations[`${position.code}_${dragOverlayCandidate.id}`] ?? null;
+  }, [dragOverlayCandidate, evaluations, position.code]);
 
   return (
     <div className="flex flex-col h-screen bg-slate-50">
@@ -2141,44 +2204,61 @@ const PositionDetailView = ({
          {/* Main Content */}
          <div className="flex-1 overflow-y-auto p-6">
             {viewMode === 'list' ? (
-               <div className="max-w-4xl mx-auto">
-                  {candidates.map(c => {
-                     const ev = evaluations[`${position.code}_${c.id}`];
-                     const other = getOtherSelectionInfo(c.id, position.code, evaluations, allPositions);
-                     if (!ev) return null;
-                     return (
-                        <WorksheetRow 
-                           key={c.id}
-                           candidate={c}
-                           evaluation={ev}
-                           position={position}
-                           otherSelection={other}
-                           onUpdate={onUpdate}
-                           isDragging={draggedCandidateId === c.id}
-                           isDropTarget={dropTargetId === c.id}
-                           onDragHandlePointerDown={(candidateId, event) => {
-                             const row = (event.currentTarget as HTMLElement).closest('[data-drag-row]') as HTMLElement | null;
-                             if (row) {
-                               const rect = row.getBoundingClientRect();
-                               dragGrabRef.current = { x: event.clientX - rect.left, y: event.clientY - rect.top };
-                               dragStartRectRef.current = { left: rect.left, top: rect.top };
-                               setDragStartRect({ left: rect.left, top: rect.top, width: rect.width });
-                             } else {
-                               dragGrabRef.current = { x: 0, y: 0 };
-                               dragStartRectRef.current = { left: event.clientX, top: event.clientY };
-                               setDragStartRect({ left: event.clientX, top: event.clientY, width: 0 });
-                             }
-                             setDraggedCandidateId(candidateId);
-                             setDropTargetId(candidateId);
-                             dragOrderRef.current = baseOrderedIds;
-                             setDragOffset({ x: 0, y: 0 });
-                           }}
-                           dragOffset={draggedCandidateId === c.id ? dragOffset : null}
-                           dragStartRect={draggedCandidateId === c.id ? dragStartRect : null}
+               <>
+                  <div className="max-w-4xl mx-auto">
+                     {candidates.map(c => {
+                        const ev = evaluations[`${position.code}_${c.id}`];
+                        const other = getOtherSelectionInfo(c.id, position.code, evaluations, allPositions);
+                        if (!ev) return null;
+                        return (
+                           <WorksheetRow 
+                              key={c.id}
+                              candidate={c}
+                              evaluation={ev}
+                              position={position}
+                              otherSelection={other}
+                              onUpdate={onUpdate}
+                              isDragging={draggedCandidateId === c.id}
+                              isDropTarget={dropTargetId === c.id}
+                              onDragHandlePointerDown={handleDragHandlePointerDown}
+                           />
+                        );
+                     })}
+                  </div>
+                  {dragOverlayCandidate &&
+                    dragOverlayEvaluation &&
+                    dragOffset &&
+                    dragStartRect && (
+                      <div
+                        style={{
+                          position: 'fixed',
+                          top: dragStartRect.top,
+                          left: dragStartRect.left,
+                          width: dragStartRect.width,
+                          transform: `translate3d(${dragOffset.x}px, ${dragOffset.y}px, 0)`,
+                          pointerEvents: 'none',
+                          zIndex: 60
+                        }}
+                      >
+                        <WorksheetRow
+                          candidate={dragOverlayCandidate}
+                          evaluation={dragOverlayEvaluation}
+                          position={position}
+                          otherSelection={getOtherSelectionInfo(
+                            dragOverlayCandidate.id,
+                            position.code,
+                            evaluations,
+                            allPositions
+                          )}
+                          onUpdate={() => {}}
+                          isDragging={false}
+                          isDropTarget={false}
+                          onDragHandlePointerDown={() => {}}
+                          isDragOverlay
                         />
-                     );
-                  })}
-               </div>
+                      </div>
+                    )}
+               </>
             ) : (
                <CandidatesMatrixView 
                   candidates={candidates}
