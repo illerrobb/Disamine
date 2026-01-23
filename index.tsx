@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { createRoot } from "react-dom/client";
 import * as XLSX from "xlsx-js-style";
 import {
@@ -943,10 +943,7 @@ const WorksheetRow: React.FC<{
   onUpdate: (e: Evaluation) => void;
   isDragging: boolean;
   isDropTarget: boolean;
-  onDragStart: (candidateId: string, event: React.DragEvent<HTMLButtonElement>) => void;
-  onDragEnd: () => void;
-  onDrop: (candidateId: string) => void;
-  onDragOver: (candidateId: string, event: React.DragEvent<HTMLDivElement>) => void;
+  onDragHandlePointerDown: (candidateId: string, event: React.PointerEvent<HTMLButtonElement>) => void;
   dragOffset?: { x: number; y: number } | null;
 }> = ({ 
   candidate, 
@@ -956,10 +953,7 @@ const WorksheetRow: React.FC<{
   onUpdate,
   isDragging,
   isDropTarget,
-  onDragStart,
-  onDragEnd,
-  onDrop,
-  onDragOver,
+  onDragHandlePointerDown,
   dragOffset
 }) => {
   const [expanded, setExpanded] = useState(false);
@@ -997,27 +991,17 @@ const WorksheetRow: React.FC<{
   return (
     <div
       data-drag-row
-      onDragOver={(event) => {
-        event.preventDefault();
-        onDragOver(candidate.id, event);
-      }}
-      onDrop={(event) => {
-        event.preventDefault();
-        onDrop(candidate.id);
-      }}
+      data-candidate-id={candidate.id}
       className={`border rounded-lg mb-2 shadow-sm overflow-hidden transition-all duration-200 ease-out transform-gpu ${isNonCompatible ? 'bg-gray-50 border-gray-200 opacity-75' : 'bg-white border-slate-200'} ${isDropTarget ? 'ring-2 ring-blue-300 bg-blue-50/40' : ''} ${isDragging ? 'shadow-xl ring-2 ring-blue-200 pointer-events-none z-20' : ''}`}
       style={isDragging && dragOffset ? { transform: `translate3d(${dragOffset.x}px, ${dragOffset.y}px, 0)` } : undefined}
     >
       <div className={`flex items-center p-3 gap-4 hover:bg-slate-50 transition-colors ${isDragging ? 'opacity-70' : ''}`}>
         <button
-          draggable
-          onDragStart={(event) => {
-            event.dataTransfer.effectAllowed = "move";
-            event.dataTransfer.setData("text/plain", candidate.id);
-            onDragStart(candidate.id, event);
+          onPointerDown={(event) => {
+            event.preventDefault();
+            onDragHandlePointerDown(candidate.id, event);
           }}
-          onDragEnd={onDragEnd}
-          className="cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600 transition-transform duration-200 hover:scale-110 active:scale-95"
+          className="cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600 transition-transform duration-200 hover:scale-110 active:scale-95 touch-none"
           aria-label="Drag to reorder"
         >
           <Menu className="w-4 h-4" />
@@ -1895,6 +1879,7 @@ const PositionDetailView = ({
   const [dragOrderIds, setDragOrderIds] = useState<string[] | null>(null);
   const [dragOffset, setDragOffset] = useState<{ x: number; y: number } | null>(null);
   const dragStartRef = useRef<{ x: number; y: number } | null>(null);
+  const dragOrderRef = useRef<string[] | null>(null);
   const [isRequirementsOpen, setIsRequirementsOpen] = useState(true);
   const baseOrderMap = useMemo(() => new Map(allCandidates.map((c, index) => [c.id, index])), [allCandidates]);
 
@@ -1935,32 +1920,72 @@ const PositionDetailView = ({
      return { total: positionCandidates.length, selected, pending };
   }, [positionCandidates, evaluations, position.code]);
 
-  const moveCandidate = (order: string[], activeId: string, targetId: string) => {
+  const moveCandidate = useCallback((order: string[], activeId: string, targetId: string) => {
     if (activeId === targetId) return order;
     const next = order.filter(id => id !== activeId);
     const targetIndex = next.indexOf(targetId);
     if (targetIndex === -1) return order;
     next.splice(targetIndex, 0, activeId);
     return next;
-  };
+  }, []);
 
-  const handleDropCandidate = (targetCandidateId: string) => {
-    if (!draggedCandidateId) {
-      setDragOrderIds(null);
+  useEffect(() => {
+    dragOrderRef.current = dragOrderIds;
+  }, [dragOrderIds]);
+
+  useEffect(() => {
+    if (!draggedCandidateId) return;
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const dragStart = dragStartRef.current;
+      if (dragStart) {
+        setDragOffset({ x: event.clientX - dragStart.x, y: event.clientY - dragStart.y });
+      }
+
+      const target = document.elementFromPoint(event.clientX, event.clientY);
+      const row = target?.closest('[data-drag-row]') as HTMLElement | null;
+      const targetId = row?.dataset.candidateId;
+
+      if (!targetId) {
+        setDropTargetId(null);
+        return;
+      }
+
+      setDropTargetId(targetId);
+      if (targetId === draggedCandidateId) return;
+
+      setDragOrderIds((prev) => {
+        const currentOrder = prev ?? baseOrderedIds;
+        const nextOrder = moveCandidate(currentOrder, draggedCandidateId, targetId);
+        if (nextOrder === currentOrder) {
+          return prev;
+        }
+        dragOrderRef.current = nextOrder;
+        return nextOrder;
+      });
+    };
+
+    const handlePointerUp = () => {
+      const finalOrder = dragOrderRef.current ?? baseOrderedIds;
+      onReorder(position.code, finalOrder);
+      setDraggedCandidateId(null);
       setDropTargetId(null);
+      setDragOrderIds(null);
       setDragOffset(null);
       dragStartRef.current = null;
-      return;
-    }
-    const currentOrder = dragOrderIds ?? baseOrderedIds;
-    const finalOrder = dragOrderIds ?? moveCandidate(currentOrder, draggedCandidateId, targetCandidateId);
-    onReorder(position.code, finalOrder);
-    setDraggedCandidateId(null);
-    setDropTargetId(null);
-    setDragOrderIds(null);
-    setDragOffset(null);
-    dragStartRef.current = null;
-  };
+      dragOrderRef.current = null;
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
+    };
+  }, [draggedCandidateId, baseOrderedIds, moveCandidate, onReorder, position.code]);
 
   return (
     <div className="flex flex-col h-screen bg-slate-50">
@@ -2045,34 +2070,13 @@ const PositionDetailView = ({
                            onUpdate={onUpdate}
                            isDragging={draggedCandidateId === c.id}
                            isDropTarget={dropTargetId === c.id}
-                           onDragStart={(candidateId, event) => {
+                           onDragHandlePointerDown={(candidateId, event) => {
                              setDraggedCandidateId(candidateId);
                              setDropTargetId(candidateId);
                              setDragOrderIds(baseOrderedIds);
+                             dragOrderRef.current = baseOrderedIds;
                              dragStartRef.current = { x: event.clientX, y: event.clientY };
                              setDragOffset({ x: 0, y: 0 });
-                           }}
-                           onDragEnd={() => {
-                             setDraggedCandidateId(null);
-                             setDropTargetId(null);
-                             setDragOrderIds(null);
-                             setDragOffset(null);
-                             dragStartRef.current = null;
-                           }}
-                           onDrop={handleDropCandidate}
-                           onDragOver={(candidateId, event) => {
-                             if (!draggedCandidateId) return;
-                             const dragStart = dragStartRef.current;
-                             if (dragStart) {
-                               setDragOffset({ x: event.clientX - dragStart.x, y: event.clientY - dragStart.y });
-                             }
-                             if (draggedCandidateId === candidateId) return;
-                             const currentOrder = dragOrderIds ?? baseOrderedIds;
-                             const nextOrder = moveCandidate(currentOrder, draggedCandidateId, candidateId);
-                             if (nextOrder !== currentOrder) {
-                               setDragOrderIds(nextOrder);
-                             }
-                             setDropTargetId(candidateId);
                            }}
                            dragOffset={draggedCandidateId === c.id ? dragOffset : null}
                         />
