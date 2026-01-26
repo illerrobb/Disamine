@@ -30,7 +30,8 @@ import {
   Table as TableIcon,
   AlertTriangle,
   Ban,
-  User
+  User,
+  Star
 } from "lucide-react";
 
 // --- Types ---
@@ -112,6 +113,7 @@ interface AppData {
   candidates: Candidate[];
   positions: Position[];
   evaluations: Record<string, Evaluation>; // Key: `${positionId}_${candidateId}`
+  favoritePositionIds: string[];
   lastUpdated: number;
   cycle: Cycle;
 }
@@ -1361,6 +1363,7 @@ const CandidateDetailView = ({
                const activeReqs = pos.requirements.filter(r => !r.hidden);
                const otherSelection = getOtherSelectionInfo(candidate.id, pos.code, evaluations, allPositions);
                const profileSummary = formatPositionProfile(pos);
+               const level = getPositionLevel(pos);
                
                // Calculate stats
                const reqScore = activeReqs.filter(r => ev.reqEvaluations[r.id] === 'yes').length;
@@ -1372,6 +1375,7 @@ const CandidateDetailView = ({
                         <div>
                            <div className="flex items-center gap-2 mb-1">
                               <span className="font-mono text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">{pos.code}</span>
+                              <PositionLevelBadge level={level} />
                               <h3 className={`font-bold text-lg ${isNonCompatible ? 'text-gray-500 line-through' : 'text-slate-800'}`}>{pos.title}</h3>
                            </div>
                            <div className="text-sm text-slate-500 flex gap-2">
@@ -1990,7 +1994,9 @@ const PositionCard: React.FC<{
   selectedCandidatesNames: string[];
   selectedCandidatesDetails: Candidate[]; // Added for detailed view
   candidatesList: Candidate[]; // Added for tooltip
+  isFavorite: boolean;
   onClick: () => void;
+  onToggleFavorite: (positionCode: string) => void;
 }> = ({ 
   position, 
   status, 
@@ -1998,7 +2004,9 @@ const PositionCard: React.FC<{
   selectedCandidatesNames, 
   selectedCandidatesDetails,
   candidatesList,
-  onClick 
+  isFavorite,
+  onClick,
+  onToggleFavorite
 }) => {
   const statusColors = {
     todo: "bg-slate-100 text-slate-600",
@@ -2011,6 +2019,7 @@ const PositionCard: React.FC<{
     inprogress: "In Progress",
     completed: "Completed"
   };
+  const level = getPositionLevel(position);
 
   return (
     <div 
@@ -2019,10 +2028,29 @@ const PositionCard: React.FC<{
     >
       <div className="p-5 flex-1">
         <div className="flex justify-between items-start mb-2">
-          <span className="font-mono text-xs text-slate-500 bg-slate-50 px-2 py-1 rounded">{position.code}</span>
-          <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full ${statusColors[status]}`}>
-            {statusLabels[status]}
-          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-mono text-xs text-slate-500 bg-slate-50 px-2 py-1 rounded">{position.code}</span>
+            <PositionLevelBadge level={level} />
+          </div>
+          <div className="flex items-center gap-2">
+            <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full ${statusColors[status]}`}>
+              {statusLabels[status]}
+            </span>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggleFavorite(position.code);
+              }}
+              className={`p-1 rounded-full border transition-colors ${
+                isFavorite ? "text-amber-500 border-amber-200 bg-amber-50" : "text-slate-400 border-slate-200 hover:text-slate-500"
+              }`}
+              aria-label={isFavorite ? "Rimuovi dalla shortlist" : "Aggiungi alla shortlist"}
+              title={isFavorite ? "In shortlist" : "Salva in shortlist"}
+            >
+              <Star className="w-3.5 h-3.5" fill={isFavorite ? "currentColor" : "none"} />
+            </button>
+          </div>
         </div>
         <h3 className="font-bold text-slate-800 mb-1 line-clamp-2" title={position.title}>{position.title}</h3>
         <p className="text-sm text-slate-500 flex items-center gap-1 mb-4">
@@ -2109,6 +2137,138 @@ const PROFILE_CODE_GROUPS: Record<string, string[]> = {
 };
 
 const RANK_ORDER = ["TCOL", "MAGG", "CAP", "TEN", "STEN"];
+
+const POSITION_LEVEL_ORDER = ["BASSO", "MEDIO", "ELEVATO", "ELEVATISSIMO", "N.D."] as const;
+type PositionLevelType = (typeof POSITION_LEVEL_ORDER)[number];
+
+const getPositionLevel = (position: Position) => {
+  const raw = position.poInterest?.trim();
+  if (!raw) {
+    return {
+      code: "N.D.",
+      description: "N.D.",
+      colorClass: "bg-slate-100 text-slate-600 border-slate-200",
+      type: "N.D." as PositionLevelType,
+      number: null as number | null
+    };
+  }
+  const normalized = raw.toUpperCase().replace(/\s+/g, " ").trim();
+  if (normalized === "N.D." || normalized === "ND" || normalized.includes("N.D")) {
+    return {
+      code: "N.D.",
+      description: "N.D.",
+      colorClass: "bg-slate-100 text-slate-600 border-slate-200",
+      type: "N.D." as PositionLevelType,
+      number: null as number | null
+    };
+  }
+
+  const colorByType = (type: PositionLevelType) => {
+    switch (type) {
+      case "ELEVATISSIMO":
+        return "bg-rose-100 text-rose-700 border-rose-200";
+      case "ELEVATO":
+        return "bg-yellow-100 text-yellow-700 border-yellow-200";
+      case "MEDIO":
+        return "bg-emerald-100 text-emerald-700 border-emerald-200";
+      case "BASSO":
+        return "bg-slate-100 text-slate-600 border-slate-200";
+      default:
+        return "bg-slate-100 text-slate-600 border-slate-200";
+    }
+  };
+
+  const buildLevel = (type: PositionLevelType, number?: number | null) => {
+    const prefix = type === "ELEVATISSIMO"
+      ? "EE"
+      : type === "ELEVATO"
+        ? "E"
+        : type === "MEDIO"
+          ? "M"
+          : type === "BASSO"
+            ? "B"
+            : "N.D.";
+    const numericSuffix = number ? `-${number}` : "";
+    const description = number ? `${type}-${number}` : type;
+    return {
+      code: `${prefix}${numericSuffix}`,
+      description,
+      colorClass: colorByType(type),
+      type,
+      number: number ?? null
+    };
+  };
+
+  const codeMatch = normalized.match(/\b(EE|E|M|B)\s*-?\s*(\d+)?\b/);
+  if (codeMatch) {
+    const code = codeMatch[1];
+    const number = codeMatch[2] ? Number(codeMatch[2]) : null;
+    const type =
+      code === "EE"
+        ? "ELEVATISSIMO"
+        : code === "E"
+          ? "ELEVATO"
+          : code === "M"
+            ? "MEDIO"
+            : "BASSO";
+    return buildLevel(type as PositionLevelType, number);
+  }
+
+  const textMatch = normalized.match(/\b(BASSO|MEDIO|ELEVATO|ELEVATISSIMO)\b\s*-?\s*(\d+)?/);
+  if (textMatch) {
+    const type = textMatch[1] as PositionLevelType;
+    const number = textMatch[2] ? Number(textMatch[2]) : null;
+    return buildLevel(type, number);
+  }
+
+  return {
+    code: normalized,
+    description: normalized,
+    colorClass: "bg-slate-100 text-slate-600 border-slate-200",
+    type: "N.D." as PositionLevelType,
+    number: null as number | null
+  };
+};
+
+const PositionLevelBadge: React.FC<{ level: ReturnType<typeof getPositionLevel> }> = ({ level }) => {
+  if (!level) return null;
+  return (
+    <span
+      className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border ${level.colorClass}`}
+      title={level.description}
+    >
+      {level.code}
+    </span>
+  );
+};
+
+const getDistinctPositionLevels = (positions: Position[]) => {
+  const map = new Map<string, ReturnType<typeof getPositionLevel>>();
+  positions.forEach(position => {
+    const level = getPositionLevel(position);
+    if (!level) return;
+    if (!map.has(level.code)) {
+      map.set(level.code, level);
+    }
+  });
+  if (!map.has("N.D.")) {
+    map.set("N.D.", {
+      code: "N.D.",
+      description: "N.D.",
+      colorClass: "bg-slate-100 text-slate-600 border-slate-200",
+      type: "N.D.",
+      number: null
+    });
+  }
+  return Array.from(map.values()).sort((a, b) => {
+    const orderA = POSITION_LEVEL_ORDER.indexOf(a.type);
+    const orderB = POSITION_LEVEL_ORDER.indexOf(b.type);
+    if (orderA !== orderB) return orderA - orderB;
+    const numberA = a.number ?? 0;
+    const numberB = b.number ?? 0;
+    return numberA - numberB;
+  });
+};
 
 const normalizeProfileCode = (value: string) =>
   value
@@ -2841,6 +3001,7 @@ const OverlapKanbanView = ({
 }) => {
   const [onlyPossibleMatch, setOnlyPossibleMatch] = useState(false);
   const [positionSearch, setPositionSearch] = useState("");
+  const [positionLevelFilter, setPositionLevelFilter] = useState("ALL");
   const [matchDrawerData, setMatchDrawerData] = useState<{
     candidateId: string;
     positionId: string;
@@ -2908,14 +3069,18 @@ const OverlapKanbanView = ({
     [positions]
   );
 
+  const distinctLevels = useMemo(() => getDistinctPositionLevels(positions), [positions]);
+
   const filteredPositions = useMemo(() => {
     const term = positionSearch.trim().toLowerCase();
-    if (!term) return sortedPositions;
     return sortedPositions.filter(pos => {
       const haystack = `${pos.code} ${pos.title} ${pos.entity} ${pos.location}`.toLowerCase();
-      return haystack.includes(term);
+      const matchesSearch = !term || haystack.includes(term);
+      const level = getPositionLevel(pos);
+      const matchesLevel = positionLevelFilter === "ALL" || level?.code === positionLevelFilter;
+      return matchesSearch && matchesLevel;
     });
-  }, [positionSearch, sortedPositions]);
+  }, [positionSearch, sortedPositions, positionLevelFilter]);
 
   const selectedPositions = useMemo(
     () => sortedPositions.filter(pos => selectedPositionIds.includes(pos.code)),
@@ -3125,6 +3290,9 @@ const OverlapKanbanView = ({
                           {overlapCount} in overlap
                         </span>
                       </div>
+                      <div className="mt-1">
+                        <PositionLevelBadge level={getPositionLevel(position)} />
+                      </div>
                       <div className="text-xs text-slate-700 font-medium leading-snug mt-1">
                         {position.title}
                       </div>
@@ -3155,6 +3323,9 @@ const OverlapKanbanView = ({
                         <span className="text-[10px] font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
                           {sharedCount} in comune
                         </span>
+                      </div>
+                      <div className="mt-1">
+                        <PositionLevelBadge level={getPositionLevel(position)} />
                       </div>
                       <div className="text-xs text-slate-700 font-medium leading-snug mt-1">
                         {position.title}
@@ -3227,10 +3398,26 @@ const OverlapKanbanView = ({
                   className="w-full border border-slate-200 rounded-md py-2 pl-9 pr-3 text-xs text-slate-600 focus:ring-2 focus:ring-blue-500 outline-none"
                 />
               </div>
+              <div className="flex items-center gap-2 text-xs text-slate-600">
+                <Filter className="w-3.5 h-3.5 text-slate-400" />
+                <select
+                  className="w-full border border-slate-200 rounded-md py-2 px-2 text-xs text-slate-600 focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                  value={positionLevelFilter}
+                  onChange={(event) => setPositionLevelFilter(event.target.value)}
+                >
+                  <option value="ALL">Tutti i livelli</option>
+                  {distinctLevels.map(level => (
+                    <option key={level.code} value={level.code}>
+                      {level.code} • {level.description}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div className="space-y-2">
                 {filteredPositions.map(pos => {
                   const totalCandidates = candidateIdsByPosition.get(pos.code)?.size ?? 0;
                   const overlapCount = getOverlapCountForPosition(pos.code);
+                  const level = getPositionLevel(pos);
                   return (
                     <label key={pos.code} className="flex items-start gap-2 text-sm text-slate-600">
                       <input
@@ -3240,7 +3427,10 @@ const OverlapKanbanView = ({
                         onChange={() => handleTogglePosition(pos.code)}
                       />
                       <span className="flex-1">
-                        <span className="font-mono text-xs text-slate-500">{pos.code}</span>
+                        <span className="flex flex-wrap items-center gap-2">
+                          <span className="font-mono text-xs text-slate-500">{pos.code}</span>
+                          <PositionLevelBadge level={level} />
+                        </span>
                         <span className="block text-slate-700 font-medium leading-snug">{pos.title}</span>
                         <span className="mt-1 text-[10px] text-slate-400 flex gap-2">
                           <span>Segnalati: {totalCandidates}</span>
@@ -3305,6 +3495,7 @@ const OverlapKanbanView = ({
                             <span className="font-mono text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
                               {position.code}
                             </span>
+                            <PositionLevelBadge level={getPositionLevel(position)} />
                             <h3 className="min-w-0 font-semibold text-slate-800 text-sm line-clamp-2">
                               {position.title}
                             </h3>
@@ -3578,7 +3769,9 @@ const PositionDetailView = ({
   onBack,
   onToggleReqVisibility,
   onUpdateRequirements,
-  onExport
+  onExport,
+  isFavorite,
+  onToggleFavorite
 }: {
   position: Position;
   allCandidates: Candidate[];
@@ -3590,6 +3783,8 @@ const PositionDetailView = ({
   onToggleReqVisibility: (posCode: string, reqId: string) => void;
   onUpdateRequirements: (positionCode: string, requirements: Requirement[]) => void;
   onExport: (p: Position, c: Candidate[], e: Record<string, Evaluation>, pos: Position[]) => void;
+  isFavorite: boolean;
+  onToggleFavorite: (positionCode: string) => void;
 }) => {
   const [viewMode, setViewMode] = useState<'list' | 'matrix'>('list');
   const [filter, setFilter] = useState('all'); // all, selected, pending...
@@ -3597,6 +3792,7 @@ const PositionDetailView = ({
   const [isRequirementsDrawerOpen, setIsRequirementsDrawerOpen] = useState(false);
   const baseOrderMap = useMemo(() => new Map(allCandidates.map((c, index) => [c.id, index])), [allCandidates]);
   const previousRowPositionsRef = useRef<Map<string, DOMRect>>(new Map());
+  const positionLevel = useMemo(() => getPositionLevel(position), [position]);
   const profileSummary = useMemo(() => {
     const profileParts = [position.rankReq, position.catSpecQualReq].filter(Boolean);
     return profileParts.length > 0 ? profileParts.join(" • ") : "-";
@@ -3715,6 +3911,7 @@ const PositionDetailView = ({
             <div className="flex-1">
                <div className="flex items-center gap-2 mb-1">
                  <span className="font-mono text-sm font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">{position.code}</span>
+                 <PositionLevelBadge level={positionLevel} />
                  <h1 className="text-xl font-bold text-slate-900 truncate">{position.title}</h1>
                </div>
                <div className="text-sm text-slate-500 flex gap-4">
@@ -3731,6 +3928,14 @@ const PositionDetailView = ({
                   <div className="font-bold text-slate-700">{stats.total} Candidates</div>
                   <div>{stats.selected} Selected • {stats.pending} Pending</div>
                </div>
+               <Button
+                 variant="secondary"
+                 onClick={() => onToggleFavorite(position.code)}
+                 className={isFavorite ? "border-amber-200 text-amber-700 bg-amber-50 hover:bg-amber-100" : ""}
+               >
+                  <Star className="w-4 h-4 mr-2" fill={isFavorite ? "currentColor" : "none"} />
+                  {isFavorite ? "In shortlist" : "Salva in shortlist"}
+               </Button>
                <Button variant="secondary" onClick={() => onExport(position, candidates, evaluations, allPositions)}>
                   <Download className="w-4 h-4 mr-2" /> Export Excel
                </Button>
@@ -3926,17 +4131,20 @@ const RecruitmentApp = () => {
     candidates: [],
     positions: [],
     evaluations: {},
+    favoritePositionIds: [],
     lastUpdated: 0,
     cycle: createDefaultCycle()
   }));
 
-  const [currentView, setCurrentView] = useState<'upload' | 'dashboard' | 'position_detail' | 'candidates_list' | 'candidate_detail' | 'overlap_kanban'>('upload');
+  const [currentView, setCurrentView] = useState<'upload' | 'dashboard' | 'favorites' | 'position_detail' | 'candidates_list' | 'candidate_detail' | 'overlap_kanban'>('upload');
   const [selectedPositionId, setSelectedPositionId] = useState<string | null>(null);
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
   const [overlapPositionIds, setOverlapPositionIds] = useState<string[]>([]);
+  const [positionsReturnView, setPositionsReturnView] = useState<'dashboard' | 'favorites'>('dashboard');
   const [searchTerm, setSearchTerm] = useState("");
   const [filterEnte, setFilterEnte] = useState("ALL");
   const [filterStatus, setFilterStatus] = useState<PositionStatus | 'all'>('all');
+  const [filterLevel, setFilterLevel] = useState("ALL");
   const [isNewCycleModalOpen, setIsNewCycleModalOpen] = useState(false);
   const [newCycleName, setNewCycleName] = useState("");
   const [backupError, setBackupError] = useState("");
@@ -3960,7 +4168,8 @@ const RecruitmentApp = () => {
               ofcnSuitability: candidate.ofcnSuitability ?? "",
               globalNotes: candidate.globalNotes ?? ""
             })),
-            cycle: parsed.cycle ?? createDefaultCycle()
+            cycle: parsed.cycle ?? createDefaultCycle(),
+            favoritePositionIds: parsed.favoritePositionIds ?? []
           });
           setCurrentView('dashboard');
         }
@@ -4019,6 +4228,7 @@ const RecruitmentApp = () => {
       candidates,
       positions,
       evaluations,
+      favoritePositionIds: appData.favoritePositionIds.filter((id) => positions.some(pos => pos.code === id)),
       lastUpdated: Date.now()
     });
     setLastImportStats(stats);
@@ -4139,6 +4349,20 @@ const RecruitmentApp = () => {
     });
   };
 
+  const toggleFavoritePosition = (positionCode: string) => {
+    setAppData(prev => {
+      const isFavorite = prev.favoritePositionIds.includes(positionCode);
+      const nextFavorites = isFavorite
+        ? prev.favoritePositionIds.filter(id => id !== positionCode)
+        : [...prev.favoritePositionIds, positionCode];
+      return {
+        ...prev,
+        favoritePositionIds: nextFavorites,
+        lastUpdated: Date.now()
+      };
+    });
+  };
+
   const resetData = () => {
     if (confirm("Are you sure? This will delete all evaluations.")) {
       localStorage.removeItem('recruitment_db');
@@ -4178,7 +4402,7 @@ const RecruitmentApp = () => {
     if (!isObject(payload.appData)) {
       throw new Error("Formato backup non valido.");
     }
-    const { candidates, positions, evaluations, lastUpdated, cycle } = payload.appData as AppData;
+    const { candidates, positions, evaluations, lastUpdated, cycle, favoritePositionIds } = payload.appData as AppData;
     if (!Array.isArray(candidates) || !Array.isArray(positions) || !isObject(evaluations)) {
       throw new Error("Formato backup non valido.");
     }
@@ -4186,6 +4410,9 @@ const RecruitmentApp = () => {
       throw new Error("Formato backup non valido.");
     }
     if (typeof lastUpdated !== "number") {
+      throw new Error("Formato backup non valido.");
+    }
+    if (favoritePositionIds !== undefined && !Array.isArray(favoritePositionIds)) {
       throw new Error("Formato backup non valido.");
     }
     return payload.appData as AppData;
@@ -4204,6 +4431,7 @@ const RecruitmentApp = () => {
           candidates: nextAppData.candidates,
           positions: nextAppData.positions,
           evaluations: nextAppData.evaluations,
+          favoritePositionIds: nextAppData.favoritePositionIds ?? [],
           lastUpdated: nextAppData.lastUpdated,
           cycle: nextAppData.cycle
         });
@@ -4212,6 +4440,7 @@ const RecruitmentApp = () => {
         setOverlapPositionIds([]);
         setFilterEnte("ALL");
         setFilterStatus('all');
+        setFilterLevel("ALL");
         setSearchTerm("");
         setCurrentView(nextAppData.candidates.length && nextAppData.positions.length ? 'dashboard' : 'upload');
         setBackupSuccess("Backup caricato correttamente.");
@@ -4251,6 +4480,7 @@ const RecruitmentApp = () => {
       candidates: [],
       positions: [],
       evaluations: {},
+      favoritePositionIds: [],
       lastUpdated: Date.now(),
       cycle: nextCycle
     });
@@ -4260,6 +4490,7 @@ const RecruitmentApp = () => {
     setOverlapPositionIds([]);
     setFilterEnte("ALL");
     setFilterStatus('all');
+    setFilterLevel("ALL");
     setSearchTerm("");
     setIsNewCycleModalOpen(false);
   };
@@ -4270,21 +4501,39 @@ const RecruitmentApp = () => {
     return ['ALL', ...Array.from(entes).sort()];
   }, [appData.positions]);
 
+  const distinctLevels = useMemo(() => getDistinctPositionLevels(appData.positions), [appData.positions]);
+
   const lowerSearch = searchTerm.trim().toLowerCase();
-  const filteredPositions = appData.positions.filter(p => {
-    const matchesSearch = 
-      p.title.toLowerCase().includes(lowerSearch) || 
-      p.code.toLowerCase().includes(lowerSearch) ||
-      p.entity.toLowerCase().includes(lowerSearch) ||
-      p.location.toLowerCase().includes(lowerSearch);
+  const positionMatchesFilters = useCallback(
+    (position: Position) => {
+      const matchesSearch =
+        position.title.toLowerCase().includes(lowerSearch) ||
+        position.code.toLowerCase().includes(lowerSearch) ||
+        position.entity.toLowerCase().includes(lowerSearch) ||
+        position.location.toLowerCase().includes(lowerSearch);
 
-    const matchesEnte = filterEnte === 'ALL' || p.entity === filterEnte;
-    
-    const status = getPositionStatus(p, appData.evaluations);
-    const matchesStatus = filterStatus === 'all' || status === filterStatus;
+      const matchesEnte = filterEnte === 'ALL' || position.entity === filterEnte;
 
-    return matchesSearch && matchesEnte && matchesStatus;
-  });
+      const status = getPositionStatus(position, appData.evaluations);
+      const matchesStatus = filterStatus === 'all' || status === filterStatus;
+
+      const level = getPositionLevel(position);
+      const matchesLevel = filterLevel === "ALL" || level?.code === filterLevel;
+
+      return matchesSearch && matchesEnte && matchesStatus && matchesLevel;
+    },
+    [lowerSearch, filterEnte, filterStatus, filterLevel, appData.evaluations]
+  );
+
+  const filteredPositions = useMemo(
+    () => appData.positions.filter(positionMatchesFilters),
+    [appData.positions, positionMatchesFilters]
+  );
+
+  const filteredFavoritePositions = useMemo(
+    () => appData.positions.filter(p => appData.favoritePositionIds.includes(p.code)).filter(positionMatchesFilters),
+    [appData.positions, appData.favoritePositionIds, positionMatchesFilters]
+  );
 
   // Views Logic
   if (currentView === 'upload') {
@@ -4302,10 +4551,12 @@ const RecruitmentApp = () => {
           allPositions={appData.positions}
           onUpdate={updateEvaluation}
           onReorder={updateManualOrder}
-          onBack={() => setCurrentView('dashboard')}
+          onBack={() => setCurrentView(positionsReturnView)}
           onToggleReqVisibility={toggleRequirementVisibility}
           onUpdateRequirements={updatePositionRequirements}
           onExport={exportToExcel}
+          isFavorite={appData.favoritePositionIds.includes(position.code)}
+          onToggleFavorite={toggleFavoritePosition}
        />
     );
   }
@@ -4345,6 +4596,16 @@ const RecruitmentApp = () => {
           >
             <Briefcase className="w-5 h-5" />
             Positions
+          </button>
+          <button
+            onClick={() => setCurrentView('favorites')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${currentView === 'favorites' ? 'bg-slate-800 text-white' : 'hover:bg-slate-800 text-slate-400'}`}
+          >
+            <Star className="w-5 h-5" />
+            Posizioni salvate
+            <span className="text-xs ml-auto bg-slate-700 px-2 py-0.5 rounded">
+              {appData.favoritePositionIds.length}
+            </span>
           </button>
           <button 
              onClick={() => setCurrentView('candidates_list')}
@@ -4407,12 +4668,18 @@ const RecruitmentApp = () => {
 
       {/* Main Content Area */}
       <main className="flex-1 overflow-hidden flex flex-col">
-        {currentView === 'dashboard' && (
+        {(currentView === 'dashboard' || currentView === 'favorites') && (
           <>
             <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between">
               <div>
-                <h1 className="text-2xl font-bold text-slate-800">Dashboard Ricerca di personale</h1>
-                <p className="text-sm text-slate-500">Ciclo di disamina: {appData.cycle.name}</p>
+                <h1 className="text-2xl font-bold text-slate-800">
+                  {currentView === 'favorites' ? "Posizioni salvate" : "Dashboard Ricerca di personale"}
+                </h1>
+                <p className="text-sm text-slate-500">
+                  {currentView === 'favorites'
+                    ? "Le posizioni in shortlist del ciclo corrente."
+                    : `Ciclo di disamina: ${appData.cycle.name}`}
+                </p>
               </div>
               <div className="flex items-center gap-2 text-sm text-slate-500 bg-slate-50 px-3 py-1 rounded-full border border-slate-200">
                 <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
@@ -4451,6 +4718,18 @@ const RecruitmentApp = () => {
                   >
                     {distinctEntities.map(e => <option key={e} value={e}>{e === 'ALL' ? 'All Entities' : e}</option>)}
                   </select>
+                  <select
+                    className="px-4 py-2 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    value={filterLevel}
+                    onChange={(e) => setFilterLevel(e.target.value)}
+                  >
+                    <option value="ALL">Tutti i livelli</option>
+                    {distinctLevels.map(level => (
+                      <option key={level.code} value={level.code}>
+                        {level.code} • {level.description}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 {/* Status Tabs */}
@@ -4474,13 +4753,14 @@ const RecruitmentApp = () => {
 
               {/* Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                {filteredPositions.map(pos => {
+                {(currentView === 'favorites' ? filteredFavoritePositions : filteredPositions).map(pos => {
                   // Count candidates for this pos
                   const relevantCands = appData.candidates.filter(c => 
                      !!appData.evaluations[`${pos.code}_${c.id}`]
                   );
                   const count = relevantCands.length;
                   const status = getPositionStatus(pos, appData.evaluations);
+                  const isFavorite = appData.favoritePositionIds.includes(pos.code);
                   
                   // Get selected candidates names
                   const selectedCands = appData.candidates
@@ -4497,14 +4777,22 @@ const RecruitmentApp = () => {
                       selectedCandidatesNames={selectedNames}
                       selectedCandidatesDetails={selectedCands}
                       candidatesList={relevantCands}
+                      isFavorite={isFavorite}
+                      onToggleFavorite={toggleFavoritePosition}
                       onClick={() => {
                         setSelectedPositionId(pos.code);
+                        setPositionsReturnView(currentView === 'favorites' ? 'favorites' : 'dashboard');
                         setCurrentView('position_detail');
                       }} 
                     />
                   );
                 })}
               </div>
+              {currentView === 'favorites' && filteredFavoritePositions.length === 0 && (
+                <div className="mt-8 text-center text-sm text-slate-500">
+                  Nessuna posizione in shortlist. Aggiungile dalla dashboard per ritrovarle qui.
+                </div>
+              )}
             </div>
           </>
         )}
