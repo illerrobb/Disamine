@@ -2131,6 +2131,7 @@ const buildCandidateProfile = (candidate: Candidate) => {
   const roleCode = normalizeProfileCode(candidate.role || "");
   const categoryCode = normalizeProfileCode(candidate.category || "");
   const specialtyCode = normalizeProfileCode(candidate.specialty || "");
+  const categorySpecialtyCode = `${categoryCode}${specialtyCode}`;
   const profileCodes = new Set<string>();
 
   if (roleCode) {
@@ -2148,6 +2149,7 @@ const buildCandidateProfile = (candidate: Candidate) => {
     roleCode,
     categoryCode,
     specialtyCode,
+    categorySpecialtyCode,
     profileCodes: Array.from(profileCodes),
     fullCode: `${roleCode}${categoryCode}${specialtyCode}`
   };
@@ -2184,7 +2186,10 @@ const profileMatchesRequirement = (candidate: Candidate, requirementRaw: string)
     const parsed = parseProfileOption(option);
 
     if (parsed.hasSpecialty) {
-      if (parsed.specialtyCode !== candidateProfile.specialtyCode) return false;
+      const specialtyMatches =
+        parsed.specialtyCode === candidateProfile.specialtyCode ||
+        parsed.specialtyCode === candidateProfile.categorySpecialtyCode;
+      if (!specialtyMatches) return false;
     }
 
     if (parsed.hasCategory) {
