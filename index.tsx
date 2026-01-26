@@ -706,11 +706,11 @@ const ScoreBar = ({
   });
 
   return (
-    <div className={`flex h-2 w-full gap-0.5 ${className}`}>
+    <div className={`flex h-2 w-full gap-0.5 overflow-visible ${className}`}>
       {segments.map((segment, index) => (
         <div key={`${segment.color}-${index}`} className="relative flex-1 group">
           <div className={`h-2 w-full rounded-sm ${segment.color}`} title={segment.label} />
-          <div className="pointer-events-none absolute left-1/2 top-full z-20 mt-1 w-max -translate-x-1/2 rounded-md border border-slate-200 bg-white px-2 py-1 text-[10px] text-slate-700 opacity-0 shadow-md transition-opacity duration-150 group-hover:opacity-100">
+          <div className="pointer-events-none absolute left-1/2 top-full z-30 mt-1 w-max max-w-[220px] -translate-x-1/2 rounded-md border border-slate-200 bg-white px-2 py-1 text-[10px] text-slate-700 opacity-0 shadow-md transition-opacity duration-150 group-hover:opacity-100 whitespace-normal break-words">
             {segment.label}
           </div>
         </div>
@@ -2693,7 +2693,7 @@ const OverlapKanbanView = ({
   const [draggingCandidateId, setDraggingCandidateId] = useState<string | null>(null);
   const [isPositionsOpen, setIsPositionsOpen] = useState(true);
   const [focusedCandidateId, setFocusedCandidateId] = useState<string | null>(null);
-  const [openStatusCandidateId, setOpenStatusCandidateId] = useState<string | null>(null);
+  const [openStatusEvaluationId, setOpenStatusEvaluationId] = useState<string | null>(null);
   const [isSuggestionsOpen, setIsSuggestionsOpen] = useState(true);
 
   const candidateIdsByPosition = useMemo(() => {
@@ -3104,13 +3104,13 @@ const OverlapKanbanView = ({
           )}
         </aside>
 
-        <div className="flex-1 overflow-x-auto p-6 pt-20 min-w-0">
+        <div className="flex-1 overflow-x-hidden p-6 pt-20 min-w-0">
           {selectedPositions.length === 0 ? (
             <div className="h-full flex items-center justify-center text-slate-500 text-sm">
               Seleziona almeno una posizione per vedere le candidature.
             </div>
           ) : (
-            <div className="flex gap-4">
+            <div className="flex flex-wrap gap-4 items-start">
               {selectedPositions.map(position => {
                 const positionCandidates = candidates
                   .map(candidate => ({
@@ -3254,7 +3254,7 @@ const OverlapKanbanView = ({
                           )}
                         </div>
                       </div>
-                      <div className="p-3 space-y-3 max-h-[50vh] overflow-y-auto">
+                      <div className="p-3 space-y-3 max-h-[50vh] overflow-y-auto overflow-x-visible">
                         {orderedCandidates.length === 0 && (
                           <div className="text-xs text-slate-400 italic text-center py-6">
                             Nessuna candidatura disponibile.
@@ -3308,7 +3308,7 @@ const OverlapKanbanView = ({
                                         >
                                           <AlertTriangle className="w-4 h-4" />
                                         </button>
-                                        <div className="absolute right-0 mt-2 w-56 rounded-md border border-amber-200 bg-white shadow-lg p-2 text-[11px] text-amber-700 opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto z-20">
+                                        <div className="absolute right-0 mt-2 w-56 rounded-md border border-amber-200 bg-white shadow-lg p-2 text-[11px] text-amber-700 opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto z-30">
                                           <div className="font-semibold text-amber-800">
                                             Già selezionato altrove
                                           </div>
@@ -3329,15 +3329,16 @@ const OverlapKanbanView = ({
                                     type="button"
                                     onClick={(event) => {
                                       event.stopPropagation();
-                                      setOpenStatusCandidateId((prev) =>
-                                        prev === candidate.id ? null : candidate.id
+                                      const evaluationId = `${position.code}_${candidate.id}`;
+                                      setOpenStatusEvaluationId((prev) =>
+                                        prev === evaluationId ? null : evaluationId
                                       );
                                     }}
                                     className="focus:outline-none"
                                   >
                                     <Badge color={badge.color}>{badge.label}</Badge>
                                   </button>
-                                  {openStatusCandidateId === candidate.id && (
+                                  {openStatusEvaluationId === `${position.code}_${candidate.id}` && (
                                     <div className="absolute right-0 mt-2 w-40 rounded-md border border-slate-200 bg-white shadow-lg z-10">
                                       {statusOptions.map((option) => (
                                         <button
@@ -3346,7 +3347,7 @@ const OverlapKanbanView = ({
                                           onClick={(event) => {
                                             event.stopPropagation();
                                             onUpdate({ ...evaluation, status: option.value });
-                                            setOpenStatusCandidateId(null);
+                                            setOpenStatusEvaluationId(null);
                                           }}
                                           className={`w-full text-left px-3 py-2 text-xs hover:bg-slate-50 ${
                                             option.value === evaluation.status
