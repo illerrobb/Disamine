@@ -2340,6 +2340,14 @@ const buildCandidateProfile = (candidate: Candidate) => {
     }
   }
 
+  if (roleCode.length >= 4) {
+    const rolePrefix = roleCode.slice(0, 2);
+    profileCodes.add(rolePrefix);
+    if (categoryCode) {
+      profileCodes.add(`${rolePrefix}${categoryCode}`);
+    }
+  }
+
   if (roleCode.length === 2 && categoryCode) {
     profileCodes.add(`${roleCode}${categoryCode}`);
   }
