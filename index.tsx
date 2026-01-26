@@ -3245,6 +3245,35 @@ const OverlapKanbanView = ({
   const [openStatusEvaluationId, setOpenStatusEvaluationId] = useState<string | null>(null);
   const [isSuggestionsOpen, setIsSuggestionsOpen] = useState(true);
   const dragPreviewRef = useRef<HTMLElement | null>(null);
+  const kanbanScrollRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+
+  const registerKanbanScrollRef = useCallback(
+    (positionCode: string) => (node: HTMLDivElement | null) => {
+      if (!node) {
+        kanbanScrollRefs.current.delete(positionCode);
+        return;
+      }
+      kanbanScrollRefs.current.set(positionCode, node);
+    },
+    []
+  );
+
+  const focusCandidateAcrossKanbans = useCallback(
+    (candidateId: string, sourcePositionCode?: string) => {
+      setFocusedCandidateId(candidateId);
+      requestAnimationFrame(() => {
+        kanbanScrollRefs.current.forEach((container, positionCode) => {
+          if (positionCode === sourcePositionCode) return;
+          const target = container.querySelector(
+            `[data-candidate-id="${candidateId}"]`
+          ) as HTMLElement | null;
+          if (!target) return;
+          target.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        });
+      });
+    },
+    []
+  );
 
   const clearDragPreview = useCallback(() => {
     if (dragPreviewRef.current) {
@@ -3834,7 +3863,9 @@ const OverlapKanbanView = ({
                             <div className="relative">
                               <button
                                 type="button"
-                                onClick={() => setFocusedCandidateId(selectedEntry.candidate.id)}
+                                onClick={() =>
+                                  focusCandidateAcrossKanbans(selectedEntry.candidate.id, position.code)
+                                }
                                 className="text-left w-full"
                               >
                                 <div className="text-[10px] uppercase text-slate-400">Selected</div>
@@ -3869,7 +3900,10 @@ const OverlapKanbanView = ({
                           )}
                         </div>
                       </div>
-                      <div className="p-3 space-y-3 max-h-[50vh] overflow-y-auto overflow-x-visible">
+                      <div
+                        className="p-3 space-y-3 max-h-[50vh] overflow-y-auto overflow-x-hidden"
+                        ref={registerKanbanScrollRef(position.code)}
+                      >
                         {orderedCandidates.length === 0 && (
                           <div className="text-xs text-slate-400 italic text-center py-6">
                             Nessuna candidatura disponibile.
@@ -3899,7 +3933,8 @@ const OverlapKanbanView = ({
                               draggable
                               onDragStart={handleDragStart(candidate.id)}
                               onDragEnd={handleDragEnd}
-                              onClick={() => setFocusedCandidateId(candidate.id)}
+                              data-candidate-id={candidate.id}
+                              onClick={() => focusCandidateAcrossKanbans(candidate.id, position.code)}
                               className={`border rounded-lg p-3 bg-white shadow-sm cursor-grab active:cursor-grabbing transition-colors ${
                                 focusedCandidateId === candidate.id
                                   ? "border-blue-400 bg-blue-50/40"
