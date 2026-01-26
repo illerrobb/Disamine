@@ -2091,6 +2091,145 @@ const getStyledXlsx = () => {
   return XLSX;
 };
 
+const PROFILE_CODE_GROUPS: Record<string, string[]> = {
+  AA: ["AARAN", "AARAS", "AARNN", "AARNS"],
+  AARA: ["AARAN", "AARAS"],
+  AARN: ["AARNN", "AARNS"],
+  GA: ["GARN", "GARS"]
+};
+
+const RANK_ORDER = ["TCOL", "MAGG", "CAP", "TEN", "STEN"];
+
+const normalizeProfileCode = (value: string) =>
+  value
+    .toUpperCase()
+    .replace(/[\s.]/g, "")
+    .replace(/[^A-Z0-9]/g, "");
+
+const parseProfileOption = (option: string) => {
+  const tokens = option.split(/\s+/).filter(Boolean);
+  const role = tokens[0] ?? "";
+  const category = tokens[1] ?? "";
+  const specialty = tokens.slice(2).join(" ");
+
+  const roleCode = normalizeProfileCode(role);
+  const categoryCode = normalizeProfileCode(category);
+  const specialtyCode = normalizeProfileCode(specialty);
+
+  return {
+    roleCode,
+    categoryCode,
+    specialtyCode,
+    profileCode: `${roleCode}${categoryCode}`,
+    fullCode: `${roleCode}${categoryCode}${specialtyCode}`,
+    hasCategory: Boolean(categoryCode),
+    hasSpecialty: Boolean(specialtyCode)
+  };
+};
+
+const buildCandidateProfile = (candidate: Candidate) => {
+  const roleCode = normalizeProfileCode(candidate.role || "");
+  const categoryCode = normalizeProfileCode(candidate.category || "");
+  const specialtyCode = normalizeProfileCode(candidate.specialty || "");
+  const profileCodes = new Set<string>();
+
+  if (roleCode) {
+    profileCodes.add(roleCode);
+    if (roleCode.length >= 4) {
+      profileCodes.add(`${roleCode.slice(0, 2)}${roleCode.slice(2, 4)}`);
+    }
+  }
+
+  if (roleCode.length === 2 && categoryCode) {
+    profileCodes.add(`${roleCode}${categoryCode}`);
+  }
+
+  return {
+    roleCode,
+    categoryCode,
+    specialtyCode,
+    profileCodes: Array.from(profileCodes),
+    fullCode: `${roleCode}${categoryCode}${specialtyCode}`
+  };
+};
+
+const matchesProfileCode = (requiredCode: string, candidateCode: string) => {
+  if (!requiredCode) return true;
+  if (!candidateCode) return false;
+  if (requiredCode === candidateCode) return true;
+
+  const requiredGroup = PROFILE_CODE_GROUPS[requiredCode];
+  const candidateGroup = PROFILE_CODE_GROUPS[candidateCode];
+
+  if (requiredGroup?.includes(candidateCode)) return true;
+  if (candidateGroup?.includes(requiredCode)) return true;
+
+  if (requiredCode.length <= 2 && candidateCode.startsWith(requiredCode)) return true;
+  if (requiredCode.length <= 4 && candidateCode.startsWith(requiredCode)) return true;
+
+  return false;
+};
+
+const profileMatchesRequirement = (candidate: Candidate, requirementRaw: string) => {
+  if (!requirementRaw.trim()) return true;
+
+  const candidateProfile = buildCandidateProfile(candidate);
+  const options = requirementRaw
+    .replace(/\r?\n/g, "/")
+    .split("/")
+    .map(opt => opt.trim())
+    .filter(Boolean);
+
+  return options.some(option => {
+    const parsed = parseProfileOption(option);
+
+    if (parsed.hasSpecialty) {
+      if (parsed.specialtyCode !== candidateProfile.specialtyCode) return false;
+    }
+
+    if (parsed.hasCategory) {
+      return candidateProfile.profileCodes.some(code => matchesProfileCode(parsed.profileCode, code));
+    }
+
+    return candidateProfile.profileCodes.some(code => matchesProfileCode(parsed.roleCode, code));
+  });
+};
+
+const normalizeRankCode = (value: string) =>
+  value
+    .toUpperCase()
+    .replace(/\s+/g, "")
+    .replace(/[^A-Z]/g, "");
+
+const parseRankRequirements = (rankReq: string) =>
+  rankReq
+    .split(/[\/,;]|(?:\s+-\s+)/)
+    .map(part => normalizeRankCode(part))
+    .filter(Boolean);
+
+const rankMatchesRequirement = (candidateRank: string, rankReq: string) => {
+  if (!rankReq.trim()) return true;
+  const candidateCode = normalizeRankCode(candidateRank);
+  const requiredCodes = parseRankRequirements(rankReq).filter(code => RANK_ORDER.includes(code));
+
+  if (!candidateCode || !RANK_ORDER.includes(candidateCode)) return false;
+  if (requiredCodes.length === 0) return false;
+
+  if (requiredCodes.length >= 2) {
+    return requiredCodes.includes(candidateCode);
+  }
+
+  const requiredIndex = RANK_ORDER.indexOf(requiredCodes[0]);
+  const candidateIndex = RANK_ORDER.indexOf(candidateCode);
+  return Math.abs(candidateIndex - requiredIndex) <= 1;
+};
+
+const isCandidateProfileCompatible = (candidate: Candidate, position: Position) => {
+  const profileOk = profileMatchesRequirement(candidate, position.catSpecQualReq || "");
+  const rankOk = rankMatchesRequirement(candidate.rank || "", position.rankReq || "");
+  return profileOk && rankOk;
+};
+
 const exportToExcel = (position: Position, candidates: Candidate[], evaluations: Record<string, Evaluation>, positions: Position[]) => {
   const XLSX = getStyledXlsx();
   const baseOrderMap = new Map(candidates.map((c, index) => [c.id, index]));
@@ -2233,10 +2372,11 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
     const englishCell = englishLanguage ? `INGLESE\n${englishLevel || englishLevelRaw}` : "";
 
     const nominativoLabel = `${[c.rank, c.role, c.category, c.specialty].filter(Boolean).join(" ")}\n${c.nominativo}`.trim();
+    const profileMatch = isCandidateProfileCompatible(c, position);
 
     const baseValues = [
        nominativoLabel, // Nominativo
-       "SI", // Profilo richiesto match placeholder
+       profileMatch ? "SI" : "NO", // Profilo richiesto match
        c.specificAssignments || "", // Attribuzioni specifiche/Corsi obbligatori
        ...(includeOfcn ? [c.ofcnSuitability || ""] : []), // Idoneità OFCN
        c.nosLevel, // NOS
