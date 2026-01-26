@@ -904,7 +904,7 @@ const CandidateMatchDrawer = ({
             }
           });
         }}
-        className={`flex w-full items-start gap-3 p-2 rounded border transition-colors ${
+        className={`grid w-full grid-cols-[auto_minmax(0,1fr)] items-start gap-3 p-2 rounded border transition-colors ${
           isDisabled
             ? "border-slate-200 bg-slate-100 cursor-not-allowed"
             : "border-slate-200 bg-white hover:bg-slate-50"
@@ -927,11 +927,19 @@ const CandidateMatchDrawer = ({
           {status === "no" && <X className="w-4 h-4" />}
           {status === "partial" && <div className="w-2 h-2 rounded-full bg-white opacity-70" />}
         </div>
-        <div>
-          <p className={`text-sm ${status === "no" ? "text-slate-400 line-through" : "text-slate-700"}`}>
+        <div className="min-w-0 text-left">
+          <p
+            className={`text-sm break-words ${
+              status === "no" ? "text-slate-400 line-through" : "text-slate-700"
+            }`}
+          >
             {req.text}
           </p>
-          <span className={`text-[10px] font-bold uppercase ${req.type === "essential" ? "text-red-500" : "text-amber-600"}`}>
+          <span
+            className={`text-[10px] font-bold uppercase ${
+              req.type === "essential" ? "text-red-500" : "text-amber-600"
+            }`}
+          >
             {req.type === "essential" ? "Essential" : "Desirable"}
           </span>
         </div>
@@ -966,20 +974,20 @@ const CandidateMatchDrawer = ({
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden p-6 space-y-6">
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-              <div className="flex items-center justify-between gap-3">
+              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-start gap-3">
                 <span className="text-slate-500">Status posizione</span>
-                <span className="font-semibold text-slate-700">{statusLabel}</span>
+                <span className="font-semibold text-slate-700 text-right break-words">{statusLabel}</span>
               </div>
-              <div className="flex items-center justify-between gap-3">
+              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-start gap-3">
                 <span className="text-slate-500">Fit complessivo</span>
-                <span className="font-semibold text-slate-700">{fitPercent}%</span>
+                <span className="font-semibold text-slate-700 text-right break-words">{fitPercent}%</span>
               </div>
-              <div className="flex items-center justify-between gap-3 text-xs text-slate-500">
+              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-start gap-3 text-xs text-slate-500">
                 <span className="font-medium">Essential {essentialYes}/{essentialTotal}</span>
-                <span className="font-medium">Desirable {desirableYes}/{desirableTotal}</span>
+                <span className="font-medium text-right">Desirable {desirableYes}/{desirableTotal}</span>
               </div>
             </div>
             <ScoreBar evaluation={evaluation} position={position} />
@@ -991,45 +999,53 @@ const CandidateMatchDrawer = ({
               <span className="font-mono text-[10px] text-slate-400">{candidate.id}</span>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs text-slate-600">
-              <div className="flex items-center justify-between gap-3">
+              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-start gap-3">
                 <span className="text-slate-400">Grado</span>
-                <span className="font-semibold text-slate-700">{candidate.rank || "-"}</span>
+                <span className="font-semibold text-slate-700 text-right break-words">{candidate.rank || "-"}</span>
               </div>
-              <div className="flex items-center justify-between gap-3">
+              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-start gap-3">
                 <span className="text-slate-400">Ruolo/Cat.</span>
-                <span className="font-semibold text-slate-700">
+                <span className="font-semibold text-slate-700 text-right break-words">
                   {[candidate.role, candidate.category, candidate.specialty].filter(Boolean).join(" ") || "-"}
                 </span>
               </div>
-              <div className="flex items-center justify-between gap-3">
+              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-start gap-3">
                 <span className="text-slate-400">Ente di servizio</span>
-                <span className="font-semibold text-slate-700">{candidate.serviceEntity || "-"}</span>
+                <span className="font-semibold text-slate-700 text-right break-words">
+                  {candidate.serviceEntity || "-"}
+                </span>
               </div>
-              <div className="flex items-center justify-between gap-3">
+              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-start gap-3">
                 <span className="text-slate-400">NOS</span>
-                <span className="font-semibold text-slate-700">
+                <span className="font-semibold text-slate-700 text-right break-words">
                   {[candidate.nosLevel, candidate.nosQual].filter(Boolean).join(" ") || "-"}
                 </span>
               </div>
-              <div className="flex items-center justify-between gap-3">
+              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-start gap-3">
                 <span className="text-slate-400">Scadenza NOS</span>
-                <span className="font-semibold text-slate-700">{candidate.nosExpiry || "-"}</span>
+                <span className="font-semibold text-slate-700 text-right break-words">
+                  {candidate.nosExpiry || "-"}
+                </span>
               </div>
-              <div className="flex items-center justify-between gap-3">
+              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-start gap-3">
                 <span className="text-slate-400">Mandati estero</span>
-                <span className="font-semibold text-slate-700">{candidate.internationalMandates || "-"}</span>
+                <span className="font-semibold text-slate-700 text-right break-words">
+                  {candidate.internationalMandates || "-"}
+                </span>
               </div>
-              <div className="flex items-center justify-between gap-3">
+              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-start gap-3">
                 <span className="text-slate-400">Data FEO</span>
-                <span className="font-semibold text-slate-700">{candidate.feoDate || "-"}</span>
+                <span className="font-semibold text-slate-700 text-right break-words">{candidate.feoDate || "-"}</span>
               </div>
-              <div className="flex items-center justify-between gap-3">
+              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-start gap-3">
                 <span className="text-slate-400">Mix</span>
-                <span className="font-semibold text-slate-700">{candidate.mixDescription || "-"}</span>
+                <span className="font-semibold text-slate-700 text-right break-words">
+                  {candidate.mixDescription || "-"}
+                </span>
               </div>
-              <div className="flex items-center justify-between gap-3 sm:col-span-2">
+              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] items-start gap-3 sm:col-span-2">
                 <span className="text-slate-400">Lingue</span>
-                <span className="font-semibold text-slate-700">
+                <span className="font-semibold text-slate-700 text-right break-words">
                   {candidate.languages.length > 0
                     ? candidate.languages.map(lang => `${lang.language} (${lang.level})`).join(", ")
                     : "-"}
@@ -1038,17 +1054,23 @@ const CandidateMatchDrawer = ({
             </div>
             {(candidate.commanderOpinion || candidate.specificAssignments || candidate.ofcnSuitability) && (
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-slate-600">
-                <div className="flex items-center justify-between gap-3">
+                <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-start gap-3">
                   <span className="text-slate-400">Parere Com.</span>
-                  <span className="font-semibold text-slate-700">{candidate.commanderOpinion || "-"}</span>
+                  <span className="font-semibold text-slate-700 text-right break-words">
+                    {candidate.commanderOpinion || "-"}
+                  </span>
                 </div>
-                <div className="flex items-center justify-between gap-3">
+                <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-start gap-3">
                   <span className="text-slate-400">Attribuzioni</span>
-                  <span className="font-semibold text-slate-700">{candidate.specificAssignments || "-"}</span>
+                  <span className="font-semibold text-slate-700 text-right break-words">
+                    {candidate.specificAssignments || "-"}
+                  </span>
                 </div>
-                <div className="flex items-center justify-between gap-3">
+                <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-start gap-3">
                   <span className="text-slate-400">Idoneità OFCN</span>
-                  <span className="font-semibold text-slate-700">{candidate.ofcnSuitability || "-"}</span>
+                  <span className="font-semibold text-slate-700 text-right break-words">
+                    {candidate.ofcnSuitability || "-"}
+                  </span>
                 </div>
               </div>
             )}
@@ -3000,7 +3022,7 @@ const OverlapKanbanView = ({
         </div>
       </div>
 
-      <div className="flex-1 overflow-hidden flex">
+      <div className="flex-1 overflow-hidden flex min-w-0">
         <aside
           className={`border-r border-slate-200 bg-white overflow-y-auto transition-all duration-300 ${
             isPositionsOpen ? "w-80" : "w-12"
@@ -3091,7 +3113,7 @@ const OverlapKanbanView = ({
           )}
         </aside>
 
-        <div className="flex-1 overflow-x-auto p-6 pt-20">
+        <div className="flex-1 overflow-x-auto p-6 pt-20 min-w-0">
           {selectedPositions.length === 0 ? (
             <div className="h-full flex items-center justify-center text-slate-500 text-sm">
               Seleziona almeno una posizione per vedere le candidature.
@@ -3131,13 +3153,15 @@ const OverlapKanbanView = ({
                 return (
                   <div key={position.code} className={`w-72 shrink-0 ${isDropDisabled ? 'opacity-40' : ''}`}>
                     <div className="bg-white border border-slate-200 rounded-lg shadow-sm">
-                      <div className="border-b border-slate-100 p-4">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex items-center gap-2">
+                    <div className="border-b border-slate-100 p-4">
+                        <div className="flex items-start justify-between gap-2 min-w-0">
+                          <div className="flex items-center gap-2 min-w-0">
                             <span className="font-mono text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
                               {position.code}
                             </span>
-                            <h3 className="font-semibold text-slate-800 text-sm line-clamp-2">{position.title}</h3>
+                            <h3 className="min-w-0 font-semibold text-slate-800 text-sm line-clamp-2">
+                              {position.title}
+                            </h3>
                           </div>
                           <button
                             type="button"
@@ -3270,10 +3294,12 @@ const OverlapKanbanView = ({
                                   : "border-slate-200"
                               }`}
                             >
-                              <div className="flex items-start justify-between gap-2">
-                                <div>
-                                  <div className="font-semibold text-slate-800 text-sm">{candidate.nominativo}</div>
-                                  <div className="text-[10px] text-slate-500 mt-0.5">
+                          <div className="flex items-start justify-between gap-2 min-w-0">
+                                <div className="min-w-0">
+                                  <div className="font-semibold text-slate-800 text-sm break-words">
+                                    {candidate.nominativo}
+                                  </div>
+                                  <div className="text-[10px] text-slate-500 mt-0.5 break-words">
                                     {candidate.rank} • {candidate.role} {candidate.category} {candidate.specialty}
                                   </div>
                                 </div>
