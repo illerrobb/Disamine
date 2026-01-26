@@ -1249,6 +1249,11 @@ const CandidateDetailView = ({
     });
   };
 
+  const formatPositionProfile = useCallback((pos: Position) => {
+    const profileParts = [pos.rankReq, pos.catSpecQualReq].filter(Boolean);
+    return profileParts.length > 0 ? profileParts.join(" • ") : "-";
+  }, []);
+
   return (
     <div className="flex flex-col h-screen bg-slate-50">
       {/* Header */}
@@ -1355,6 +1360,7 @@ const CandidateDetailView = ({
                const isNonCompatible = ev.status === 'non-compatible';
                const activeReqs = pos.requirements.filter(r => !r.hidden);
                const otherSelection = getOtherSelectionInfo(candidate.id, pos.code, evaluations, allPositions);
+               const profileSummary = formatPositionProfile(pos);
                
                // Calculate stats
                const reqScore = activeReqs.filter(r => ev.reqEvaluations[r.id] === 'yes').length;
@@ -1372,6 +1378,10 @@ const CandidateDetailView = ({
                               <span>{pos.entity}</span>
                               <span>•</span>
                               <span>{pos.location}</span>
+                           </div>
+                           <div className="mt-2 text-xs text-slate-500 flex items-center gap-2">
+                              <span className="uppercase text-slate-400">Profilo previsto</span>
+                              <span className="font-semibold text-slate-600">{profileSummary}</span>
                            </div>
                            {otherSelection && (
                               <div className="mt-2 text-xs bg-amber-50 text-amber-700 px-2 py-1 rounded border border-amber-200 inline-flex items-center gap-1">
@@ -3587,6 +3597,10 @@ const PositionDetailView = ({
   const [isRequirementsDrawerOpen, setIsRequirementsDrawerOpen] = useState(false);
   const baseOrderMap = useMemo(() => new Map(allCandidates.map((c, index) => [c.id, index])), [allCandidates]);
   const previousRowPositionsRef = useRef<Map<string, DOMRect>>(new Map());
+  const profileSummary = useMemo(() => {
+    const profileParts = [position.rankReq, position.catSpecQualReq].filter(Boolean);
+    return profileParts.length > 0 ? profileParts.join(" • ") : "-";
+  }, [position.rankReq, position.catSpecQualReq]);
 
   const positionCandidates = useMemo(() => {
     return allCandidates.filter(c => !!evaluations[`${position.code}_${c.id}`]);
@@ -3706,6 +3720,10 @@ const PositionDetailView = ({
                <div className="text-sm text-slate-500 flex gap-4">
                  <span className="flex items-center gap-1"><Building className="w-3 h-3" /> {position.entity}</span>
                  <span className="flex items-center gap-1"><Globe className="w-3 h-3" /> {position.location}</span>
+               </div>
+               <div className="mt-2 text-xs text-slate-500 flex items-center gap-2">
+                 <span className="uppercase text-slate-400">Profilo previsto</span>
+                 <span className="font-semibold text-slate-600">{profileSummary}</span>
                </div>
             </div>
             <div className="flex items-center gap-2">
