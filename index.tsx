@@ -2165,6 +2165,17 @@ const PROFILE_CODE_GROUPS: Record<string, string[]> = {
   GA: ["GARN", "GARS"]
 };
 
+const ROLE_FILTER_OPTIONS = [
+  { value: "ALL", label: "Tutti i ruoli" },
+  { value: "NAVIGANTI", label: "Naviganti (AArnn/AArns, posizioni AA/AArn)" },
+  { value: "ARMI", label: "Armi (AAran/AAras, posizioni AAra)" },
+  { value: "GENIO", label: "Genio (G.A...)" },
+  { value: "COMMISSARI", label: "Commissari (CC...)" },
+  { value: "SANITARI", label: "Sanitari (CSA...)" }
+] as const;
+
+type RoleFilterValue = (typeof ROLE_FILTER_OPTIONS)[number]["value"];
+
 const RANK_ORDER = ["TCOL", "MAGG", "CAP", "TEN", "STEN"];
 
 const POSITION_LEVEL_ORDER = ["BASSO", "MEDIO", "ELEVATO", "ELEVATISSIMO", "N.D."] as const;
@@ -2304,6 +2315,27 @@ const normalizeProfileCode = (value: string) =>
     .toUpperCase()
     .replace(/[\s.]/g, "")
     .replace(/[^A-Z0-9]/g, "");
+
+const isArmiCode = (code: string) =>
+  code.startsWith("AARA") || code.startsWith("AARAN") || code.startsWith("AARAS");
+
+const isNavigantiCode = (code: string) =>
+  !isArmiCode(code) &&
+  (code.startsWith("AARN") || code.startsWith("AARNN") || code.startsWith("AARNS") || code.startsWith("AA"));
+
+const getRoleFilterValueFromCode = (rawCode: string): RoleFilterValue | null => {
+  const code = normalizeProfileCode(rawCode);
+  if (!code) return null;
+  if (code.startsWith("CSA")) return "SANITARI";
+  if (code.startsWith("CC")) return "COMMISSARI";
+  if (code.startsWith("GA")) return "GENIO";
+  if (isArmiCode(code)) return "ARMI";
+  if (isNavigantiCode(code)) return "NAVIGANTI";
+  return null;
+};
+
+const matchesRoleFilter = (role: RoleFilterValue | null, filter: RoleFilterValue) =>
+  filter === "ALL" || role === filter;
 
 const parseProfileOption = (option: string) => {
   const tokens = option.split(/\s+/).filter(Boolean);
@@ -3136,26 +3168,43 @@ const CandidatesListView = ({
    onOpenCandidateDetail: (id: string) => void;
 }) => {
    const [search, setSearch] = useState("");
+   const [roleFilter, setRoleFilter] = useState<RoleFilterValue>("ALL");
 
    const filtered = candidates.filter(c => 
       c.nominativo.toLowerCase().includes(search.toLowerCase()) ||
       c.id.toLowerCase().includes(search.toLowerCase()) ||
       c.rank.toLowerCase().includes(search.toLowerCase())
-   );
+   ).filter(candidate => {
+      const roleValue = getRoleFilterValueFromCode(candidate.role || "");
+      return matchesRoleFilter(roleValue, roleFilter);
+   });
 
    return (
       <div className="flex flex-col h-full bg-slate-50">
          <header className="bg-white border-b border-slate-200 px-8 py-4">
             <h1 className="text-2xl font-bold text-slate-800 mb-4">Candidates Directory</h1>
-            <div className="relative max-w-md">
-               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-               <input 
-                  type="text" 
-                  placeholder="Search candidates by name, ID, or rank..." 
-                  className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-               />
+            <div className="flex flex-wrap items-center gap-3">
+               <div className="relative max-w-md flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input
+                     type="text"
+                     placeholder="Search candidates by name, ID, or rank..."
+                     className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                     value={search}
+                     onChange={(e) => setSearch(e.target.value)}
+                  />
+               </div>
+               <select
+                  className="px-4 py-2 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                  value={roleFilter}
+                  onChange={(event) => setRoleFilter(event.target.value as RoleFilterValue)}
+               >
+                  {ROLE_FILTER_OPTIONS.map(option => (
+                     <option key={option.value} value={option.value}>
+                        {option.label}
+                     </option>
+                  ))}
+               </select>
             </div>
          </header>
          <div className="flex-1 overflow-y-auto p-8">
@@ -3235,6 +3284,8 @@ const OverlapKanbanView = ({
   const [onlyPossibleMatch, setOnlyPossibleMatch] = useState(false);
   const [positionSearch, setPositionSearch] = useState("");
   const [positionLevelFilter, setPositionLevelFilter] = useState("ALL");
+  const [positionRoleFilter, setPositionRoleFilter] = useState<RoleFilterValue>("ALL");
+  const [candidateRoleFilter, setCandidateRoleFilter] = useState<RoleFilterValue>("ALL");
   const [matchDrawerData, setMatchDrawerData] = useState<{
     candidateId: string;
     positionId: string;
@@ -3328,11 +3379,17 @@ const OverlapKanbanView = ({
         return { position, sharedCount };
       })
       .filter(entry => entry.sharedCount > 0)
+      .filter(entry =>
+        matchesRoleFilter(
+          getRoleFilterValueFromCode(entry.position.code),
+          positionRoleFilter
+        )
+      )
       .sort((a, b) => {
         if (b.sharedCount !== a.sharedCount) return b.sharedCount - a.sharedCount;
         return a.position.code.localeCompare(b.position.code);
       });
-  }, [overlapData, selectedPositionIds, candidateIdsByPosition, selectedCandidateIds]);
+  }, [overlapData, selectedPositionIds, candidateIdsByPosition, selectedCandidateIds, positionRoleFilter]);
 
   const sortedPositions = useMemo(
     () => [...positions].sort((a, b) => a.code.localeCompare(b.code)),
@@ -3348,13 +3405,24 @@ const OverlapKanbanView = ({
       const matchesSearch = !term || haystack.includes(term);
       const level = getPositionLevel(pos);
       const matchesLevel = positionLevelFilter === "ALL" || level?.code === positionLevelFilter;
-      return matchesSearch && matchesLevel;
+      const matchesRole = matchesRoleFilter(
+        getRoleFilterValueFromCode(pos.code),
+        positionRoleFilter
+      );
+      return matchesSearch && matchesLevel && matchesRole;
     });
-  }, [positionSearch, sortedPositions, positionLevelFilter]);
+  }, [positionSearch, sortedPositions, positionLevelFilter, positionRoleFilter]);
 
   const selectedPositions = useMemo(
-    () => sortedPositions.filter(pos => selectedPositionIds.includes(pos.code)),
-    [sortedPositions, selectedPositionIds]
+    () =>
+      sortedPositions.filter(pos => {
+        if (!selectedPositionIds.includes(pos.code)) return false;
+        return matchesRoleFilter(
+          getRoleFilterValueFromCode(pos.code),
+          positionRoleFilter
+        );
+      }),
+    [sortedPositions, selectedPositionIds, positionRoleFilter]
   );
 
   const handleTogglePosition = (code: string) => {
@@ -3366,7 +3434,7 @@ const OverlapKanbanView = ({
   };
 
   const handleSelectAll = () => {
-    onSelectedPositionsChange(sortedPositions.map(pos => pos.code));
+    onSelectedPositionsChange(filteredPositions.map(pos => pos.code));
   };
 
   const handleClearAll = () => {
@@ -3508,6 +3576,9 @@ const OverlapKanbanView = ({
     return positions
       .filter(position => !!evaluations[`${position.code}_${focusedCandidateId}`])
       .filter(position => !selectedPositionIds.includes(position.code))
+      .filter(position =>
+        matchesRoleFilter(getRoleFilterValueFromCode(position.code), positionRoleFilter)
+      )
       .map(position => ({
         position,
         overlapCount: getOverlapCountForPosition(position.code)
@@ -3516,7 +3587,14 @@ const OverlapKanbanView = ({
         if (b.overlapCount !== a.overlapCount) return b.overlapCount - a.overlapCount;
         return a.position.code.localeCompare(b.position.code);
       });
-  }, [focusedCandidateId, positions, evaluations, selectedPositionIds, getOverlapCountForPosition]);
+  }, [
+    focusedCandidateId,
+    positions,
+    evaluations,
+    selectedPositionIds,
+    getOverlapCountForPosition,
+    positionRoleFilter
+  ]);
 
   const matchDrawerCandidate = matchDrawerData
     ? candidateById.get(matchDrawerData.candidateId) ?? null
@@ -3711,6 +3789,20 @@ const OverlapKanbanView = ({
                   ))}
                 </select>
               </div>
+              <div className="flex items-center gap-2 text-xs text-slate-600">
+                <User className="w-3.5 h-3.5 text-slate-400" />
+                <select
+                  className="w-full border border-slate-200 rounded-md py-2 px-2 text-xs text-slate-600 focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                  value={positionRoleFilter}
+                  onChange={(event) => setPositionRoleFilter(event.target.value as RoleFilterValue)}
+                >
+                  {ROLE_FILTER_OPTIONS.map(option => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div className="space-y-2">
                 {filteredPositions.map(pos => {
                   const totalCandidates = candidateIdsByPosition.get(pos.code)?.size ?? 0;
@@ -3748,6 +3840,21 @@ const OverlapKanbanView = ({
         </aside>
 
         <div className="flex-1 overflow-x-hidden p-6 pt-20 min-w-0">
+          <div className="flex items-center gap-2 text-xs text-slate-600 mb-4">
+            <User className="w-3.5 h-3.5 text-slate-400" />
+            <span className="text-slate-500">Filtro candidati</span>
+            <select
+              className="border border-slate-200 rounded-md py-2 px-2 text-xs text-slate-600 focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+              value={candidateRoleFilter}
+              onChange={(event) => setCandidateRoleFilter(event.target.value as RoleFilterValue)}
+            >
+              {ROLE_FILTER_OPTIONS.map(option => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
           {selectedPositions.length === 0 ? (
             <div className="h-full flex items-center justify-center text-slate-500 text-sm">
               Seleziona almeno una posizione per vedere le candidature.
@@ -3762,9 +3869,12 @@ const OverlapKanbanView = ({
                   }))
                   .filter(entry => entry.evaluation);
 
-                const filteredCandidates = positionCandidates.filter(({ evaluation }) =>
-                  onlyPossibleMatch ? matchesPossible(evaluation!.status) : true
-                );
+                const filteredCandidates = positionCandidates.filter(({ candidate, evaluation }) => {
+                  const matchesStatus = onlyPossibleMatch ? matchesPossible(evaluation!.status) : true;
+                  const roleValue = getRoleFilterValueFromCode(candidate.role || "");
+                  const matchesRole = matchesRoleFilter(roleValue, candidateRoleFilter);
+                  return matchesStatus && matchesRole;
+                });
 
                 const selectedEntry = positionCandidates.find(({ evaluation }) => evaluation?.status === "selected");
                 const isDropDisabled =
@@ -4449,6 +4559,7 @@ const RecruitmentApp = () => {
   const [filterEnte, setFilterEnte] = useState("ALL");
   const [filterStatus, setFilterStatus] = useState<PositionStatus | 'all'>('all');
   const [filterLevel, setFilterLevel] = useState("ALL");
+  const [filterRole, setFilterRole] = useState<RoleFilterValue>("ALL");
   const [isNewCycleModalOpen, setIsNewCycleModalOpen] = useState(false);
   const [newCycleName, setNewCycleName] = useState("");
   const [backupError, setBackupError] = useState("");
@@ -4748,6 +4859,7 @@ const RecruitmentApp = () => {
         setFilterEnte("ALL");
         setFilterStatus('all');
         setFilterLevel("ALL");
+        setFilterRole("ALL");
         setSearchTerm("");
         setCurrentView(nextAppData.candidates.length && nextAppData.positions.length ? 'dashboard' : 'upload');
         setBackupSuccess("Backup caricato correttamente.");
@@ -4999,6 +5111,7 @@ const RecruitmentApp = () => {
     setFilterEnte("ALL");
     setFilterStatus('all');
     setFilterLevel("ALL");
+    setFilterRole("ALL");
     setSearchTerm("");
     setIsNewCycleModalOpen(false);
   };
@@ -5028,9 +5141,14 @@ const RecruitmentApp = () => {
       const level = getPositionLevel(position);
       const matchesLevel = filterLevel === "ALL" || level?.code === filterLevel;
 
-      return matchesSearch && matchesEnte && matchesStatus && matchesLevel;
+      const matchesRole = matchesRoleFilter(
+        getRoleFilterValueFromCode(position.code),
+        filterRole
+      );
+
+      return matchesSearch && matchesEnte && matchesStatus && matchesLevel && matchesRole;
     },
-    [lowerSearch, filterEnte, filterStatus, filterLevel, appData.evaluations]
+    [lowerSearch, filterEnte, filterStatus, filterLevel, filterRole, appData.evaluations]
   );
 
   const filteredPositions = useMemo(
@@ -5204,6 +5322,17 @@ const RecruitmentApp = () => {
                     {distinctLevels.map(level => (
                       <option key={level.code} value={level.code}>
                         {level.code} • {level.description}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    className="px-4 py-2 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    value={filterRole}
+                    onChange={(event) => setFilterRole(event.target.value as RoleFilterValue)}
+                  >
+                    {ROLE_FILTER_OPTIONS.map(option => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
                       </option>
                     ))}
                   </select>
