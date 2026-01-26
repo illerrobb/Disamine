@@ -2138,68 +2138,95 @@ const PROFILE_CODE_GROUPS: Record<string, string[]> = {
 
 const RANK_ORDER = ["TCOL", "MAGG", "CAP", "TEN", "STEN"];
 
+const POSITION_LEVEL_ORDER = ["BASSO", "MEDIO", "ELEVATO", "ELEVATISSIMO", "N.D."] as const;
+type PositionLevelType = (typeof POSITION_LEVEL_ORDER)[number];
+
 const getPositionLevel = (position: Position) => {
   const raw = position.poInterest?.trim();
-  if (!raw) return null;
+  if (!raw) {
+    return {
+      code: "N.D.",
+      description: "N.D.",
+      colorClass: "bg-slate-100 text-slate-600 border-slate-200",
+      type: "N.D." as PositionLevelType,
+      number: null as number | null
+    };
+  }
   const normalized = raw.toUpperCase().replace(/\s+/g, " ").trim();
-  const matchEe = normalized.match(/\bEE-?\s*(\d)\b/);
-  if (matchEe) {
-    const levelNum = matchEe[1];
+  if (normalized === "N.D." || normalized === "ND" || normalized.includes("N.D")) {
     return {
-      code: `EE-${levelNum}`,
-      description: `ELEVATISSIMO-${levelNum}`,
-      colorClass: levelNum === "3"
-        ? "bg-rose-100 text-rose-700 border-rose-200"
-        : levelNum === "2"
-          ? "bg-orange-100 text-orange-700 border-orange-200"
-          : "bg-amber-100 text-amber-700 border-amber-200"
+      code: "N.D.",
+      description: "N.D.",
+      colorClass: "bg-slate-100 text-slate-600 border-slate-200",
+      type: "N.D." as PositionLevelType,
+      number: null as number | null
     };
   }
-  const elevatissimoMatch = normalized.match(/ELEVATISSIMO\s*-?\s*(\d)/);
-  if (elevatissimoMatch) {
-    const levelNum = elevatissimoMatch[1];
+
+  const colorByType = (type: PositionLevelType) => {
+    switch (type) {
+      case "ELEVATISSIMO":
+        return "bg-rose-100 text-rose-700 border-rose-200";
+      case "ELEVATO":
+        return "bg-yellow-100 text-yellow-700 border-yellow-200";
+      case "MEDIO":
+        return "bg-emerald-100 text-emerald-700 border-emerald-200";
+      case "BASSO":
+        return "bg-slate-100 text-slate-600 border-slate-200";
+      default:
+        return "bg-slate-100 text-slate-600 border-slate-200";
+    }
+  };
+
+  const buildLevel = (type: PositionLevelType, number?: number | null) => {
+    const prefix = type === "ELEVATISSIMO"
+      ? "EE"
+      : type === "ELEVATO"
+        ? "E"
+        : type === "MEDIO"
+          ? "M"
+          : type === "BASSO"
+            ? "B"
+            : "N.D.";
+    const numericSuffix = number ? `-${number}` : "";
+    const description = number ? `${type}-${number}` : type;
     return {
-      code: `EE-${levelNum}`,
-      description: `ELEVATISSIMO-${levelNum}`,
-      colorClass: levelNum === "3"
-        ? "bg-rose-100 text-rose-700 border-rose-200"
-        : levelNum === "2"
-          ? "bg-orange-100 text-orange-700 border-orange-200"
-          : "bg-amber-100 text-amber-700 border-amber-200"
+      code: `${prefix}${numericSuffix}`,
+      description,
+      colorClass: colorByType(type),
+      type,
+      number: number ?? null
     };
+  };
+
+  const codeMatch = normalized.match(/\b(EE|E|M|B)\s*-?\s*(\d+)?\b/);
+  if (codeMatch) {
+    const code = codeMatch[1];
+    const number = codeMatch[2] ? Number(codeMatch[2]) : null;
+    const type =
+      code === "EE"
+        ? "ELEVATISSIMO"
+        : code === "E"
+          ? "ELEVATO"
+          : code === "M"
+            ? "MEDIO"
+            : "BASSO";
+    return buildLevel(type as PositionLevelType, number);
   }
-  if (normalized.includes("ELEVATISSIMO")) {
-    return {
-      code: "EE",
-      description: "ELEVATISSIMO",
-      colorClass: "bg-rose-100 text-rose-700 border-rose-200"
-    };
+
+  const textMatch = normalized.match(/\b(BASSO|MEDIO|ELEVATO|ELEVATISSIMO)\b\s*-?\s*(\d+)?/);
+  if (textMatch) {
+    const type = textMatch[1] as PositionLevelType;
+    const number = textMatch[2] ? Number(textMatch[2]) : null;
+    return buildLevel(type, number);
   }
-  if (normalized.includes("ELEVATO")) {
-    return {
-      code: "E",
-      description: "ELEVATO",
-      colorClass: "bg-yellow-100 text-yellow-700 border-yellow-200"
-    };
-  }
-  if (normalized.includes("MEDIO")) {
-    return {
-      code: "M",
-      description: "MEDIO",
-      colorClass: "bg-emerald-100 text-emerald-700 border-emerald-200"
-    };
-  }
-  if (normalized.includes("BASSO")) {
-    return {
-      code: "B",
-      description: "BASSO",
-      colorClass: "bg-slate-100 text-slate-600 border-slate-200"
-    };
-  }
+
   return {
     code: normalized,
     description: normalized,
-    colorClass: "bg-slate-100 text-slate-600 border-slate-200"
+    colorClass: "bg-slate-100 text-slate-600 border-slate-200",
+    type: "N.D." as PositionLevelType,
+    number: null as number | null
   };
 };
 
@@ -2224,7 +2251,23 @@ const getDistinctPositionLevels = (positions: Position[]) => {
       map.set(level.code, level);
     }
   });
-  return Array.from(map.values()).sort((a, b) => a.code.localeCompare(b.code));
+  if (!map.has("N.D.")) {
+    map.set("N.D.", {
+      code: "N.D.",
+      description: "N.D.",
+      colorClass: "bg-slate-100 text-slate-600 border-slate-200",
+      type: "N.D.",
+      number: null
+    });
+  }
+  return Array.from(map.values()).sort((a, b) => {
+    const orderA = POSITION_LEVEL_ORDER.indexOf(a.type);
+    const orderB = POSITION_LEVEL_ORDER.indexOf(b.type);
+    if (orderA !== orderB) return orderA - orderB;
+    const numberA = a.number ?? 0;
+    const numberB = b.number ?? 0;
+    return numberA - numberB;
+  });
 };
 
 const normalizeProfileCode = (value: string) =>
