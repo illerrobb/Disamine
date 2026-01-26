@@ -1179,14 +1179,9 @@ const StatusPicker = ({
           <button
             type="button"
             onClick={() => handleSelect("selected")}
-            disabled={!!otherSelection && status !== "selected"}
-            className={`w-full text-left text-xs px-2 py-1 rounded ${
-              !!otherSelection && status !== "selected"
-                ? "text-slate-300 cursor-not-allowed"
-                : "hover:bg-slate-50"
-            }`}
+            className="w-full text-left text-xs px-2 py-1 rounded hover:bg-slate-50"
           >
-            {!!otherSelection && status !== "selected" ? "GIÀ SELEZIONATO" : "SELECTED"}
+            SELECTED
           </button>
           <button
             type="button"
@@ -1550,9 +1545,7 @@ const CandidatesMatrixView = ({
                       className={`w-full text-[10px] font-bold uppercase px-1 py-1 rounded border appearance-none cursor-pointer focus:outline-none ${getStatusColor(ev.status)}`}
                      >
                        <option value="pending">PENDING</option>
-                       <option value="selected" disabled={!!otherSelection && ev.status !== 'selected'}>
-                          {!!otherSelection && ev.status !== 'selected' ? 'GIÀ SELEZIONATO' : 'SELECTED'}
-                       </option>
+                       <option value="selected">SELECTED</option>
                        <option value="reserve">POSSIBILE MATCH</option>
                        <option value="rejected">REJECTED</option>
                        <option value="non-compatible">NON COMPATIBILE</option>
@@ -1724,9 +1717,7 @@ const WorksheetRow: React.FC<{
             className={`text-xs font-semibold px-2 py-1 rounded border appearance-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-offset-1 ${getStatusColor(evaluation.status)}`}
            >
              <option value="pending">PENDING</option>
-             <option value="selected" disabled={!!otherSelection && evaluation.status !== 'selected'}>
-               {!!otherSelection && evaluation.status !== 'selected' ? 'GIÀ SELEZIONATO' : 'SELECTED'}
-             </option>
+             <option value="selected">SELECTED</option>
              <option value="reserve">POSSIBILE MATCH</option>
              <option value="rejected">REJECTED</option>
              <option value="non-compatible">NON COMPATIBILE</option>
@@ -3280,6 +3271,12 @@ const OverlapKanbanView = ({
                             desirableTotal,
                             desirableScore
                           } = getRequirementScores(evaluation, position);
+                          const otherSelection = getOtherSelectionInfo(
+                            candidate.id,
+                            position.code,
+                            evaluations,
+                            positions
+                          );
 
                           return (
                             <div
@@ -3294,10 +3291,34 @@ const OverlapKanbanView = ({
                                   : "border-slate-200"
                               }`}
                             >
-                          <div className="flex items-start justify-between gap-2 min-w-0">
+                              <div className="flex items-start justify-between gap-2 min-w-0">
                                 <div className="min-w-0">
-                                  <div className="font-semibold text-slate-800 text-sm break-words">
-                                    {candidate.nominativo}
+                                  <div className="flex items-start gap-2">
+                                    <div className="font-semibold text-slate-800 text-sm break-words">
+                                      {candidate.nominativo}
+                                    </div>
+                                    {otherSelection && (
+                                      <div className="relative group">
+                                        <button
+                                          type="button"
+                                          onClick={(event) => event.stopPropagation()}
+                                          onPointerDown={(event) => event.stopPropagation()}
+                                          className="text-amber-500 hover:text-amber-600 focus:outline-none"
+                                          aria-label={`Selezionato per ${otherSelection.code}`}
+                                        >
+                                          <AlertTriangle className="w-4 h-4" />
+                                        </button>
+                                        <div className="absolute right-0 mt-2 w-56 rounded-md border border-amber-200 bg-white shadow-lg p-2 text-[11px] text-amber-700 opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto z-20">
+                                          <div className="font-semibold text-amber-800">
+                                            Già selezionato altrove
+                                          </div>
+                                          <div className="mt-1">
+                                            <span className="font-mono">{otherSelection.code}</span>{" "}
+                                            <span className="text-amber-600">• {otherSelection.title}</span>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    )}
                                   </div>
                                   <div className="text-[10px] text-slate-500 mt-0.5 break-words">
                                     {candidate.rank} • {candidate.role} {candidate.category} {candidate.specialty}
@@ -3851,13 +3872,20 @@ const RecruitmentApp = () => {
       if (ev.status === 'selected') {
          Object.values(newEvaluations).forEach((val) => {
             const existingEv = val as Evaluation;
-            if (existingEv.positionId === ev.positionId && existingEv.candidateId !== ev.candidateId && existingEv.status === 'selected') {
+            if (existingEv.status !== 'selected') return;
+            if (existingEv.positionId === ev.positionId && existingEv.candidateId !== ev.candidateId) {
                // Clone the object to ensure React state updates correctly, 
                // though strictly speaking we are already working on a shallow copy of the dictionary
                newEvaluations[`${existingEv.positionId}_${existingEv.candidateId}`] = {
                   ...existingEv,
                   status: 'pending' // Revert to pending
                };
+            }
+            if (existingEv.candidateId === ev.candidateId && existingEv.positionId !== ev.positionId) {
+              newEvaluations[`${existingEv.positionId}_${existingEv.candidateId}`] = {
+                ...existingEv,
+                status: 'pending'
+              };
             }
          });
       }
