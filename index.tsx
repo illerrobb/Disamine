@@ -2316,6 +2316,12 @@ const normalizeProfileCode = (value: string) =>
     .replace(/[\s.]/g, "")
     .replace(/[^A-Z0-9]/g, "");
 
+const splitRoleOptions = (value: string) =>
+  value
+    .split(/[\/\n,]+/)
+    .map(part => part.trim())
+    .filter(Boolean);
+
 const isArmiCode = (code: string) =>
   code.startsWith("AARA") || code.startsWith("AARAN") || code.startsWith("AARAS");
 
@@ -2336,6 +2342,30 @@ const getRoleFilterValueFromCode = (rawCode: string): RoleFilterValue | null => 
 
 const matchesRoleFilter = (role: RoleFilterValue | null, filter: RoleFilterValue) =>
   filter === "ALL" || role === filter;
+
+const getPositionRoleFilters = (position: Position) => {
+  const sources = [position.catSpecQualReq, position.title, position.code].filter(Boolean);
+  const roles = new Set<RoleFilterValue>();
+
+  sources.forEach(source => {
+    splitRoleOptions(source)
+      .map(option => normalizeProfileCode(option))
+      .forEach(option => {
+        const roleValue = getRoleFilterValueFromCode(option);
+        if (roleValue) {
+          roles.add(roleValue);
+        }
+      });
+  });
+
+  return roles;
+};
+
+const matchesPositionRoleFilter = (position: Position, filter: RoleFilterValue) => {
+  if (filter === "ALL") return true;
+  const roles = getPositionRoleFilters(position);
+  return roles.has(filter);
+};
 
 const parseProfileOption = (option: string) => {
   const tokens = option.split(/\s+/).filter(Boolean);
@@ -3379,12 +3409,7 @@ const OverlapKanbanView = ({
         return { position, sharedCount };
       })
       .filter(entry => entry.sharedCount > 0)
-      .filter(entry =>
-        matchesRoleFilter(
-          getRoleFilterValueFromCode(entry.position.code),
-          positionRoleFilter
-        )
-      )
+      .filter(entry => matchesPositionRoleFilter(entry.position, positionRoleFilter))
       .sort((a, b) => {
         if (b.sharedCount !== a.sharedCount) return b.sharedCount - a.sharedCount;
         return a.position.code.localeCompare(b.position.code);
@@ -3405,10 +3430,7 @@ const OverlapKanbanView = ({
       const matchesSearch = !term || haystack.includes(term);
       const level = getPositionLevel(pos);
       const matchesLevel = positionLevelFilter === "ALL" || level?.code === positionLevelFilter;
-      const matchesRole = matchesRoleFilter(
-        getRoleFilterValueFromCode(pos.code),
-        positionRoleFilter
-      );
+      const matchesRole = matchesPositionRoleFilter(pos, positionRoleFilter);
       return matchesSearch && matchesLevel && matchesRole;
     });
   }, [positionSearch, sortedPositions, positionLevelFilter, positionRoleFilter]);
@@ -3417,10 +3439,7 @@ const OverlapKanbanView = ({
     () =>
       sortedPositions.filter(pos => {
         if (!selectedPositionIds.includes(pos.code)) return false;
-        return matchesRoleFilter(
-          getRoleFilterValueFromCode(pos.code),
-          positionRoleFilter
-        );
+        return matchesPositionRoleFilter(pos, positionRoleFilter);
       }),
     [sortedPositions, selectedPositionIds, positionRoleFilter]
   );
@@ -3576,9 +3595,7 @@ const OverlapKanbanView = ({
     return positions
       .filter(position => !!evaluations[`${position.code}_${focusedCandidateId}`])
       .filter(position => !selectedPositionIds.includes(position.code))
-      .filter(position =>
-        matchesRoleFilter(getRoleFilterValueFromCode(position.code), positionRoleFilter)
-      )
+      .filter(position => matchesPositionRoleFilter(position, positionRoleFilter))
       .map(position => ({
         position,
         overlapCount: getOverlapCountForPosition(position.code)
@@ -5141,10 +5158,7 @@ const RecruitmentApp = () => {
       const level = getPositionLevel(position);
       const matchesLevel = filterLevel === "ALL" || level?.code === filterLevel;
 
-      const matchesRole = matchesRoleFilter(
-        getRoleFilterValueFromCode(position.code),
-        filterRole
-      );
+      const matchesRole = matchesPositionRoleFilter(position, filterRole);
 
       return matchesSearch && matchesEnte && matchesStatus && matchesLevel && matchesRole;
     },
