@@ -3244,6 +3244,14 @@ const OverlapKanbanView = ({
   const [focusedCandidateId, setFocusedCandidateId] = useState<string | null>(null);
   const [openStatusEvaluationId, setOpenStatusEvaluationId] = useState<string | null>(null);
   const [isSuggestionsOpen, setIsSuggestionsOpen] = useState(true);
+  const dragPreviewRef = useRef<HTMLElement | null>(null);
+
+  const clearDragPreview = useCallback(() => {
+    if (dragPreviewRef.current) {
+      dragPreviewRef.current.remove();
+      dragPreviewRef.current = null;
+    }
+  }, []);
 
   const candidateIdsByPosition = useMemo(() => {
     const map = new Map<string, Set<string>>();
@@ -3366,14 +3374,42 @@ const OverlapKanbanView = ({
     (candidateId: string) => (event: React.DragEvent<HTMLDivElement>) => {
       event.dataTransfer.effectAllowed = "move";
       event.dataTransfer.setData("text/plain", candidateId);
+      const target = event.currentTarget as HTMLElement;
+      const rect = target.getBoundingClientRect();
+      clearDragPreview();
+      const dragPreview = target.cloneNode(true) as HTMLElement;
+      dragPreview.style.position = "fixed";
+      dragPreview.style.top = `${rect.top}px`;
+      dragPreview.style.left = `${rect.left}px`;
+      dragPreview.style.width = `${rect.width}px`;
+      dragPreview.style.margin = "0";
+      dragPreview.style.pointerEvents = "none";
+      dragPreview.style.zIndex = "9999";
+      dragPreview.style.boxShadow = "0 16px 30px rgba(15, 23, 42, 0.2)";
+      dragPreview.style.transform = "translateZ(0)";
+      dragPreview.style.opacity = "0.95";
+      document.body.appendChild(dragPreview);
+      event.dataTransfer.setDragImage(
+        dragPreview,
+        event.clientX - rect.left,
+        event.clientY - rect.top
+      );
+      dragPreviewRef.current = dragPreview;
       setDraggingCandidateId(candidateId);
     },
-    []
+    [clearDragPreview]
   );
 
   const handleDragEnd = useCallback(() => {
     setDraggingCandidateId(null);
-  }, []);
+    clearDragPreview();
+  }, [clearDragPreview]);
+
+  useEffect(() => {
+    if (!draggingCandidateId) {
+      clearDragPreview();
+    }
+  }, [draggingCandidateId, clearDragPreview]);
 
   const handleDragOverSlot = useCallback(
     (positionCode: string) => (event: React.DragEvent<HTMLDivElement>) => {
@@ -3688,7 +3724,7 @@ const OverlapKanbanView = ({
               Seleziona almeno una posizione per vedere le candidature.
             </div>
           ) : (
-            <div className="flex flex-wrap gap-4 items-start">
+            <div className="flex flex-wrap gap-4 items-start overflow-x-hidden">
               {selectedPositions.map(position => {
                 const positionCandidates = candidates
                   .map(candidate => ({
