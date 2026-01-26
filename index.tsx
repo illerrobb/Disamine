@@ -2020,6 +2020,64 @@ const PositionCard: React.FC<{
     completed: "Completed"
   };
   const level = getPositionLevel(position);
+  const triggerRef = useRef<HTMLDivElement | null>(null);
+  const tooltipRef = useRef<HTMLDivElement | null>(null);
+  const [isTriggerHovered, setIsTriggerHovered] = useState(false);
+  const [isTooltipHovered, setIsTooltipHovered] = useState(false);
+  const [tooltipPosition, setTooltipPosition] = useState<{ top: number; left: number } | null>(null);
+  const isTooltipOpen = isTriggerHovered || isTooltipHovered;
+
+  const handleTriggerMouseLeave = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    const relatedTarget = event.relatedTarget as Node | null;
+    if (relatedTarget && tooltipRef.current?.contains(relatedTarget)) {
+      return;
+    }
+    setIsTriggerHovered(false);
+  }, []);
+
+  const handleTooltipMouseLeave = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    const relatedTarget = event.relatedTarget as Node | null;
+    if (relatedTarget && triggerRef.current?.contains(relatedTarget)) {
+      return;
+    }
+    setIsTooltipHovered(false);
+  }, []);
+
+  const updateTooltipPosition = useCallback(() => {
+    const trigger = triggerRef.current;
+    const tooltip = tooltipRef.current;
+    if (!trigger || !tooltip) return;
+
+    const triggerRect = trigger.getBoundingClientRect();
+    const tooltipRect = tooltip.getBoundingClientRect();
+    const margin = 8;
+
+    let top = triggerRect.top - tooltipRect.height - margin;
+    if (top < margin) {
+      top = triggerRect.bottom + margin;
+    }
+
+    let left = triggerRect.right - tooltipRect.width;
+    left = Math.min(Math.max(margin, left), window.innerWidth - tooltipRect.width - margin);
+
+    setTooltipPosition({ top, left });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!isTooltipOpen) return;
+    updateTooltipPosition();
+  }, [isTooltipOpen, updateTooltipPosition, candidateCount, candidatesList.length]);
+
+  useEffect(() => {
+    if (!isTooltipOpen) return;
+    const handleUpdate = () => updateTooltipPosition();
+    window.addEventListener("resize", handleUpdate);
+    window.addEventListener("scroll", handleUpdate, true);
+    return () => {
+      window.removeEventListener("resize", handleUpdate);
+      window.removeEventListener("scroll", handleUpdate, true);
+    };
+  }, [isTooltipOpen, updateTooltipPosition]);
 
   return (
     <div 
@@ -2088,24 +2146,46 @@ const PositionCard: React.FC<{
       <div className="bg-slate-50 px-5 py-3 border-t border-slate-100 flex items-center justify-between text-sm">
          <span className="text-slate-500">Candidates</span>
          <div 
-            className="flex items-center gap-2 group relative" 
+            className="flex items-center gap-2" 
+            ref={triggerRef}
             title={candidatesList.map(c => `${c.rank} ${c.role} ${c.category} ${c.specialty} - ${c.nominativo}`).join('\n')}
+            onMouseEnter={() => setIsTriggerHovered(true)}
+            onMouseLeave={handleTriggerMouseLeave}
+            onFocus={() => setIsTriggerHovered(true)}
+            onBlur={() => setIsTriggerHovered(false)}
+            tabIndex={0}
          >
            <Users className="w-4 h-4 text-slate-400" />
            <span className="font-bold text-slate-700">{candidateCount}</span>
-           
-           {/* Custom Tooltip via CSS */}
-           <div className="hidden group-hover:block absolute bottom-full right-0 mb-2 w-72 bg-slate-800 text-white text-[10px] p-2 rounded shadow-lg z-50 whitespace-pre-wrap max-h-64 overflow-y-auto">
-              <div className="font-bold border-b border-slate-600 pb-1 mb-1 text-slate-300">Papabili ({candidateCount})</div>
-              {candidatesList.map(c => (
-                 <div key={c.id} className="mb-1 border-b border-slate-700 pb-1 last:border-0">
-                    <span className="text-slate-400">{c.rank}</span> <span className="font-semibold">{c.nominativo}</span><br/>
-                    <span className="text-slate-500 italic">{c.role} {c.category} {c.specialty}</span>
-                 </div>
-              ))}
-           </div>
          </div>
       </div>
+      {isTooltipOpen &&
+        createPortal(
+          <div
+            ref={tooltipRef}
+            className="fixed z-[60] w-72 rounded bg-slate-800 text-white text-[10px] p-2 shadow-lg whitespace-pre-wrap max-h-64 overflow-y-auto"
+            style={{
+              top: tooltipPosition?.top ?? 0,
+              left: tooltipPosition?.left ?? 0,
+              visibility: tooltipPosition ? "visible" : "hidden"
+            }}
+            onMouseEnter={() => setIsTooltipHovered(true)}
+            onMouseLeave={handleTooltipMouseLeave}
+          >
+            <div className="font-bold border-b border-slate-600 pb-1 mb-1 text-slate-300">
+              Papabili ({candidateCount})
+            </div>
+            {candidatesList.map(c => (
+              <div key={c.id} className="mb-1 border-b border-slate-700 pb-1 last:border-0">
+                <span className="text-slate-400">{c.rank}</span>{" "}
+                <span className="font-semibold">{c.nominativo}</span>
+                <br />
+                <span className="text-slate-500 italic">{c.role} {c.category} {c.specialty}</span>
+              </div>
+            ))}
+          </div>,
+          document.body
+        )}
     </div>
   );
 };
