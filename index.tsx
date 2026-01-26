@@ -2094,6 +2094,7 @@ const getStyledXlsx = () => {
 const PROFILE_CODE_GROUPS: Record<string, string[]> = {
   AA: ["AARAN", "AARAS", "AARNN", "AARNS"],
   AARA: ["AARAN", "AARAS"],
+  AARN: ["AARNN", "AARNS"],
   GA: ["GARN", "GARS"]
 };
 
@@ -2130,12 +2131,24 @@ const buildCandidateProfile = (candidate: Candidate) => {
   const roleCode = normalizeProfileCode(candidate.role || "");
   const categoryCode = normalizeProfileCode(candidate.category || "");
   const specialtyCode = normalizeProfileCode(candidate.specialty || "");
+  const profileCodes = new Set<string>();
+
+  if (roleCode) {
+    profileCodes.add(roleCode);
+    if (roleCode.length >= 4) {
+      profileCodes.add(`${roleCode.slice(0, 2)}${roleCode.slice(2, 4)}`);
+    }
+  }
+
+  if (roleCode.length === 2 && categoryCode) {
+    profileCodes.add(`${roleCode}${categoryCode}`);
+  }
 
   return {
     roleCode,
     categoryCode,
     specialtyCode,
-    profileCode: `${roleCode}${categoryCode}`,
+    profileCodes: Array.from(profileCodes),
     fullCode: `${roleCode}${categoryCode}${specialtyCode}`
   };
 };
@@ -2175,10 +2188,10 @@ const profileMatchesRequirement = (candidate: Candidate, requirementRaw: string)
     }
 
     if (parsed.hasCategory) {
-      return matchesProfileCode(parsed.profileCode, candidateProfile.profileCode);
+      return candidateProfile.profileCodes.some(code => matchesProfileCode(parsed.profileCode, code));
     }
 
-    return matchesProfileCode(parsed.roleCode, candidateProfile.roleCode);
+    return candidateProfile.profileCodes.some(code => matchesProfileCode(parsed.roleCode, code));
   });
 };
 
