@@ -3503,7 +3503,7 @@ const OverlapKanbanView = ({
             </div>
           </div>
           {isSuggestionsOpen && (
-            <div className="px-3 pb-3 space-y-2 h-64 overflow-y-auto">
+            <div className="px-3 pb-3 space-y-2 max-h-64 overflow-y-auto">
               {focusedCandidateId && candidateOverlapSuggestions.length === 0 && (
                 <p className="text-xs text-slate-400 italic">
                   Nessuna posizione suggerita per il candidato selezionato.
