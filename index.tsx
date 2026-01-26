@@ -2129,6 +2129,35 @@ const getStyledXlsx = () => {
   return XLSX;
 };
 
+const readExcelFiles = async (files: File[], label: string) => {
+  const XLSX = getStyledXlsx();
+  const readExcel = (file: File) => {
+    return new Promise<any[]>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = e.target?.result;
+          const workbook = XLSX.read(data, { type: "binary", cellDates: true });
+          const firstSheetName = workbook.SheetNames[0];
+          console.log(`[readExcel:${label}] Sheet names:`, workbook.SheetNames);
+          console.log(`[readExcel:${label}] First sheet name:`, firstSheetName);
+          const worksheet = workbook.Sheets[firstSheetName];
+          const json = XLSX.utils.sheet_to_json(worksheet, { raw: true });
+          console.log(`[readExcel:${label}] Sample keys:`, Object.keys(json[0] || {}));
+          resolve(json);
+        } catch (err) {
+          reject(err);
+        }
+      };
+      reader.onerror = reject;
+      reader.readAsBinaryString(file);
+    });
+  };
+
+  const data = await Promise.all(files.map((file) => readExcel(file)));
+  return data.flat();
+};
+
 const PROFILE_CODE_GROUPS: Record<string, string[]> = {
   AA: ["AARAN", "AARAS", "AARNN", "AARNS"],
   AARA: ["AARAN", "AARAS"],
@@ -2774,38 +2803,10 @@ const FileUploadView = ({ onDataLoaded }: { onDataLoaded: (c: Candidate[], p: Po
     setError("");
 
     try {
-      const XLSX = getStyledXlsx();
-
-      const readExcel = (file: File) => {
-        return new Promise<any[]>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = (e) => {
-            try {
-              const data = e.target?.result;
-              const workbook = XLSX.read(data, { type: 'binary', cellDates: true });
-              const firstSheetName = workbook.SheetNames[0];
-              console.log("[readExcel] Sheet names:", workbook.SheetNames);
-              console.log("[readExcel] First sheet name:", firstSheetName);
-              const worksheet = workbook.Sheets[firstSheetName];
-              const json = XLSX.utils.sheet_to_json(worksheet, { raw: true });
-              console.log("[readExcel] Sample keys:", Object.keys(json[0] || {}));
-              resolve(json);
-            } catch (err) {
-              reject(err);
-            }
-          };
-          reader.onerror = reject;
-          reader.readAsBinaryString(file);
-        });
-      };
-
-      const [cData, pData] = await Promise.all([
-        Promise.all(candidatesFiles.map((file) => readExcel(file))),
-        Promise.all(positionsFiles.map((file) => readExcel(file)))
+      const [candidatesRows, positionsRows] = await Promise.all([
+        readExcelFiles(candidatesFiles, "candidati"),
+        readExcelFiles(positionsFiles, "posizioni")
       ]);
-
-      const candidatesRows = cData.flat();
-      const positionsRows = pData.flat();
       const candidatesResult = parseCandidates(candidatesRows);
       const positionsResult = parsePositions(positionsRows);
 
@@ -2886,6 +2887,230 @@ const FileUploadView = ({ onDataLoaded }: { onDataLoaded: (c: Candidate[], p: Po
         </Button>
       </div>
     </div>
+  );
+};
+
+const SettingsPanel = ({
+  isOpen,
+  onClose,
+  candidatesCount,
+  positionsCount,
+  onSelectCandidatesFiles,
+  onSelectPositionsFiles,
+  onClearCandidates,
+  onClearPositions,
+  onExportBackup,
+  onBackupUpload,
+  backupError,
+  backupSuccess,
+  fileError,
+  fileSuccess,
+  isProcessing,
+  onResetData
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  candidatesCount: number;
+  positionsCount: number;
+  onSelectCandidatesFiles: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  onSelectPositionsFiles: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  onClearCandidates: () => void;
+  onClearPositions: () => void;
+  onExportBackup: () => void;
+  onBackupUpload: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  backupError: string;
+  backupSuccess: string;
+  fileError: string;
+  fileSuccess: string;
+  isProcessing: boolean;
+  onResetData: () => void;
+}) => {
+  const candidatesInputRef = useRef<HTMLInputElement | null>(null);
+  const positionsInputRef = useRef<HTMLInputElement | null>(null);
+  const backupInputRef = useRef<HTMLInputElement | null>(null);
+
+  if (!isOpen) return null;
+
+  return createPortal(
+    <div className="fixed inset-0 z-50">
+      <div className="absolute inset-0 bg-slate-900/60" onClick={onClose} />
+      <div
+        className="absolute right-0 top-0 h-full w-full max-w-xl bg-white shadow-xl flex flex-col"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-slate-800">Impostazioni</h2>
+            <p className="text-xs text-slate-500">Gestisci file utilizzati, backup e reset.</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-slate-400 hover:text-slate-600"
+            aria-label="Chiudi impostazioni"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+          <section className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-700 uppercase tracking-wide">File utilizzati</h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  Gestisci i file di persone e posizioni caricati nel ciclo corrente.
+                </p>
+              </div>
+              <span className="text-xs text-slate-400">Dati correnti</span>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="border border-slate-200 rounded-lg p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-semibold text-slate-700">File persone</div>
+                  <span className="text-xs text-slate-500">{candidatesCount} profili</span>
+                </div>
+                <div className="text-xs text-slate-500">
+                  Aggiungi nuovi file Excel per integrare o aggiornare i candidati presenti.
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Button
+                    variant="secondary"
+                    className="justify-center"
+                    disabled={isProcessing}
+                    onClick={() => candidatesInputRef.current?.click()}
+                  >
+                    <Upload className="w-4 h-4" /> Aggiungi file persone
+                  </Button>
+                  <button
+                    type="button"
+                    onClick={onClearCandidates}
+                    className="text-xs text-red-500 hover:text-red-600"
+                  >
+                    Elimina tutti i dati persone
+                  </button>
+                  <input
+                    ref={candidatesInputRef}
+                    type="file"
+                    accept=".xlsx,.xls"
+                    multiple
+                    className="hidden"
+                    onChange={onSelectCandidatesFiles}
+                  />
+                </div>
+              </div>
+
+              <div className="border border-slate-200 rounded-lg p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-semibold text-slate-700">File posizioni</div>
+                  <span className="text-xs text-slate-500">{positionsCount} posizioni</span>
+                </div>
+                <div className="text-xs text-slate-500">
+                  Aggiungi nuovi file Excel per integrare o aggiornare le posizioni.
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Button
+                    variant="secondary"
+                    className="justify-center"
+                    disabled={isProcessing}
+                    onClick={() => positionsInputRef.current?.click()}
+                  >
+                    <Upload className="w-4 h-4" /> Aggiungi file posizioni
+                  </Button>
+                  <button
+                    type="button"
+                    onClick={onClearPositions}
+                    className="text-xs text-red-500 hover:text-red-600"
+                  >
+                    Elimina tutti i dati posizioni
+                  </button>
+                  <input
+                    ref={positionsInputRef}
+                    type="file"
+                    accept=".xlsx,.xls"
+                    multiple
+                    className="hidden"
+                    onChange={onSelectPositionsFiles}
+                  />
+                </div>
+              </div>
+            </div>
+            {(fileError || fileSuccess) && (
+              <div
+                className={`text-xs rounded-md px-3 py-2 flex items-center gap-2 border ${
+                  fileError ? "text-red-600 bg-red-50 border-red-200" : "text-emerald-600 bg-emerald-50 border-emerald-200"
+                }`}
+              >
+                {fileError ? <AlertTriangle className="w-3 h-3" /> : <Check className="w-3 h-3" />}
+                {fileError || fileSuccess}
+              </div>
+            )}
+          </section>
+
+          <section className="space-y-3">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-700 uppercase tracking-wide">Gestione backup</h3>
+              <p className="text-xs text-slate-500 mt-1">
+                Scarica o carica un backup completo delle impostazioni correnti.
+              </p>
+            </div>
+            <div className="flex flex-col gap-2">
+              <Button variant="secondary" className="justify-center" onClick={onExportBackup}>
+                <Download className="w-4 h-4" /> Scarica backup
+              </Button>
+              <Button
+                variant="secondary"
+                className="justify-center"
+                onClick={() => backupInputRef.current?.click()}
+              >
+                <Upload className="w-4 h-4" /> Carica backup
+              </Button>
+              <input
+                ref={backupInputRef}
+                type="file"
+                accept=".json,application/json"
+                className="hidden"
+                onChange={onBackupUpload}
+              />
+              {backupError && (
+                <div className="text-xs text-red-600 flex items-center gap-2">
+                  <AlertTriangle className="w-3 h-3" /> {backupError}
+                </div>
+              )}
+              {backupSuccess && !backupError && (
+                <div className="text-xs text-emerald-600 flex items-center gap-2">
+                  <Check className="w-3 h-3" /> {backupSuccess}
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section className="space-y-3">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-700 uppercase tracking-wide">Reset data</h3>
+              <p className="text-xs text-slate-500 mt-1">
+                Cancella tutte le valutazioni e ripristina lo stato iniziale del ciclo.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onResetData}
+              className="inline-flex items-center gap-2 text-red-500 hover:text-red-600 text-sm font-semibold"
+            >
+              <Trash2 className="w-4 h-4" /> Reset data
+            </button>
+          </section>
+        </div>
+
+        <div className="px-6 py-4 border-t border-slate-200 flex justify-end">
+          <Button variant="secondary" onClick={onClose}>
+            Chiudi
+          </Button>
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 };
 
@@ -4150,7 +4375,10 @@ const RecruitmentApp = () => {
   const [backupError, setBackupError] = useState("");
   const [backupSuccess, setBackupSuccess] = useState("");
   const [lastImportStats, setLastImportStats] = useState<ImportStats | null>(null);
-  const backupInputRef = useRef<HTMLInputElement | null>(null);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsFileError, setSettingsFileError] = useState("");
+  const [settingsFileSuccess, setSettingsFileSuccess] = useState("");
+  const [isSettingsProcessing, setIsSettingsProcessing] = useState(false);
 
   // Load from LocalStorage
   useEffect(() => {
@@ -4462,6 +4690,207 @@ const RecruitmentApp = () => {
     event.target.value = "";
   };
 
+  const appendCandidatesFromFiles = async (files: File[]) => {
+    setSettingsFileError("");
+    setSettingsFileSuccess("");
+    setIsSettingsProcessing(true);
+    try {
+      const candidatesRows = await readExcelFiles(files, "candidati-aggiunta");
+      const candidatesResult = parseCandidates(candidatesRows);
+      if (candidatesResult.items.length === 0) {
+        throw new Error("Nessun candidato valido nei file selezionati.");
+      }
+
+      let addedCount = 0;
+      setAppData((prev) => {
+        const existingById = new Map(prev.candidates.map((candidate) => [candidate.id, candidate]));
+        const newEvaluations: Record<string, Evaluation> = { ...prev.evaluations };
+
+        candidatesResult.items.forEach((candidate) => {
+          if (existingById.has(candidate.id)) {
+            return;
+          }
+          candidate.appliedPositionCodes = [];
+          const rawApp = candidate.rawAppliedString.toUpperCase();
+          prev.positions.forEach((pos) => {
+            const cleanPosCode = pos.code.trim().toUpperCase();
+            if (cleanPosCode.length < 2) return;
+            if (rawApp.includes(cleanPosCode)) {
+              candidate.appliedPositionCodes.push(pos.code);
+              const key = `${pos.code}_${candidate.id}`;
+              if (!newEvaluations[key]) {
+                newEvaluations[key] = {
+                  candidateId: candidate.id,
+                  positionId: pos.code,
+                  reqEvaluations: {},
+                  notes: "",
+                  status: "pending"
+                };
+              }
+            }
+          });
+          existingById.set(candidate.id, candidate);
+          addedCount += 1;
+        });
+
+        if (addedCount === 0) return prev;
+
+        return {
+          ...prev,
+          candidates: Array.from(existingById.values()),
+          evaluations: newEvaluations,
+          lastUpdated: Date.now()
+        };
+      });
+
+      setLastImportStats({
+        candidates: {
+          imported: candidatesResult.items.length,
+          duplicates: candidatesResult.duplicateCount,
+          totalRows: candidatesResult.totalRows
+        },
+        positions: { imported: 0, duplicates: 0, totalRows: 0 }
+      });
+
+      setSettingsFileSuccess(
+        addedCount > 0
+          ? `Aggiunti ${addedCount} nuovi candidati.`
+          : "Nessun nuovo candidato da aggiungere."
+      );
+    } catch (error: any) {
+      console.error(error);
+      setSettingsFileError(error.message || "Errore durante l'aggiunta dei candidati.");
+    } finally {
+      setIsSettingsProcessing(false);
+    }
+  };
+
+  const appendPositionsFromFiles = async (files: File[]) => {
+    setSettingsFileError("");
+    setSettingsFileSuccess("");
+    setIsSettingsProcessing(true);
+    try {
+      const positionsRows = await readExcelFiles(files, "posizioni-aggiunta");
+      const positionsResult = parsePositions(positionsRows);
+      if (positionsResult.items.length === 0) {
+        throw new Error("Nessuna posizione valida nei file selezionati.");
+      }
+
+      let addedCount = 0;
+      setAppData((prev) => {
+        const positionsByCode = new Map(prev.positions.map((pos) => [pos.code, pos]));
+        const newEvaluations: Record<string, Evaluation> = { ...prev.evaluations };
+        const updatedCandidates = prev.candidates.map((candidate) => ({
+          ...candidate,
+          appliedPositionCodes: [...candidate.appliedPositionCodes]
+        }));
+
+        positionsResult.items.forEach((position) => {
+          if (positionsByCode.has(position.code)) {
+            return;
+          }
+          positionsByCode.set(position.code, position);
+          addedCount += 1;
+          const cleanPosCode = position.code.trim().toUpperCase();
+          if (cleanPosCode.length < 2) return;
+          updatedCandidates.forEach((candidate) => {
+            const rawApp = candidate.rawAppliedString.toUpperCase();
+            if (rawApp.includes(cleanPosCode)) {
+              if (!candidate.appliedPositionCodes.includes(position.code)) {
+                candidate.appliedPositionCodes.push(position.code);
+              }
+              const key = `${position.code}_${candidate.id}`;
+              if (!newEvaluations[key]) {
+                newEvaluations[key] = {
+                  candidateId: candidate.id,
+                  positionId: position.code,
+                  reqEvaluations: {},
+                  notes: "",
+                  status: "pending"
+                };
+              }
+            }
+          });
+        });
+
+        if (addedCount === 0) return prev;
+
+        return {
+          ...prev,
+          positions: Array.from(positionsByCode.values()),
+          candidates: updatedCandidates,
+          evaluations: newEvaluations,
+          favoritePositionIds: prev.favoritePositionIds.filter((id) => positionsByCode.has(id)),
+          lastUpdated: Date.now()
+        };
+      });
+
+      setLastImportStats({
+        candidates: { imported: 0, duplicates: 0, totalRows: 0 },
+        positions: {
+          imported: positionsResult.items.length,
+          duplicates: positionsResult.duplicateCount,
+          totalRows: positionsResult.totalRows
+        }
+      });
+
+      setSettingsFileSuccess(
+        addedCount > 0
+          ? `Aggiunte ${addedCount} nuove posizioni.`
+          : "Nessuna nuova posizione da aggiungere."
+      );
+    } catch (error: any) {
+      console.error(error);
+      setSettingsFileError(error.message || "Errore durante l'aggiunta delle posizioni.");
+    } finally {
+      setIsSettingsProcessing(false);
+    }
+  };
+
+  const handleSettingsCandidatesUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files ? Array.from(event.target.files) : [];
+    event.target.value = "";
+    if (files.length === 0) return;
+    await appendCandidatesFromFiles(files);
+  };
+
+  const handleSettingsPositionsUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files ? Array.from(event.target.files) : [];
+    event.target.value = "";
+    if (files.length === 0) return;
+    await appendPositionsFromFiles(files);
+  };
+
+  const clearCandidatesData = () => {
+    const confirmed = confirm("Eliminare tutti i dati delle persone caricate? Questa operazione non può essere annullata.");
+    if (!confirmed) return;
+    setAppData((prev) => ({
+      ...prev,
+      candidates: [],
+      evaluations: {},
+      lastUpdated: Date.now()
+    }));
+    setSelectedCandidateId(null);
+    setSettingsFileError("");
+    setSettingsFileSuccess("Tutti i dati persone sono stati eliminati.");
+  };
+
+  const clearPositionsData = () => {
+    const confirmed = confirm("Eliminare tutte le posizioni caricate? Questa operazione non può essere annullata.");
+    if (!confirmed) return;
+    setAppData((prev) => ({
+      ...prev,
+      positions: [],
+      evaluations: {},
+      favoritePositionIds: [],
+      lastUpdated: Date.now()
+    }));
+    setSelectedPositionId(null);
+    setOverlapPositionIds([]);
+    setSettingsFileError("");
+    setSettingsFileSuccess("Tutte le posizioni sono state eliminate.");
+  };
+
   const startNewSearch = () => {
     const confirmed = confirm("Vuoi avviare una nuova ricerca di personale? I dati attuali verranno svuotati.");
     if (!confirmed) return;
@@ -4626,43 +5055,12 @@ const RecruitmentApp = () => {
           <button onClick={startNewSearch} className="flex items-center gap-2 text-slate-200 hover:text-white text-sm mb-3">
             <FileText className="w-4 h-4" /> Avvia nuova ricerca di personale
           </button>
-          <button onClick={resetData} className="flex items-center gap-2 text-red-400 hover:text-red-300 text-sm">
-            <Trash2 className="w-4 h-4" /> Reset Data
+          <button
+            onClick={() => setIsSettingsOpen(true)}
+            className="w-full flex items-center gap-2 text-slate-200 hover:text-white text-sm px-3 py-2 rounded-md bg-slate-800/60 hover:bg-slate-800"
+          >
+            <Menu className="w-4 h-4" /> Impostazioni
           </button>
-          <div className="mt-6">
-            <p className="text-xs uppercase tracking-wide text-slate-500 mb-3">Impostazioni</p>
-            <div className="space-y-2">
-              <button
-                onClick={exportBackup}
-                className="w-full flex items-center gap-2 text-slate-200 hover:text-white text-sm px-3 py-2 rounded-md bg-slate-800/60 hover:bg-slate-800"
-              >
-                <Download className="w-4 h-4" /> Scarica backup
-              </button>
-              <button
-                onClick={() => backupInputRef.current?.click()}
-                className="w-full flex items-center gap-2 text-slate-200 hover:text-white text-sm px-3 py-2 rounded-md bg-slate-800/60 hover:bg-slate-800"
-              >
-                <Upload className="w-4 h-4" /> Carica backup
-              </button>
-              <input
-                ref={backupInputRef}
-                type="file"
-                accept=".json,application/json"
-                className="hidden"
-                onChange={handleBackupUpload}
-              />
-              {backupError && (
-                <div className="text-xs text-red-400 flex items-center gap-2">
-                  <AlertTriangle className="w-3 h-3" /> {backupError}
-                </div>
-              )}
-              {backupSuccess && !backupError && (
-                <div className="text-xs text-emerald-400 flex items-center gap-2">
-                  <Check className="w-3 h-3" /> {backupSuccess}
-                </div>
-              )}
-            </div>
-          </div>
         </div>
       </aside>
 
@@ -4865,6 +5263,24 @@ const RecruitmentApp = () => {
           </div>
         </div>
       )}
+      <SettingsPanel
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        candidatesCount={appData.candidates.length}
+        positionsCount={appData.positions.length}
+        onSelectCandidatesFiles={handleSettingsCandidatesUpload}
+        onSelectPositionsFiles={handleSettingsPositionsUpload}
+        onClearCandidates={clearCandidatesData}
+        onClearPositions={clearPositionsData}
+        onExportBackup={exportBackup}
+        onBackupUpload={handleBackupUpload}
+        backupError={backupError}
+        backupSuccess={backupSuccess}
+        fileError={settingsFileError}
+        fileSuccess={settingsFileSuccess}
+        isProcessing={isSettingsProcessing}
+        onResetData={resetData}
+      />
     </div>
   );
 };
