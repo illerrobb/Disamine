@@ -709,7 +709,7 @@ const ScoreBar = ({
     <div className={`flex h-2 w-full gap-0.5 overflow-visible ${className}`}>
       {segments.map((segment, index) => (
         <div key={`${segment.color}-${index}`} className="relative flex-1 group">
-          <div className={`h-2 w-full rounded-sm ${segment.color}`} />
+          <div className={`h-2 w-full rounded-sm ${segment.color}`} title={segment.label} />
           <div className="pointer-events-none absolute left-1/2 top-full z-30 mt-1 w-max max-w-[220px] -translate-x-1/2 rounded-md border border-slate-200 bg-white px-2 py-1 text-[10px] text-slate-700 opacity-0 shadow-md transition-opacity duration-150 group-hover:opacity-100 whitespace-normal break-words">
             {segment.label}
           </div>
@@ -1366,7 +1366,7 @@ const CandidateDetailView = ({
                const reqScore = activeReqs.filter(r => ev.reqEvaluations[r.id] === 'yes').length;
                
                return (
-                  <div key={pos.code} className={`bg-white rounded-lg border shadow-sm overflow-visible ${isNonCompatible ? 'border-gray-200' : 'border-slate-200'}`}>
+                  <div key={pos.code} className={`bg-white rounded-lg border shadow-sm overflow-hidden ${isNonCompatible ? 'border-gray-200' : 'border-slate-200'}`}>
                      {/* Card Header */}
                      <div className={`px-6 py-4 border-b flex justify-between items-start ${isNonCompatible ? 'bg-gray-50' : 'bg-slate-50 border-slate-200'}`}>
                         <div>
@@ -1517,7 +1517,7 @@ const CandidatesMatrixView = ({
             </th>
             {activeReqs.map((req, i) => (
               <th key={req.id} className="bg-slate-50 border border-slate-200 p-2 min-w-[120px] font-medium text-slate-600 relative group">
-                <div className="line-clamp-3">
+                <div className="line-clamp-3" title={req.text}>
                   {req.type === 'essential' && <span className="text-red-500 font-bold mr-1">*</span>}
                   {req.text}
                 </div>
@@ -1535,13 +1535,13 @@ const CandidatesMatrixView = ({
             return (
               <tr key={c.id} className={`hover:bg-slate-50 ${isNonCompatible ? 'bg-gray-100 opacity-60 grayscale' : ''}`}>
                 <td className={`sticky left-0 border border-slate-200 p-2 w-80 min-w-[20rem] shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] ${isNonCompatible ? 'bg-gray-100' : 'bg-white hover:bg-slate-50'}`}>
-                  <div className="text-[10px] text-slate-500 font-mono uppercase truncate mb-1">
+                  <div className="text-[10px] text-slate-500 font-mono uppercase truncate mb-1" title={`${c.rank} ${c.role} ${c.category} ${c.specialty}`}>
                      {c.rank} {c.role} {c.category} {c.specialty}
                   </div>
                   <div className="font-bold text-slate-800 flex items-center gap-2">
                     {c.nominativo}
                     {otherSelection && (
-                      <div className="text-amber-500">
+                      <div className="text-amber-500" title={`Selected for: ${otherSelection.code}`}>
                         <AlertTriangle className="w-3 h-3" />
                       </div>
                     )}
@@ -1659,7 +1659,7 @@ const WorksheetRow: React.FC<{
   return (
     <div
       {...(!isDragOverlay ? { "data-drag-row": true, "data-candidate-id": candidate.id } : {})}
-      className={`border rounded-lg mb-2 shadow-sm overflow-visible transition-all duration-200 ease-out transform-gpu ${isNonCompatible ? 'bg-gray-50 border-gray-200 opacity-75' : 'bg-white border-slate-200'} ${isDropTarget ? 'ring-2 ring-blue-300 bg-blue-50/40' : ''} ${isDragOverlay ? 'shadow-xl ring-2 ring-blue-200 pointer-events-none' : ''} ${isDragging && !isDragOverlay ? 'opacity-0 pointer-events-none' : ''}`}
+      className={`border rounded-lg mb-2 shadow-sm overflow-hidden transition-all duration-200 ease-out transform-gpu ${isNonCompatible ? 'bg-gray-50 border-gray-200 opacity-75' : 'bg-white border-slate-200'} ${isDropTarget ? 'ring-2 ring-blue-300 bg-blue-50/40' : ''} ${isDragOverlay ? 'shadow-xl ring-2 ring-blue-200 pointer-events-none' : ''} ${isDragging && !isDragOverlay ? 'opacity-0 pointer-events-none' : ''}`}
     >
       <div className={`flex items-center p-3 gap-4 hover:bg-slate-50 transition-colors ${isDragging && !isDragOverlay ? 'opacity-70' : ''}`}>
         <button
@@ -2024,7 +2024,7 @@ const PositionCard: React.FC<{
             {statusLabels[status]}
           </span>
         </div>
-        <h3 className="font-bold text-slate-800 mb-1 line-clamp-2">{position.title}</h3>
+        <h3 className="font-bold text-slate-800 mb-1 line-clamp-2" title={position.title}>{position.title}</h3>
         <p className="text-sm text-slate-500 flex items-center gap-1 mb-4">
           <Building className="w-3 h-3" /> {position.entity}
         </p>
@@ -2059,7 +2059,10 @@ const PositionCard: React.FC<{
       </div>
       <div className="bg-slate-50 px-5 py-3 border-t border-slate-100 flex items-center justify-between text-sm">
          <span className="text-slate-500">Candidates</span>
-         <div className="flex items-center gap-2 group relative">
+         <div 
+            className="flex items-center gap-2 group relative" 
+            title={candidatesList.map(c => `${c.rank} ${c.role} ${c.category} ${c.specialty} - ${c.nominativo}`).join('\n')}
+         >
            <Users className="w-4 h-4 text-slate-400" />
            <span className="font-bold text-slate-700">{candidateCount}</span>
            
@@ -3165,7 +3168,7 @@ const OverlapKanbanView = ({
         </div>
       </div>
 
-      <div className="flex-1 overflow-visible flex min-w-0">
+      <div className="flex-1 overflow-hidden flex min-w-0">
         <aside
           className={`border-r border-slate-200 bg-white overflow-y-auto transition-all duration-300 ${
             isPositionsOpen ? "w-80" : "w-12"
@@ -3256,7 +3259,7 @@ const OverlapKanbanView = ({
           )}
         </aside>
 
-        <div className="flex-1 overflow-x-visible p-6 pt-20 min-w-0">
+        <div className="flex-1 overflow-x-hidden p-6 pt-20 min-w-0">
           {selectedPositions.length === 0 ? (
             <div className="h-full flex items-center justify-center text-slate-500 text-sm">
               Seleziona almeno una posizione per vedere le candidature.
@@ -3769,7 +3772,7 @@ const PositionDetailView = ({
         </div>
       </header>
 
-      <div className="flex-1 overflow-visible flex flex-row">
+      <div className="flex-1 overflow-hidden flex flex-row">
          {/* Main Content */}
          <div className="flex-1 overflow-y-auto p-6">
             {viewMode === 'list' ? (
@@ -4403,7 +4406,7 @@ const RecruitmentApp = () => {
       </aside>
 
       {/* Main Content Area */}
-      <main className="flex-1 overflow-visible flex flex-col">
+      <main className="flex-1 overflow-hidden flex flex-col">
         {currentView === 'dashboard' && (
           <>
             <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between">
