@@ -3472,7 +3472,7 @@ const OverlapKanbanView = ({
   return (
     <div className="flex flex-col h-full bg-slate-50 relative overflow-x-hidden">
       <div className="absolute right-4 top-4 z-20">
-        <div className="bg-white border border-slate-200 shadow-lg rounded-lg overflow-hidden w-72">
+        <div className="bg-white border border-slate-200 shadow-lg rounded-lg overflow-hidden w-72 flex flex-col">
           <div className="px-3 py-2 flex items-center justify-between gap-2">
             <div>
               <div className="text-xs font-semibold text-slate-700">Posizioni suggerite</div>
@@ -3503,7 +3503,7 @@ const OverlapKanbanView = ({
             </div>
           </div>
           {isSuggestionsOpen && (
-            <div className="px-3 pb-3 space-y-2">
+            <div className="px-3 pb-3 space-y-2 h-64 overflow-y-auto">
               {focusedCandidateId && candidateOverlapSuggestions.length === 0 && (
                 <p className="text-xs text-slate-400 italic">
                   Nessuna posizione suggerita per il candidato selezionato.
