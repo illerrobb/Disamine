@@ -3769,9 +3769,9 @@ const PositionDetailView = ({
         </div>
       </header>
 
-      <div className="flex-1 min-h-0 overflow-visible flex flex-row">
+      <div className="flex-1 overflow-visible flex flex-row">
          {/* Main Content */}
-         <div className="flex-1 min-h-0 overflow-y-auto p-6">
+         <div className="flex-1 overflow-y-auto p-6">
             {viewMode === 'list' ? (
                <>
                   <div className="max-w-4xl mx-auto">
@@ -3842,7 +3842,7 @@ const PositionDetailView = ({
          </div>
 
          {/* Requirements Sidebar (Right) */}
-         <div className={`bg-white border-l border-slate-200 flex flex-col min-h-0 overflow-hidden shadow-lg transition-all duration-300 ${isRequirementsOpen ? 'w-80' : 'w-12'}`}>
+         <div className={`bg-white border-l border-slate-200 flex flex-col overflow-hidden shadow-lg transition-all duration-300 ${isRequirementsOpen ? 'w-80' : 'w-12'}`}>
             <div className="p-4 border-b border-slate-100 bg-slate-50 flex items-start justify-between gap-2">
                {isRequirementsOpen ? (
                   <div>
