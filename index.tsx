@@ -3470,7 +3470,7 @@ const OverlapKanbanView = ({
   }, [matchDrawerData, matchDrawerCandidate, matchDrawerPosition, matchDrawerEvaluation]);
 
   return (
-    <div className="flex flex-col h-full bg-slate-50 relative">
+    <div className="flex flex-col h-full bg-slate-50 relative overflow-x-hidden">
       <div className="absolute right-4 top-4 z-20">
         <div className="bg-white border border-slate-200 shadow-lg rounded-lg overflow-hidden w-72">
           <div className="px-3 py-2 flex items-center justify-between gap-2">
@@ -3729,9 +3729,6 @@ const OverlapKanbanView = ({
                               {position.code}
                             </span>
                             <PositionLevelBadge level={getPositionLevel(position)} />
-                            <h3 className="min-w-0 font-semibold text-slate-800 text-sm line-clamp-2">
-                              {position.title}
-                            </h3>
                           </div>
                           <button
                             type="button"
@@ -3746,6 +3743,9 @@ const OverlapKanbanView = ({
                             <X className="w-3 h-3" />
                           </button>
                         </div>
+                        <h3 className="mt-2 font-semibold text-slate-800 leading-snug break-words text-[clamp(0.75rem,1.2vw,0.9rem)]">
+                          {position.title}
+                        </h3>
                         <div className="text-xs text-slate-500 mt-2">
                           {position.entity} • {position.location}
                         </div>
