@@ -99,7 +99,7 @@ interface Evaluation {
   positionId: string;
   reqEvaluations: Record<string, 'yes' | 'no' | 'partial' | 'pending'>; // Key is requirement text/id
   notes: string;
-  status: 'pending' | 'selected' | 'rejected' | 'reserve' | 'non-compatible';
+  status: 'pending' | 'selected' | 'rejected' | 'reserve' | 'non-compatible' | 'excluded';
   manualOrder?: number;
 }
 
@@ -516,6 +516,7 @@ const computeOverlaps = (positions: Position[], evaluations: Record<string, Eval
   });
 
   Object.values(evaluations).forEach(ev => {
+    if (ev.status === "excluded") return;
     const candidateSet = candidateIdsByPosition.get(ev.positionId);
     if (!candidateSet) return;
     candidateSet.add(ev.candidateId);
@@ -635,7 +636,8 @@ const Badge = ({ children, color = 'blue' }: any) => {
     green: "bg-green-100 text-green-800",
     amber: "bg-amber-100 text-amber-800",
     slate: "bg-slate-100 text-slate-800",
-    purple: "bg-purple-100 text-purple-800"
+    purple: "bg-purple-100 text-purple-800",
+    red: "bg-red-100 text-red-800"
   };
   return (
     <span
@@ -877,12 +879,13 @@ const CandidateMatchDrawer = ({
     selected: "Selected",
     reserve: "Possibile match",
     rejected: "Rejected",
-    "non-compatible": "Non compatibile"
+    "non-compatible": "Non compatibile",
+    excluded: "Escluso"
   }[evaluation.status];
 
   const renderRequirementRow = (req: Requirement) => {
     const status = evaluation.reqEvaluations[req.id] || "pending";
-    const isDisabled = evaluation.status === "non-compatible";
+    const isDisabled = evaluation.status === "non-compatible" || evaluation.status === "excluded";
     return (
       <button
         key={req.id}
@@ -1137,6 +1140,8 @@ const StatusPicker = ({
         return "bg-amber-100 text-amber-800 border-amber-200";
       case "non-compatible":
         return "bg-gray-200 text-gray-800 border-gray-300";
+      case "excluded":
+        return "bg-red-200 text-red-900 border-red-300";
       default:
         return "bg-white text-slate-600 border-slate-200";
     }
@@ -1167,7 +1172,17 @@ const StatusPicker = ({
         aria-haspopup="listbox"
         aria-expanded={isOpen}
       >
-        {status === "pending" ? "PENDING" : status === "selected" ? "SELECTED" : status === "reserve" ? "POSSIBILE MATCH" : status === "rejected" ? "REJECTED" : "NON COMPATIBILE"}
+        {status === "pending"
+          ? "PENDING"
+          : status === "selected"
+          ? "SELECTED"
+          : status === "reserve"
+          ? "POSSIBILE MATCH"
+          : status === "rejected"
+          ? "REJECTED"
+          : status === "excluded"
+          ? "ESCLUSO"
+          : "NON COMPATIBILE"}
       </button>
       {isOpen && (
         <div className="absolute right-0 mt-2 w-48 bg-white border border-slate-200 rounded shadow-lg z-20 p-2 space-y-1">
@@ -1206,6 +1221,13 @@ const StatusPicker = ({
           >
             NON COMPATIBILE
           </button>
+          <button
+            type="button"
+            onClick={() => handleSelect("excluded")}
+            className="w-full text-left text-xs px-2 py-1 rounded hover:bg-slate-50 text-red-600"
+          >
+            ESCLUSO
+          </button>
         </div>
       )}
     </div>
@@ -1238,7 +1260,7 @@ const CandidateDetailView = ({
   }, [allPositions, evaluations, candidate.id]);
 
   const handleReqToggle = (ev: Evaluation, reqId: string) => {
-    if (ev.status === 'non-compatible') return;
+    if (ev.status === "non-compatible" || ev.status === "excluded") return;
     const current = ev.reqEvaluations[reqId] || 'pending';
     const next = current === 'pending' ? 'yes' : current === 'yes' ? 'no' : current === 'no' ? 'partial' : 'pending';
     
@@ -1359,7 +1381,9 @@ const CandidateDetailView = ({
 
             {relevantPositions.map(pos => {
                const ev = evaluations[`${pos.code}_${candidate.id}`];
-               const isNonCompatible = ev.status === 'non-compatible';
+               const isNonCompatible = ev.status === "non-compatible";
+               const isExcluded = ev.status === "excluded";
+               const isLocked = isNonCompatible || isExcluded;
                const activeReqs = pos.requirements.filter(r => !r.hidden);
                const otherSelection = getOtherSelectionInfo(candidate.id, pos.code, evaluations, allPositions);
                const profileSummary = formatPositionProfile(pos);
@@ -1369,14 +1393,14 @@ const CandidateDetailView = ({
                const reqScore = activeReqs.filter(r => ev.reqEvaluations[r.id] === 'yes').length;
                
                return (
-                  <div key={pos.code} className={`bg-white rounded-lg border shadow-sm overflow-hidden ${isNonCompatible ? 'border-gray-200' : 'border-slate-200'}`}>
+                  <div key={pos.code} className={`bg-white rounded-lg border shadow-sm overflow-hidden ${isNonCompatible ? 'border-gray-200' : isExcluded ? 'border-red-200' : 'border-slate-200'}`}>
                      {/* Card Header */}
-                     <div className={`px-6 py-4 border-b flex justify-between items-start ${isNonCompatible ? 'bg-gray-50' : 'bg-slate-50 border-slate-200'}`}>
+                     <div className={`px-6 py-4 border-b flex justify-between items-start ${isNonCompatible ? 'bg-gray-50' : isExcluded ? 'bg-red-50 border-red-200' : 'bg-slate-50 border-slate-200'}`}>
                         <div>
                            <div className="flex items-center gap-2 mb-1">
                               <span className="font-mono text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">{pos.code}</span>
                               <PositionLevelBadge level={level} />
-                              <h3 className={`font-bold text-lg ${isNonCompatible ? 'text-gray-500 line-through' : 'text-slate-800'}`}>{pos.title}</h3>
+                              <h3 className={`font-bold text-lg ${isLocked ? 'text-gray-500 line-through' : 'text-slate-800'}`}>{pos.title}</h3>
                            </div>
                            <div className="text-sm text-slate-500 flex gap-2">
                               <span>{pos.entity}</span>
@@ -1392,6 +1416,11 @@ const CandidateDetailView = ({
                                  <AlertTriangle className="w-3 h-3" /> Warning: Selected for {otherSelection.code}
                               </div>
                            )}
+                           {isExcluded && (
+                              <div className="mt-2 text-xs bg-red-100 text-red-800 px-2 py-1 rounded border border-red-200 inline-flex items-center gap-1 font-semibold">
+                                 <Ban className="w-3 h-3" /> CANDIDATO ESCLUSO
+                              </div>
+                           )}
                         </div>
                         
                         <div className="flex flex-col items-end gap-2">
@@ -1401,7 +1430,7 @@ const CandidateDetailView = ({
                               onChange={(status) => onUpdate({ ...ev, status })}
                            />
                            
-                           {!isNonCompatible && (
+                           {!isLocked && (
                               <div className="text-xs font-medium text-slate-500">
                                  Match: <span className={reqScore === activeReqs.length ? 'text-green-600' : 'text-slate-700'}>{reqScore}/{activeReqs.length}</span>
                               </div>
@@ -1414,7 +1443,7 @@ const CandidateDetailView = ({
                         {/* Requirements */}
                         <div className="lg:col-span-2 space-y-3">
                            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Requirements</h4>
-                           {isNonCompatible ? (
+                           {isLocked ? (
                               <div className="p-4 bg-gray-50 text-gray-400 text-sm text-center italic rounded border border-gray-100">
                                  Evaluation disabled.
                               </div>
@@ -1490,12 +1519,13 @@ const CandidatesMatrixView = ({
       case 'rejected': return 'bg-red-100 text-red-800 border-red-200';
       case 'reserve': return 'bg-amber-100 text-amber-800 border-amber-200';
       case 'non-compatible': return 'bg-gray-200 text-gray-800 border-gray-300';
+      case 'excluded': return 'bg-red-200 text-red-900 border-red-300';
       default: return 'bg-white text-slate-600 border-slate-200';
     }
   };
 
   const handleReqToggle = (evaluation: Evaluation, reqId: string) => {
-    if (evaluation.status === 'non-compatible') return; // Read-only if non-compatible
+    if (evaluation.status === "non-compatible" || evaluation.status === "excluded") return; // Read-only if blocked
     const current = evaluation.reqEvaluations[reqId] || 'pending';
     const next = current === 'pending' ? 'yes' : current === 'yes' ? 'no' : current === 'no' ? 'partial' : 'pending';
     
@@ -1533,12 +1563,14 @@ const CandidatesMatrixView = ({
           {candidates.map(c => {
             const ev = evaluations[`${position.code}_${c.id}`];
             if (!ev) return null;
-            const isNonCompatible = ev.status === 'non-compatible';
+            const isNonCompatible = ev.status === "non-compatible";
+            const isExcluded = ev.status === "excluded";
+            const isLocked = isNonCompatible || isExcluded;
             const otherSelection = getOtherSelectionInfo(c.id, position.code, evaluations, positions);
 
             return (
-              <tr key={c.id} className={`hover:bg-slate-50 ${isNonCompatible ? 'bg-gray-100 opacity-60 grayscale' : ''}`}>
-                <td className={`sticky left-0 border border-slate-200 p-2 w-80 min-w-[20rem] shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] ${isNonCompatible ? 'bg-gray-100' : 'bg-white hover:bg-slate-50'}`}>
+              <tr key={c.id} className={`hover:bg-slate-50 ${isNonCompatible ? 'bg-gray-100 opacity-60 grayscale' : ''} ${isExcluded ? 'bg-red-50 opacity-80' : ''}`}>
+                <td className={`sticky left-0 border border-slate-200 p-2 w-80 min-w-[20rem] shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] ${isNonCompatible ? 'bg-gray-100' : isExcluded ? 'bg-red-50' : 'bg-white hover:bg-slate-50'}`}>
                   <div className="text-[10px] text-slate-500 font-mono uppercase truncate mb-1" title={`${c.rank} ${c.role} ${c.category} ${c.specialty}`}>
                      {c.rank} {c.role} {c.category} {c.specialty}
                   </div>
@@ -1551,8 +1583,9 @@ const CandidatesMatrixView = ({
                     )}
                   </div>
                   {isNonCompatible && <div className="text-[10px] text-red-600 font-bold mt-1">PROFILO NON COMPATIBILE</div>}
+                  {isExcluded && <div className="text-[10px] text-red-700 font-bold mt-1">CANDIDATO ESCLUSO</div>}
                 </td>
-                <td className={`border border-slate-200 p-2 w-[140px] sticky left-80 shadow-md ${isNonCompatible ? 'bg-gray-100' : 'bg-white'}`}>
+                <td className={`border border-slate-200 p-2 w-[140px] sticky left-80 shadow-md ${isNonCompatible ? 'bg-gray-100' : isExcluded ? 'bg-red-50' : 'bg-white'}`}>
                    <select 
                       value={ev.status}
                       onChange={(e) => onUpdate({...ev, status: e.target.value as any})}
@@ -1563,6 +1596,7 @@ const CandidatesMatrixView = ({
                        <option value="reserve">POSSIBILE MATCH</option>
                        <option value="rejected">REJECTED</option>
                        <option value="non-compatible">NON COMPATIBILE</option>
+                       <option value="excluded">ESCLUSO</option>
                      </select>
                 </td>
                 {activeReqs.map(req => {
@@ -1571,9 +1605,9 @@ const CandidatesMatrixView = ({
                     <td 
                       key={req.id} 
                       onClick={() => handleReqToggle(ev, req.id)}
-                      className={`border border-slate-200 p-1 text-center select-none transition-colors ${!isNonCompatible && 'cursor-pointer hover:bg-slate-100'}`}
+                      className={`border border-slate-200 p-1 text-center select-none transition-colors ${!isLocked && 'cursor-pointer hover:bg-slate-100'}`}
                     >
-                      {!isNonCompatible && (
+                      {!isLocked && (
                         <div className={`w-full h-8 rounded flex items-center justify-center
                           ${status === 'yes' ? 'bg-green-100 text-green-700' : 
                             status === 'no' ? 'bg-red-50 text-red-300' : 
@@ -1623,7 +1657,9 @@ const WorksheetRow: React.FC<{
   isDragOverlay = false
 }) => {
   const [expanded, setExpanded] = useState(false);
-  const isNonCompatible = evaluation.status === 'non-compatible';
+  const isNonCompatible = evaluation.status === "non-compatible";
+  const isExcluded = evaluation.status === "excluded";
+  const isLocked = isNonCompatible || isExcluded;
 
   // Only count non-hidden requirements
   const activeReqs = position.requirements.filter(r => !r.hidden);
@@ -1637,7 +1673,7 @@ const WorksheetRow: React.FC<{
   } = getRequirementScores(evaluation, position);
 
   const handleReqToggle = (reqId: string) => {
-    if (isNonCompatible) return;
+    if (isLocked) return;
     const current = evaluation.reqEvaluations[reqId] || 'pending';
     const next = current === 'pending' ? 'yes' : current === 'yes' ? 'no' : current === 'no' ? 'partial' : 'pending';
     
@@ -1656,6 +1692,7 @@ const WorksheetRow: React.FC<{
       case 'rejected': return 'bg-red-100 text-red-800 border-red-200';
       case 'reserve': return 'bg-amber-100 text-amber-800 border-amber-200';
       case 'non-compatible': return 'bg-gray-200 text-gray-800 border-gray-300';
+      case 'excluded': return 'bg-red-200 text-red-900 border-red-300';
       default: return 'bg-slate-100 text-slate-600 border-slate-200';
     }
   };
@@ -1663,7 +1700,7 @@ const WorksheetRow: React.FC<{
   return (
     <div
       {...(!isDragOverlay ? { "data-drag-row": true, "data-candidate-id": candidate.id } : {})}
-      className={`border rounded-lg mb-2 shadow-sm overflow-hidden transition-all duration-200 ease-out transform-gpu ${isNonCompatible ? 'bg-gray-50 border-gray-200 opacity-75' : 'bg-white border-slate-200'} ${isDropTarget ? 'ring-2 ring-blue-300 bg-blue-50/40' : ''} ${isDragOverlay ? 'shadow-xl ring-2 ring-blue-200 pointer-events-none' : ''} ${isDragging && !isDragOverlay ? 'opacity-0 pointer-events-none' : ''}`}
+      className={`border rounded-lg mb-2 shadow-sm overflow-hidden transition-all duration-200 ease-out transform-gpu ${isNonCompatible ? 'bg-gray-50 border-gray-200 opacity-75' : isExcluded ? 'bg-red-50 border-red-200' : 'bg-white border-slate-200'} ${isDropTarget ? 'ring-2 ring-blue-300 bg-blue-50/40' : ''} ${isDragOverlay ? 'shadow-xl ring-2 ring-blue-200 pointer-events-none' : ''} ${isDragging && !isDragOverlay ? 'opacity-0 pointer-events-none' : ''}`}
     >
       <div className={`flex items-center p-3 gap-4 hover:bg-slate-50 transition-colors ${isDragging && !isDragOverlay ? 'opacity-70' : ''}`}>
         <button
@@ -1682,7 +1719,7 @@ const WorksheetRow: React.FC<{
         
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className={`font-medium truncate ${isNonCompatible ? 'text-gray-500 line-through' : 'text-slate-900'}`}>{candidate.nominativo}</span>
+            <span className={`font-medium truncate ${isLocked ? 'text-gray-500 line-through' : 'text-slate-900'}`}>{candidate.nominativo}</span>
             <span className="text-xs px-1.5 py-0.5 bg-slate-100 rounded text-slate-600">{candidate.rank}</span>
             
             {/* Added Role/Cat/Spec Details inline */}
@@ -1699,6 +1736,8 @@ const WorksheetRow: React.FC<{
           <div className="text-xs text-slate-500 flex gap-2 mt-0.5 items-center">
              {isNonCompatible ? (
                 <span className="font-bold text-red-600 flex items-center gap-1"><Ban className="w-3 h-3" /> PROFILO NON COMPATIBILE CON LA PERSONA</span>
+             ) : isExcluded ? (
+                <span className="font-bold text-red-700 flex items-center gap-1"><Ban className="w-3 h-3" /> CANDIDATO ESCLUSO</span>
              ) : (
                <>
                 <span className="font-mono">{candidate.id}</span>
@@ -1713,7 +1752,7 @@ const WorksheetRow: React.FC<{
 
         {/* Mini Score Dashboard */}
         <div className="flex gap-2 mr-4">
-           {!isNonCompatible && (
+           {!isLocked && (
              <div className="flex flex-col items-center px-3 border-l border-slate-100">
                 <span className="text-[10px] text-slate-500 uppercase font-bold">E {essentialYes}/{essentialTotal}</span>
                 <span className="text-[10px] text-slate-500 uppercase font-bold">D {desirableYes}/{desirableTotal}</span>
@@ -1735,6 +1774,7 @@ const WorksheetRow: React.FC<{
              <option value="reserve">POSSIBILE MATCH</option>
              <option value="rejected">REJECTED</option>
              <option value="non-compatible">NON COMPATIBILE</option>
+             <option value="excluded">ESCLUSO</option>
            </select>
         </div>
         <button
@@ -1752,9 +1792,9 @@ const WorksheetRow: React.FC<{
             <h4 className="text-xs font-bold text-slate-500 uppercase mb-3 flex items-center gap-2">
               <Briefcase className="w-3 h-3"/> Requirements Evaluation
             </h4>
-            {isNonCompatible ? (
+            {isLocked ? (
                <div className="p-4 bg-gray-100 rounded border border-gray-200 text-center text-gray-500 text-sm">
-                  Evaluation disabled for non-compatible profiles.
+                  Evaluation disabled for non-compatible or excluded profiles.
                </div>
             ) : (
               <div className="space-y-2">
@@ -2636,6 +2676,7 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
        if (s === 'rejected') return 'NON FAVOREVOLE';
        if (s === 'reserve') return 'POSSIBILE MATCH';
        if (s === 'non-compatible') return 'NON COMPATIBILE';
+       if (s === 'excluded') return 'ESCLUSO';
        return '';
     };
 
@@ -3367,6 +3408,7 @@ const OverlapKanbanView = ({
     const map = new Map<string, Set<string>>();
     positions.forEach(position => map.set(position.code, new Set()));
     Object.values(evaluations).forEach(ev => {
+      if (ev.status === "excluded") return;
       const candidateSet = map.get(ev.positionId);
       if (candidateSet) {
         candidateSet.add(ev.candidateId);
@@ -3461,7 +3503,7 @@ const OverlapKanbanView = ({
   };
 
   const matchesPossible = (status: Evaluation["status"]) =>
-    status !== "rejected" && status !== "non-compatible";
+    status !== "rejected" && status !== "non-compatible" && status !== "excluded";
 
   const getStatusBadge = (status: Evaluation["status"]) => {
     switch (status) {
@@ -3473,6 +3515,8 @@ const OverlapKanbanView = ({
         return { label: "Rejected", color: "slate" };
       case "non-compatible":
         return { label: "Non compatibile", color: "slate" };
+      case "excluded":
+        return { label: "Escluso", color: "red" };
       default:
         return { label: "Pending", color: "blue" };
     }
@@ -3483,7 +3527,8 @@ const OverlapKanbanView = ({
     { value: "selected", label: "Selected" },
     { value: "reserve", label: "Possibile match" },
     { value: "rejected", label: "Rejected" },
-    { value: "non-compatible", label: "Non compatibile" }
+    { value: "non-compatible", label: "Non compatibile" },
+    { value: "excluded", label: "Escluso" }
   ];
 
   const handleDragStart = useCallback(
@@ -3884,7 +3929,7 @@ const OverlapKanbanView = ({
                     candidate,
                     evaluation: evaluations[`${position.code}_${candidate.id}`]
                   }))
-                  .filter(entry => entry.evaluation);
+                  .filter(entry => entry.evaluation && entry.evaluation.status !== "excluded");
 
                 const filteredCandidates = positionCandidates.filter(({ candidate, evaluation }) => {
                   const matchesStatus = onlyPossibleMatch ? matchesPossible(evaluation!.status) : true;
@@ -4222,6 +4267,10 @@ const PositionDetailView = ({
   const [isRequirementsOpen, setIsRequirementsOpen] = useState(true);
   const [isRequirementsDrawerOpen, setIsRequirementsDrawerOpen] = useState(false);
   const baseOrderMap = useMemo(() => new Map(allCandidates.map((c, index) => [c.id, index])), [allCandidates]);
+  const excludedCandidateIds = useMemo(
+    () => new Set(Object.values(evaluations).filter(ev => ev.status === "excluded").map(ev => ev.candidateId)),
+    [evaluations]
+  );
   const previousRowPositionsRef = useRef<Map<string, DOMRect>>(new Map());
   const positionLevel = useMemo(() => getPositionLevel(position), [position]);
   const profileSummary = useMemo(() => {
@@ -4269,16 +4318,17 @@ const PositionDetailView = ({
     return orderedCandidates.filter(c => {
       const ev = evaluations[`${position.code}_${c.id}`];
       if (!ev) return false;
-      if (filter === 'all') return true;
+      if (filter === "all") return ev.status !== "excluded";
       return ev.status === filter;
     });
   }, [orderedCandidates, evaluations, position.code, filter]);
 
   const stats = useMemo(() => {
-     const selected = positionCandidates.filter(c => evaluations[`${position.code}_${c.id}`]?.status === 'selected').length;
-     const pending = positionCandidates.filter(c => evaluations[`${position.code}_${c.id}`]?.status === 'pending').length;
-     return { total: positionCandidates.length, selected, pending };
-  }, [positionCandidates, evaluations, position.code]);
+     const visibleCandidates = positionCandidates.filter(c => !excludedCandidateIds.has(c.id));
+     const selected = visibleCandidates.filter(c => evaluations[`${position.code}_${c.id}`]?.status === 'selected').length;
+     const pending = visibleCandidates.filter(c => evaluations[`${position.code}_${c.id}`]?.status === 'pending').length;
+     return { total: visibleCandidates.length, selected, pending };
+  }, [positionCandidates, evaluations, position.code, excludedCandidateIds]);
 
   useLayoutEffect(() => {
     if (viewMode !== 'list') {
@@ -4402,6 +4452,7 @@ const PositionDetailView = ({
                    <option value="selected">Selected Only</option>
                    <option value="reserve">Solo Possibile match</option>
                    <option value="rejected">Rejected Only</option>
+                   <option value="excluded">Solo Esclusi</option>
                 </select>
              </div>
           </div>
@@ -4674,6 +4725,26 @@ const RecruitmentApp = () => {
   const updateEvaluation = (ev: Evaluation) => {
     setAppData(prev => {
       const newEvaluations = { ...prev.evaluations };
+      const candidateEvaluations = Object.values(newEvaluations).filter(
+        existingEv => existingEv.candidateId === ev.candidateId
+      );
+      const candidateIsExcluded = candidateEvaluations.some(existingEv => existingEv.status === "excluded");
+
+      if (ev.status === "excluded") {
+        candidateEvaluations.forEach(existingEv => {
+          newEvaluations[`${existingEv.positionId}_${existingEv.candidateId}`] = {
+            ...existingEv,
+            status: "excluded"
+          };
+        });
+      } else if (candidateIsExcluded) {
+        candidateEvaluations.forEach(existingEv => {
+          newEvaluations[`${existingEv.positionId}_${existingEv.candidateId}`] = {
+            ...existingEv,
+            status: "pending"
+          };
+        });
+      }
 
       // SINGLE SELECTION LOGIC:
       // If setting this candidate to SELECTED, find any other candidate for this position
