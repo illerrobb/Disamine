@@ -2661,7 +2661,7 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
     const otherSel = getOtherSelectionInfo(c.id, position.code, evaluations, positions);
     const noteParts = [];
     if (c.globalNotes) {
-       noteParts.push(`NOTE GLOBALI: ${c.globalNotes}`);
+       noteParts.push(c.globalNotes);
     }
     if (ev.notes) {
        noteParts.push(ev.notes);
@@ -4267,10 +4267,6 @@ const PositionDetailView = ({
   const [isRequirementsOpen, setIsRequirementsOpen] = useState(true);
   const [isRequirementsDrawerOpen, setIsRequirementsDrawerOpen] = useState(false);
   const baseOrderMap = useMemo(() => new Map(allCandidates.map((c, index) => [c.id, index])), [allCandidates]);
-  const excludedCandidateIds = useMemo(
-    () => new Set(Object.values(evaluations).filter(ev => ev.status === "excluded").map(ev => ev.candidateId)),
-    [evaluations]
-  );
   const previousRowPositionsRef = useRef<Map<string, DOMRect>>(new Map());
   const positionLevel = useMemo(() => getPositionLevel(position), [position]);
   const profileSummary = useMemo(() => {
@@ -4318,17 +4314,16 @@ const PositionDetailView = ({
     return orderedCandidates.filter(c => {
       const ev = evaluations[`${position.code}_${c.id}`];
       if (!ev) return false;
-      if (filter === "all") return ev.status !== "excluded";
+      if (filter === "all") return true;
       return ev.status === filter;
     });
   }, [orderedCandidates, evaluations, position.code, filter]);
 
   const stats = useMemo(() => {
-     const visibleCandidates = positionCandidates.filter(c => !excludedCandidateIds.has(c.id));
-     const selected = visibleCandidates.filter(c => evaluations[`${position.code}_${c.id}`]?.status === 'selected').length;
-     const pending = visibleCandidates.filter(c => evaluations[`${position.code}_${c.id}`]?.status === 'pending').length;
-     return { total: visibleCandidates.length, selected, pending };
-  }, [positionCandidates, evaluations, position.code, excludedCandidateIds]);
+     const selected = positionCandidates.filter(c => evaluations[`${position.code}_${c.id}`]?.status === 'selected').length;
+     const pending = positionCandidates.filter(c => evaluations[`${position.code}_${c.id}`]?.status === 'pending').length;
+     return { total: positionCandidates.length, selected, pending };
+  }, [positionCandidates, evaluations, position.code]);
 
   useLayoutEffect(() => {
     if (viewMode !== 'list') {
