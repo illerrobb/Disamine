@@ -2896,8 +2896,27 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
         color = green;
         bold = true;
       }
-      const borderColor = row.isSelected ? green : black;
       const borderStyle = row.isSelected ? "thick" : "thin";
+      const borderColor = row.isSelected ? green : black;
+      const outerBorder = row.isSelected
+        ? {
+            top: { style: borderStyle, color: { rgb: borderColor } },
+            bottom: { style: borderStyle, color: { rgb: borderColor } },
+            left: {
+              style: c === 0 ? borderStyle : "thin",
+              color: { rgb: c === 0 ? borderColor : black }
+            },
+            right: {
+              style: c === totalCols - 1 ? borderStyle : "thin",
+              color: { rgb: c === totalCols - 1 ? borderColor : black }
+            }
+          }
+        : {
+            top: { style: "thin", color: { rgb: black } },
+            bottom: { style: "thin", color: { rgb: black } },
+            left: { style: "thin", color: { rgb: black } },
+            right: { style: "thin", color: { rgb: black } }
+          };
       setCellStyle(
         cellAddr,
         makeStyle({
@@ -2906,12 +2925,7 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
           fill,
           align: c === 0 ? "center" : "center",
           valign: "center",
-          border: {
-            top: { style: borderStyle, color: { rgb: borderColor } },
-            bottom: { style: borderStyle, color: { rgb: borderColor } },
-            left: { style: borderStyle, color: { rgb: borderColor } },
-            right: { style: borderStyle, color: { rgb: borderColor } }
-          }
+          border: outerBorder
         })
       );
     });
