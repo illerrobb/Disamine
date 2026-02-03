@@ -119,6 +119,9 @@ interface AppData {
 }
 
 type PositionStatus = 'todo' | 'inprogress' | 'completed';
+type ImportConflict =
+  | { type: 'candidate'; existing: Candidate; incoming: Candidate }
+  | { type: 'position'; existing: Position; incoming: Position };
 
 // --- Helper: Excel Parsing Logic ---
 
@@ -1478,10 +1481,23 @@ const CandidateDetailView = ({
                         </div>
 
                         {/* Notes */}
-                        <div>
-                           <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Notes</h4>
+                        <div className="space-y-3">
+                           <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Notes</h4>
+                           {otherSelection && (
+                              <div className="text-xs bg-amber-50 text-amber-700 px-2 py-1 rounded border border-amber-200">
+                                 <strong>Individuato per altra posizione:</strong> {otherSelection.code} - {otherSelection.title} ({otherSelection.entity})
+                              </div>
+                           )}
+                           <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Note globali</label>
                            <textarea
-                              className="w-full h-40 border border-slate-300 rounded p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none bg-slate-50 focus:bg-white transition-colors"
+                              className="w-full h-24 border border-slate-300 rounded p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none bg-slate-50 focus:bg-white transition-colors"
+                              placeholder="Note globali per il candidato..."
+                              value={candidate.globalNotes ?? ""}
+                              onChange={(e) => onUpdateCandidate({ ...candidate, globalNotes: e.target.value })}
+                           />
+                           <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Note posizione</label>
+                           <textarea
+                              className="w-full h-32 border border-slate-300 rounded p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none bg-slate-50 focus:bg-white transition-colors"
                               placeholder="Add notes specifically for this position..."
                               value={ev.notes}
                               onChange={(e) => onUpdate({...ev, notes: e.target.value})}
@@ -1639,6 +1655,7 @@ const WorksheetRow: React.FC<{
   position: Position; 
   otherSelection: Position | null;
   onUpdate: (e: Evaluation) => void;
+  onUpdateCandidate: (c: Candidate) => void;
   onOpenRequirementsDrawer: () => void;
   isDragging: boolean;
   isDropTarget: boolean;
@@ -1650,6 +1667,7 @@ const WorksheetRow: React.FC<{
   position, 
   otherSelection,
   onUpdate,
+  onUpdateCandidate,
   onOpenRequirementsDrawer,
   isDragging,
   isDropTarget,
@@ -1859,13 +1877,29 @@ const WorksheetRow: React.FC<{
             <h4 className="text-xs font-bold text-slate-500 uppercase mb-3 flex items-center gap-2">
               <FileText className="w-3 h-3"/> Notes
             </h4>
-            <textarea
-              className="flex-1 w-full border border-slate-300 rounded p-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none"
-              placeholder="Add evaluation notes here..."
-              value={evaluation.notes}
-              onChange={(e) => onUpdate({...evaluation, notes: e.target.value})}
-              rows={5}
-            />
+            <div className="space-y-3 flex-1 flex flex-col">
+              {otherSelection && (
+                <div className="text-xs bg-amber-50 text-amber-800 border border-amber-200 rounded px-2 py-1">
+                  <strong>Individuato per altra posizione:</strong> {otherSelection.code} - {otherSelection.title} ({otherSelection.entity})
+                </div>
+              )}
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Note globali</label>
+              <textarea
+                className="w-full border border-slate-300 rounded p-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none bg-white"
+                placeholder="Note globali per il candidato..."
+                value={candidate.globalNotes ?? ""}
+                onChange={(e) => onUpdateCandidate({ ...candidate, globalNotes: e.target.value })}
+                rows={3}
+              />
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Note posizione</label>
+              <textarea
+                className="flex-1 w-full border border-slate-300 rounded p-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none"
+                placeholder="Add evaluation notes here..."
+                value={evaluation.notes}
+                onChange={(e) => onUpdate({...evaluation, notes: e.target.value})}
+                rows={5}
+              />
+            </div>
           </div>
         </div>
       )}
@@ -2660,14 +2694,18 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
 
     const otherSel = getOtherSelectionInfo(c.id, position.code, evaluations, positions);
     const noteParts = [];
+    const isSelected = ev.status === "selected";
+    if (isSelected) {
+       noteParts.push("INDIVIDUATO");
+    }
+    if (otherSel) {
+       noteParts.push(`INDIVIDUATO PER LA POSIZIONE ${otherSel.code} ${otherSel.title} (${otherSel.entity})`);
+    }
     if (c.globalNotes) {
        noteParts.push(c.globalNotes);
     }
     if (ev.notes) {
        noteParts.push(ev.notes);
-    }
-    if (otherSel) {
-       noteParts.push(`INDIVIDUATO PER LA POSIZIONE ${otherSel.code} ${otherSel.title} (${otherSel.entity})`);
     }
     const noteText = noteParts.join("\n");
 
@@ -2701,7 +2739,8 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
     const corsoGraduat = [c.category, c.specialty].filter(Boolean).join(" / ");
     const mandatesDetail = [c.internationalMandates, c.mixDescription].filter(Boolean).join("\n");
 
-    return [
+    return {
+      values: [
        ...baseValues,
        ...essentialReqs.map(r => ev.reqEvaluations[r.id] === 'yes' ? 'SI' : ev.reqEvaluations[r.id] === 'no' ? 'NO' : '-'),
        ...desirableReqs.map(r => ev.reqEvaluations[r.id] === 'yes' ? 'SI' : ev.reqEvaluations[r.id] === 'no' ? 'NO' : '-'),
@@ -2711,7 +2750,9 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
        mandatesDetail, // Mandati Estero / data ultimo rientro
        c.commanderOpinion || mapStatusToText(ev.status), // Parere
        noteText // Note
-    ];
+      ],
+      isSelected
+    };
   }).filter(Boolean);
 
   // --- Merges ---
@@ -2752,7 +2793,7 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
     row5,
     row6,
     row7,
-    ...dataRows
+    ...dataRows.map(row => row.values)
   ];
 
   const worksheet = XLSX.utils.aoa_to_sheet(wsData);
@@ -2781,7 +2822,8 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
     fill = white,
     align = "center",
     valign = "center",
-    wrap = true
+    wrap = true,
+    border = baseBorder
   }: {
     bold?: boolean;
     size?: number;
@@ -2790,11 +2832,12 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
     align?: "center" | "left" | "right";
     valign?: "center" | "top" | "bottom";
     wrap?: boolean;
+    border?: typeof baseBorder;
   }) => ({
     font: { name: "Calibri", sz: size, bold, color: { rgb: color } },
     alignment: { horizontal: align, vertical: valign, wrapText: wrap },
     fill: { patternType: "solid", fgColor: { rgb: fill } },
-    border: baseBorder
+    border
   });
 
   const range = XLSX.utils.decode_range(worksheet["!ref"] || "A1");
@@ -2841,14 +2884,36 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
   // Data rows
   dataRows.forEach((row, idx) => {
     const r = 6 + idx;
-    row.forEach((value, c) => {
+    row.values.forEach((value, c) => {
       const cellAddr = XLSX.utils.encode_cell({ r, c });
       if (!worksheet[cellAddr]) return;
       let color = black;
+      let bold = false;
       if (value === "SI") color = green;
       if (value === "NO") color = red;
       const fill = c === 0 ? nominativoFill : white;
-      setCellStyle(cellAddr, makeStyle({ color, fill, align: c === 0 ? "center" : "center", valign: "center" }));
+      if (row.isSelected && c === totalCols - 1) {
+        color = green;
+        bold = true;
+      }
+      const borderColor = row.isSelected ? green : black;
+      const borderStyle = row.isSelected ? "thick" : "thin";
+      setCellStyle(
+        cellAddr,
+        makeStyle({
+          color,
+          bold,
+          fill,
+          align: c === 0 ? "center" : "center",
+          valign: "center",
+          border: {
+            top: { style: borderStyle, color: { rgb: borderColor } },
+            bottom: { style: borderStyle, color: { rgb: borderColor } },
+            left: { style: borderStyle, color: { rgb: borderColor } },
+            right: { style: borderStyle, color: { rgb: borderColor } }
+          }
+        })
+      );
     });
   });
 
@@ -4241,6 +4306,7 @@ const PositionDetailView = ({
   evaluations,
   allPositions,
   onUpdate,
+  onUpdateCandidate,
   onReorder,
   onBack,
   onToggleReqVisibility,
@@ -4254,6 +4320,7 @@ const PositionDetailView = ({
   evaluations: Record<string, Evaluation>;
   allPositions: Position[];
   onUpdate: (ev: Evaluation) => void;
+  onUpdateCandidate: (candidate: Candidate) => void;
   onReorder: (positionId: string, orderedCandidateIds: string[]) => void;
   onBack: () => void;
   onToggleReqVisibility: (posCode: string, reqId: string) => void;
@@ -4472,6 +4539,7 @@ const PositionDetailView = ({
                              position={position}
                              otherSelection={other}
                              onUpdate={onUpdate}
+                             onUpdateCandidate={onUpdateCandidate}
                               onOpenRequirementsDrawer={() => setIsRequirementsDrawerOpen(true)}
                               isDragging={draggedCandidateId === c.id}
                               isDropTarget={dropTargetId === c.id}
@@ -4506,6 +4574,7 @@ const PositionDetailView = ({
                             allPositions
                           )}
                           onUpdate={() => {}}
+                          onUpdateCandidate={() => {}}
                           onOpenRequirementsDrawer={() => {}}
                           isDragging={false}
                           isDropTarget={false}
@@ -4632,6 +4701,8 @@ const RecruitmentApp = () => {
   const [settingsFileError, setSettingsFileError] = useState("");
   const [settingsFileSuccess, setSettingsFileSuccess] = useState("");
   const [isSettingsProcessing, setIsSettingsProcessing] = useState(false);
+  const [importConflicts, setImportConflicts] = useState<ImportConflict[]>([]);
+  const [importConflictsTotal, setImportConflictsTotal] = useState(0);
 
   // Load from LocalStorage
   useEffect(() => {
@@ -4964,9 +5035,145 @@ const RecruitmentApp = () => {
     event.target.value = "";
   };
 
+  const prepareCandidateForInsert = (
+    candidate: Candidate,
+    positions: Position[],
+    evaluations: Record<string, Evaluation>
+  ) => {
+    const candidateWithApplications: Candidate = {
+      ...candidate,
+      appliedPositionCodes: []
+    };
+    const nextEvaluations: Record<string, Evaluation> = { ...evaluations };
+    const rawApp = candidateWithApplications.rawAppliedString.toUpperCase();
+
+    positions.forEach((pos) => {
+      const cleanPosCode = pos.code.trim().toUpperCase();
+      if (cleanPosCode.length < 2) return;
+      if (rawApp.includes(cleanPosCode)) {
+        candidateWithApplications.appliedPositionCodes.push(pos.code);
+        const key = `${pos.code}_${candidateWithApplications.id}`;
+        if (!nextEvaluations[key]) {
+          nextEvaluations[key] = {
+            candidateId: candidateWithApplications.id,
+            positionId: pos.code,
+            reqEvaluations: {},
+            notes: "",
+            status: "pending"
+          };
+        }
+      }
+    });
+
+    return { candidate: candidateWithApplications, evaluations: nextEvaluations };
+  };
+
+  const integrateCandidate = (
+    prev: AppData,
+    candidate: Candidate,
+    mode: "add" | "replace"
+  ) => {
+    const { candidate: prepared, evaluations } = prepareCandidateForInsert(
+      candidate,
+      prev.positions,
+      prev.evaluations
+    );
+
+    const candidates =
+      mode === "replace"
+        ? prev.candidates.map((existing) =>
+            existing.id === prepared.id ? prepared : existing
+          )
+        : [...prev.candidates, prepared];
+
+    return {
+      ...prev,
+      candidates,
+      evaluations,
+      lastUpdated: Date.now()
+    };
+  };
+
+  const integratePosition = (
+    prev: AppData,
+    position: Position,
+    mode: "add" | "replace"
+  ) => {
+    const nextEvaluations: Record<string, Evaluation> = { ...prev.evaluations };
+    const updatedCandidates = prev.candidates.map((candidate) => ({
+      ...candidate,
+      appliedPositionCodes: [...candidate.appliedPositionCodes]
+    }));
+
+    const cleanPosCode = position.code.trim().toUpperCase();
+    if (cleanPosCode.length >= 2) {
+      updatedCandidates.forEach((candidate) => {
+        const rawApp = candidate.rawAppliedString.toUpperCase();
+        if (rawApp.includes(cleanPosCode)) {
+          if (!candidate.appliedPositionCodes.includes(position.code)) {
+            candidate.appliedPositionCodes.push(position.code);
+          }
+          const key = `${position.code}_${candidate.id}`;
+          if (!nextEvaluations[key]) {
+            nextEvaluations[key] = {
+              candidateId: candidate.id,
+              positionId: position.code,
+              reqEvaluations: {},
+              notes: "",
+              status: "pending"
+            };
+          }
+        }
+      });
+    }
+
+    const positions =
+      mode === "replace"
+        ? prev.positions.map((existing) =>
+            existing.code === position.code ? position : existing
+          )
+        : [...prev.positions, position];
+
+    return {
+      ...prev,
+      positions,
+      candidates: updatedCandidates,
+      evaluations: nextEvaluations,
+      favoritePositionIds: prev.favoritePositionIds.filter((id) =>
+        positions.some((pos) => pos.code === id)
+      ),
+      lastUpdated: Date.now()
+    };
+  };
+
+  const resolveImportConflict = (action: "keep" | "replace") => {
+    setImportConflicts((prev) => {
+      if (prev.length === 0) return prev;
+      const [current, ...rest] = prev;
+
+      if (action === "replace") {
+        setAppData((state) => {
+          if (current.type === "candidate") {
+            return integrateCandidate(state, current.incoming, "replace");
+          }
+          return integratePosition(state, current.incoming, "replace");
+        });
+      }
+
+      if (rest.length === 0) {
+        setSettingsFileSuccess("Conflitti risolti. Import completato.");
+        setImportConflictsTotal(0);
+      }
+
+      return rest;
+    });
+  };
+
   const appendCandidatesFromFiles = async (files: File[]) => {
     setSettingsFileError("");
     setSettingsFileSuccess("");
+    setImportConflicts([]);
+    setImportConflictsTotal(0);
     setIsSettingsProcessing(true);
     try {
       const candidatesRows = await readExcelFiles(files, "candidati-aggiunta");
@@ -4976,45 +5183,24 @@ const RecruitmentApp = () => {
       }
 
       let addedCount = 0;
+      const conflicts: ImportConflict[] = [];
+
       setAppData((prev) => {
+        let nextState = prev;
         const existingById = new Map(prev.candidates.map((candidate) => [candidate.id, candidate]));
-        const newEvaluations: Record<string, Evaluation> = { ...prev.evaluations };
 
         candidatesResult.items.forEach((candidate) => {
-          if (existingById.has(candidate.id)) {
+          const existing = existingById.get(candidate.id);
+          if (existing) {
+            conflicts.push({ type: "candidate", existing, incoming: candidate });
             return;
           }
-          candidate.appliedPositionCodes = [];
-          const rawApp = candidate.rawAppliedString.toUpperCase();
-          prev.positions.forEach((pos) => {
-            const cleanPosCode = pos.code.trim().toUpperCase();
-            if (cleanPosCode.length < 2) return;
-            if (rawApp.includes(cleanPosCode)) {
-              candidate.appliedPositionCodes.push(pos.code);
-              const key = `${pos.code}_${candidate.id}`;
-              if (!newEvaluations[key]) {
-                newEvaluations[key] = {
-                  candidateId: candidate.id,
-                  positionId: pos.code,
-                  reqEvaluations: {},
-                  notes: "",
-                  status: "pending"
-                };
-              }
-            }
-          });
+          nextState = integrateCandidate(nextState, candidate, "add");
           existingById.set(candidate.id, candidate);
           addedCount += 1;
         });
 
-        if (addedCount === 0) return prev;
-
-        return {
-          ...prev,
-          candidates: Array.from(existingById.values()),
-          evaluations: newEvaluations,
-          lastUpdated: Date.now()
-        };
+        return nextState;
       });
 
       setLastImportStats({
@@ -5026,11 +5212,19 @@ const RecruitmentApp = () => {
         positions: { imported: 0, duplicates: 0, totalRows: 0 }
       });
 
-      setSettingsFileSuccess(
-        addedCount > 0
-          ? `Aggiunti ${addedCount} nuovi candidati.`
-          : "Nessun nuovo candidato da aggiungere."
-      );
+      if (conflicts.length > 0) {
+        setImportConflicts(conflicts);
+        setImportConflictsTotal(conflicts.length);
+        setSettingsFileSuccess(
+          `Importati ${addedCount} nuovi candidati. Risolvi ${conflicts.length} conflitti.`
+        );
+      } else {
+        setSettingsFileSuccess(
+          addedCount > 0
+            ? `Aggiunti ${addedCount} nuovi candidati.`
+            : "Nessun nuovo candidato da aggiungere."
+        );
+      }
     } catch (error: any) {
       console.error(error);
       setSettingsFileError(error.message || "Errore durante l'aggiunta dei candidati.");
@@ -5042,6 +5236,8 @@ const RecruitmentApp = () => {
   const appendPositionsFromFiles = async (files: File[]) => {
     setSettingsFileError("");
     setSettingsFileSuccess("");
+    setImportConflicts([]);
+    setImportConflictsTotal(0);
     setIsSettingsProcessing(true);
     try {
       const positionsRows = await readExcelFiles(files, "posizioni-aggiunta");
@@ -5051,52 +5247,23 @@ const RecruitmentApp = () => {
       }
 
       let addedCount = 0;
+      const conflicts: ImportConflict[] = [];
       setAppData((prev) => {
+        let nextState = prev;
         const positionsByCode = new Map(prev.positions.map((pos) => [pos.code, pos]));
-        const newEvaluations: Record<string, Evaluation> = { ...prev.evaluations };
-        const updatedCandidates = prev.candidates.map((candidate) => ({
-          ...candidate,
-          appliedPositionCodes: [...candidate.appliedPositionCodes]
-        }));
 
         positionsResult.items.forEach((position) => {
-          if (positionsByCode.has(position.code)) {
+          const existing = positionsByCode.get(position.code);
+          if (existing) {
+            conflicts.push({ type: "position", existing, incoming: position });
             return;
           }
+          nextState = integratePosition(nextState, position, "add");
           positionsByCode.set(position.code, position);
           addedCount += 1;
-          const cleanPosCode = position.code.trim().toUpperCase();
-          if (cleanPosCode.length < 2) return;
-          updatedCandidates.forEach((candidate) => {
-            const rawApp = candidate.rawAppliedString.toUpperCase();
-            if (rawApp.includes(cleanPosCode)) {
-              if (!candidate.appliedPositionCodes.includes(position.code)) {
-                candidate.appliedPositionCodes.push(position.code);
-              }
-              const key = `${position.code}_${candidate.id}`;
-              if (!newEvaluations[key]) {
-                newEvaluations[key] = {
-                  candidateId: candidate.id,
-                  positionId: position.code,
-                  reqEvaluations: {},
-                  notes: "",
-                  status: "pending"
-                };
-              }
-            }
-          });
         });
 
-        if (addedCount === 0) return prev;
-
-        return {
-          ...prev,
-          positions: Array.from(positionsByCode.values()),
-          candidates: updatedCandidates,
-          evaluations: newEvaluations,
-          favoritePositionIds: prev.favoritePositionIds.filter((id) => positionsByCode.has(id)),
-          lastUpdated: Date.now()
-        };
+        return nextState;
       });
 
       setLastImportStats({
@@ -5108,11 +5275,19 @@ const RecruitmentApp = () => {
         }
       });
 
-      setSettingsFileSuccess(
-        addedCount > 0
-          ? `Aggiunte ${addedCount} nuove posizioni.`
-          : "Nessuna nuova posizione da aggiungere."
-      );
+      if (conflicts.length > 0) {
+        setImportConflicts(conflicts);
+        setImportConflictsTotal(conflicts.length);
+        setSettingsFileSuccess(
+          `Importate ${addedCount} nuove posizioni. Risolvi ${conflicts.length} conflitti.`
+        );
+      } else {
+        setSettingsFileSuccess(
+          addedCount > 0
+            ? `Aggiunte ${addedCount} nuove posizioni.`
+            : "Nessuna nuova posizione da aggiungere."
+        );
+      }
     } catch (error: any) {
       console.error(error);
       setSettingsFileError(error.message || "Errore durante l'aggiunta delle posizioni.");
@@ -5206,6 +5381,9 @@ const RecruitmentApp = () => {
   }, [appData.positions]);
 
   const distinctLevels = useMemo(() => getDistinctPositionLevels(appData.positions), [appData.positions]);
+  const currentConflict = importConflicts[0];
+  const conflictStep =
+    importConflictsTotal > 0 ? importConflictsTotal - importConflicts.length + 1 : 0;
 
   const lowerSearch = searchTerm.trim().toLowerCase();
   const positionMatchesFilters = useCallback(
@@ -5256,6 +5434,7 @@ const RecruitmentApp = () => {
           evaluations={appData.evaluations}
           allPositions={appData.positions}
           onUpdate={updateEvaluation}
+          onUpdateCandidate={updateCandidate}
           onReorder={updateManualOrder}
           onBack={() => setCurrentView(positionsReturnView)}
           onToggleReqVisibility={toggleRequirementVisibility}
@@ -5546,6 +5725,87 @@ const RecruitmentApp = () => {
                 className="px-4 py-2 rounded-lg bg-blue-600 text-white disabled:bg-slate-300 disabled:text-slate-500"
               >
                 Avvia
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {currentConflict && (
+        <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center z-[60]">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-800">
+                  Conflitto import {currentConflict.type === "candidate" ? "candidato" : "posizione"}
+                </h3>
+                <p className="text-sm text-slate-500">
+                  Conflitto {conflictStep} di {importConflictsTotal}
+                </p>
+              </div>
+              <span className="text-xs uppercase font-semibold text-slate-400">
+                Risoluzione manuale
+              </span>
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+              <div className="border border-slate-200 rounded-lg p-4 bg-slate-50">
+                <div className="text-xs uppercase text-slate-400 font-semibold mb-3">Esistente</div>
+                {currentConflict.type === "candidate" ? (
+                  <dl className="space-y-2">
+                    <div><dt className="text-slate-400 text-xs">Matricola</dt><dd className="text-slate-700 font-semibold">{currentConflict.existing.id}</dd></div>
+                    <div><dt className="text-slate-400 text-xs">Nominativo</dt><dd className="text-slate-700">{currentConflict.existing.nominativo}</dd></div>
+                    <div><dt className="text-slate-400 text-xs">Ruolo</dt><dd className="text-slate-700">{currentConflict.existing.rank} {currentConflict.existing.role}</dd></div>
+                    <div><dt className="text-slate-400 text-xs">Categoria/Specialità</dt><dd className="text-slate-700">{currentConflict.existing.category} {currentConflict.existing.specialty}</dd></div>
+                    <div><dt className="text-slate-400 text-xs">Ente</dt><dd className="text-slate-700">{currentConflict.existing.serviceEntity}</dd></div>
+                    <div><dt className="text-slate-400 text-xs">Applicazioni</dt><dd className="text-slate-700 line-clamp-2">{currentConflict.existing.rawAppliedString}</dd></div>
+                  </dl>
+                ) : (
+                  <dl className="space-y-2">
+                    <div><dt className="text-slate-400 text-xs">Codice</dt><dd className="text-slate-700 font-semibold">{currentConflict.existing.code}</dd></div>
+                    <div><dt className="text-slate-400 text-xs">Titolo</dt><dd className="text-slate-700">{currentConflict.existing.title}</dd></div>
+                    <div><dt className="text-slate-400 text-xs">Ente</dt><dd className="text-slate-700">{currentConflict.existing.entity}</dd></div>
+                    <div><dt className="text-slate-400 text-xs">Sede</dt><dd className="text-slate-700">{currentConflict.existing.location}</dd></div>
+                    <div><dt className="text-slate-400 text-xs">Requisiti</dt><dd className="text-slate-700">{currentConflict.existing.requirements.length}</dd></div>
+                    <div><dt className="text-slate-400 text-xs">Profilo richiesto</dt><dd className="text-slate-700">{[currentConflict.existing.rankReq, currentConflict.existing.catSpecQualReq].filter(Boolean).join(" • ") || "-"}</dd></div>
+                  </dl>
+                )}
+              </div>
+              <div className="border border-blue-200 rounded-lg p-4 bg-blue-50">
+                <div className="text-xs uppercase text-blue-500 font-semibold mb-3">Nuovo</div>
+                {currentConflict.type === "candidate" ? (
+                  <dl className="space-y-2">
+                    <div><dt className="text-blue-400 text-xs">Matricola</dt><dd className="text-slate-700 font-semibold">{currentConflict.incoming.id}</dd></div>
+                    <div><dt className="text-blue-400 text-xs">Nominativo</dt><dd className="text-slate-700">{currentConflict.incoming.nominativo}</dd></div>
+                    <div><dt className="text-blue-400 text-xs">Ruolo</dt><dd className="text-slate-700">{currentConflict.incoming.rank} {currentConflict.incoming.role}</dd></div>
+                    <div><dt className="text-blue-400 text-xs">Categoria/Specialità</dt><dd className="text-slate-700">{currentConflict.incoming.category} {currentConflict.incoming.specialty}</dd></div>
+                    <div><dt className="text-blue-400 text-xs">Ente</dt><dd className="text-slate-700">{currentConflict.incoming.serviceEntity}</dd></div>
+                    <div><dt className="text-blue-400 text-xs">Applicazioni</dt><dd className="text-slate-700 line-clamp-2">{currentConflict.incoming.rawAppliedString}</dd></div>
+                  </dl>
+                ) : (
+                  <dl className="space-y-2">
+                    <div><dt className="text-blue-400 text-xs">Codice</dt><dd className="text-slate-700 font-semibold">{currentConflict.incoming.code}</dd></div>
+                    <div><dt className="text-blue-400 text-xs">Titolo</dt><dd className="text-slate-700">{currentConflict.incoming.title}</dd></div>
+                    <div><dt className="text-blue-400 text-xs">Ente</dt><dd className="text-slate-700">{currentConflict.incoming.entity}</dd></div>
+                    <div><dt className="text-blue-400 text-xs">Sede</dt><dd className="text-slate-700">{currentConflict.incoming.location}</dd></div>
+                    <div><dt className="text-blue-400 text-xs">Requisiti</dt><dd className="text-slate-700">{currentConflict.incoming.requirements.length}</dd></div>
+                    <div><dt className="text-blue-400 text-xs">Profilo richiesto</dt><dd className="text-slate-700">{[currentConflict.incoming.rankReq, currentConflict.incoming.catSpecQualReq].filter(Boolean).join(" • ") || "-"}</dd></div>
+                  </dl>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                onClick={() => resolveImportConflict("keep")}
+                className="px-4 py-2 rounded-lg border border-slate-200 text-slate-600 hover:text-slate-800"
+              >
+                Mantieni esistente
+              </button>
+              <button
+                onClick={() => resolveImportConflict("replace")}
+                className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+              >
+                Sostituisci con nuovo
               </button>
             </div>
           </div>
