@@ -31,8 +31,7 @@ import {
   AlertTriangle,
   Ban,
   User,
-  Star,
-  Share2
+  Star
 } from "lucide-react";
 
 // --- Types ---
@@ -102,29 +101,6 @@ interface Evaluation {
   notes: string;
   status: 'pending' | 'selected' | 'rejected' | 'reserve' | 'non-compatible' | 'excluded';
   manualOrder?: number;
-}
-
-type GraphNodeType = "position" | "candidate" | "position-group" | "candidate-group";
-type GraphStatusCategory = "selected" | "reserve" | "rejected" | "pending";
-
-interface GraphNode {
-  id: string;
-  type: GraphNodeType;
-  label: string;
-  subtitle?: string;
-  entity?: string;
-  groupKey?: string;
-}
-
-interface GraphEdge {
-  id: string;
-  source: string;
-  target: string;
-  positionId: string;
-  candidateId: string;
-  status: GraphStatusCategory;
-  notes: string;
-  rawStatus: Evaluation["status"];
 }
 
 interface Cycle {
@@ -4324,626 +4300,6 @@ const OverlapKanbanView = ({
   );
 };
 
-const getGraphStatusCategory = (status: Evaluation["status"]): GraphStatusCategory => {
-  if (status === "selected") return "selected";
-  if (status === "reserve") return "reserve";
-  if (status === "rejected" || status === "excluded" || status === "non-compatible") {
-    return "rejected";
-  }
-  return "pending";
-};
-
-const GRAPH_STATUS_LABELS: Record<GraphStatusCategory, string> = {
-  selected: "Selected",
-  reserve: "Possible match",
-  rejected: "Excluded/Rejected",
-  pending: "Pending"
-};
-
-const GRAPH_STATUS_COLORS: Record<GraphStatusCategory, string> = {
-  selected: "#16a34a",
-  reserve: "#f59e0b",
-  rejected: "#dc2626",
-  pending: "#94a3b8"
-};
-
-const GRAPH_STATUS_PRIORITY: Record<GraphStatusCategory, number> = {
-  selected: 1,
-  reserve: 2,
-  pending: 3,
-  rejected: 4
-};
-
-const GraphView = ({
-  positions,
-  candidates,
-  evaluations,
-  statusFilters,
-  showOnlyEvaluated,
-  topNCandidates,
-  clusterByEntity,
-  collapsedPositionGroups,
-  collapsedCandidateGroups,
-  onTogglePositionGroup,
-  onToggleCandidateGroup
-}: {
-  positions: Position[];
-  candidates: Candidate[];
-  evaluations: Record<string, Evaluation>;
-  statusFilters: Record<GraphStatusCategory, boolean>;
-  showOnlyEvaluated: boolean;
-  topNCandidates: number;
-  clusterByEntity: boolean;
-  collapsedPositionGroups: Record<string, boolean>;
-  collapsedCandidateGroups: Record<string, boolean>;
-  onTogglePositionGroup: (groupKey: string) => void;
-  onToggleCandidateGroup: (groupKey: string) => void;
-}) => {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const [dimensions, setDimensions] = useState({ width: 900, height: 600 });
-  const [activePositionId, setActivePositionId] = useState<string | null>(null);
-  const [activeCandidateId, setActiveCandidateId] = useState<string | null>(null);
-  const [hoverInfo, setHoverInfo] = useState<{
-    x: number;
-    y: number;
-    title: string;
-    subtitle?: string;
-    details?: string;
-  } | null>(null);
-
-  useLayoutEffect(() => {
-    if (!containerRef.current) return;
-    const updateSize = () => {
-      const rect = containerRef.current?.getBoundingClientRect();
-      if (rect) {
-        setDimensions((prev) => ({
-          width: Math.max(600, rect.width),
-          height: Math.max(500, rect.height)
-        }));
-      }
-    };
-    updateSize();
-    const observer = new ResizeObserver(updateSize);
-    observer.observe(containerRef.current);
-    return () => observer.disconnect();
-  }, []);
-
-  const positionGroups = useMemo(() => {
-    const groupMap = new Map<string, Position[]>();
-    positions.forEach((position) => {
-      const key = position.entity || "Senza ente";
-      if (!groupMap.has(key)) groupMap.set(key, []);
-      groupMap.get(key)!.push(position);
-    });
-    return Array.from(groupMap.entries()).sort(([a], [b]) => a.localeCompare(b));
-  }, [positions]);
-
-  const candidateGroups = useMemo(() => {
-    const groupMap = new Map<string, Candidate[]>();
-    candidates.forEach((candidate) => {
-      const key = candidate.serviceEntity || "Senza ente";
-      if (!groupMap.has(key)) groupMap.set(key, []);
-      groupMap.get(key)!.push(candidate);
-    });
-    return Array.from(groupMap.entries()).sort(([a], [b]) => a.localeCompare(b));
-  }, [candidates]);
-
-  const graphData = useMemo(() => {
-    const nodes: GraphNode[] = [];
-    const edges: GraphEdge[] = [];
-    const includePosition = new Set<string>();
-    const includeCandidate = new Set<string>();
-
-    const evaluationsByPosition = new Map<string, Evaluation[]>();
-    Object.values(evaluations).forEach((evaluation) => {
-      const statusCategory = getGraphStatusCategory(evaluation.status);
-      if (!statusFilters[statusCategory]) return;
-      if (showOnlyEvaluated && evaluation.status === "pending") return;
-      if (!evaluationsByPosition.has(evaluation.positionId)) {
-        evaluationsByPosition.set(evaluation.positionId, []);
-      }
-      evaluationsByPosition.get(evaluation.positionId)!.push(evaluation);
-    });
-
-    const sortedCandidatesForPosition = (positionId: string) => {
-      const rawEvaluations = evaluationsByPosition.get(positionId) ?? [];
-      const sorted = [...rawEvaluations].sort((a, b) => {
-        const categoryDiff =
-          GRAPH_STATUS_PRIORITY[getGraphStatusCategory(a.status)] -
-          GRAPH_STATUS_PRIORITY[getGraphStatusCategory(b.status)];
-        if (categoryDiff !== 0) return categoryDiff;
-        if (a.manualOrder !== undefined || b.manualOrder !== undefined) {
-          return (a.manualOrder ?? Number.POSITIVE_INFINITY) - (b.manualOrder ?? Number.POSITIVE_INFINITY);
-        }
-        const candA = candidates.find((candidate) => candidate.id === a.candidateId)?.nominativo ?? "";
-        const candB = candidates.find((candidate) => candidate.id === b.candidateId)?.nominativo ?? "";
-        return candA.localeCompare(candB);
-      });
-      if (topNCandidates > 0) {
-        return sorted.slice(0, topNCandidates);
-      }
-      return sorted;
-    };
-
-    if (clusterByEntity) {
-      positionGroups.forEach(([groupKey, groupPositions]) => {
-        const collapsed = collapsedPositionGroups[groupKey] ?? false;
-        if (collapsed) {
-          nodes.push({
-            id: `position-group:${groupKey}`,
-            type: "position-group",
-            label: groupKey,
-            subtitle: `${groupPositions.length} posizioni`,
-            groupKey
-          });
-        } else {
-          groupPositions.forEach((position) => {
-            includePosition.add(position.code);
-            nodes.push({
-              id: position.code,
-              type: "position",
-              label: position.title || position.code,
-              subtitle: position.code,
-              entity: position.entity,
-              groupKey
-            });
-          });
-        }
-      });
-
-      candidateGroups.forEach(([groupKey, groupCandidates]) => {
-        const collapsed = collapsedCandidateGroups[groupKey] ?? false;
-        if (collapsed) {
-          nodes.push({
-            id: `candidate-group:${groupKey}`,
-            type: "candidate-group",
-            label: groupKey,
-            subtitle: `${groupCandidates.length} candidati`,
-            groupKey
-          });
-        } else {
-          groupCandidates.forEach((candidate) => {
-            includeCandidate.add(candidate.id);
-            nodes.push({
-              id: candidate.id,
-              type: "candidate",
-              label: candidate.nominativo,
-              subtitle: candidate.rank ? `${candidate.rank} ${candidate.role}` : candidate.role,
-              entity: candidate.serviceEntity,
-              groupKey
-            });
-          });
-        }
-      });
-
-      const edgeBucket = new Map<string, GraphEdge>();
-      positionGroups.forEach(([groupKey, groupPositions]) => {
-        const positionCollapsed = collapsedPositionGroups[groupKey] ?? false;
-        groupPositions.forEach((position) => {
-          const evaluationsForPosition = sortedCandidatesForPosition(position.code);
-          evaluationsForPosition.forEach((evaluation) => {
-            const candidate = candidates.find((cand) => cand.id === evaluation.candidateId);
-            if (!candidate) return;
-            const candidateGroupKey = candidate.serviceEntity || "Senza ente";
-            const candidateCollapsed = collapsedCandidateGroups[candidateGroupKey] ?? false;
-            const sourceId = positionCollapsed ? `position-group:${groupKey}` : position.code;
-            const targetId = candidateCollapsed ? `candidate-group:${candidateGroupKey}` : candidate.id;
-            if (positionCollapsed || candidateCollapsed) {
-              const bucketKey = `${sourceId}::${targetId}`;
-              const status = getGraphStatusCategory(evaluation.status);
-              const existing = edgeBucket.get(bucketKey);
-              if (!existing || GRAPH_STATUS_PRIORITY[status] < GRAPH_STATUS_PRIORITY[existing.status]) {
-                edgeBucket.set(bucketKey, {
-                  id: bucketKey,
-                  source: sourceId,
-                  target: targetId,
-                  positionId: position.code,
-                  candidateId: candidate.id,
-                  status,
-                  notes: evaluation.notes,
-                  rawStatus: evaluation.status
-                });
-              }
-              return;
-            }
-            edges.push({
-              id: `${position.code}_${candidate.id}`,
-              source: position.code,
-              target: candidate.id,
-              positionId: position.code,
-              candidateId: candidate.id,
-              status: getGraphStatusCategory(evaluation.status),
-              notes: evaluation.notes,
-              rawStatus: evaluation.status
-            });
-          });
-        });
-      });
-
-      edgeBucket.forEach((edge) => edges.push(edge));
-    } else {
-      positions.forEach((position) => {
-        includePosition.add(position.code);
-        nodes.push({
-          id: position.code,
-          type: "position",
-          label: position.title || position.code,
-          subtitle: position.code,
-          entity: position.entity
-        });
-      });
-
-      candidates.forEach((candidate) => {
-        includeCandidate.add(candidate.id);
-        nodes.push({
-          id: candidate.id,
-          type: "candidate",
-          label: candidate.nominativo,
-          subtitle: candidate.rank ? `${candidate.rank} ${candidate.role}` : candidate.role,
-          entity: candidate.serviceEntity
-        });
-      });
-
-      positions.forEach((position) => {
-        const evaluationsForPosition = sortedCandidatesForPosition(position.code);
-        evaluationsForPosition.forEach((evaluation) => {
-          if (!includeCandidate.has(evaluation.candidateId)) return;
-          edges.push({
-            id: `${position.code}_${evaluation.candidateId}`,
-            source: position.code,
-            target: evaluation.candidateId,
-            positionId: position.code,
-            candidateId: evaluation.candidateId,
-            status: getGraphStatusCategory(evaluation.status),
-            notes: evaluation.notes,
-            rawStatus: evaluation.status
-          });
-        });
-      });
-    }
-
-    return { nodes, edges };
-  }, [
-    positions,
-    candidates,
-    evaluations,
-    statusFilters,
-    showOnlyEvaluated,
-    topNCandidates,
-    clusterByEntity,
-    collapsedPositionGroups,
-    collapsedCandidateGroups,
-    positionGroups,
-    candidateGroups
-  ]);
-
-  const nodePositions = useMemo(() => {
-    const leftNodes = graphData.nodes.filter((node) => node.type === "position" || node.type === "position-group");
-    const rightNodes = graphData.nodes.filter((node) => node.type === "candidate" || node.type === "candidate-group");
-    const nodeGap = 60;
-    const leftColumnX = 180;
-    const rightColumnX = dimensions.width - 180;
-    const height = Math.max(
-      500,
-      Math.max(leftNodes.length, rightNodes.length) * nodeGap + 120
-    );
-    const leftStartY = 80;
-    const rightStartY = 80;
-    const leftPositions = new Map<string, { x: number; y: number }>();
-    leftNodes.forEach((node, index) => {
-      leftPositions.set(node.id, {
-        x: leftColumnX,
-        y: leftStartY + index * nodeGap
-      });
-    });
-    const rightPositions = new Map<string, { x: number; y: number }>();
-    rightNodes.forEach((node, index) => {
-      rightPositions.set(node.id, {
-        x: rightColumnX,
-        y: rightStartY + index * nodeGap
-      });
-    });
-    return { height, positions: new Map([...leftPositions, ...rightPositions]) };
-  }, [graphData.nodes, dimensions.width]);
-
-  const edgeVisibility = useCallback(
-    (edge: GraphEdge) => {
-      if (activePositionId && edge.positionId !== activePositionId) return "dimmed";
-      if (activeCandidateId && edge.candidateId !== activeCandidateId) return "dimmed";
-      return "normal";
-    },
-    [activePositionId, activeCandidateId]
-  );
-
-  const handleClearSelection = () => {
-    setActivePositionId(null);
-    setActiveCandidateId(null);
-  };
-
-  const selectedPositionDetails = activePositionId
-    ? positions.find((pos) => pos.code === activePositionId)
-    : null;
-  const selectedCandidateDetails = activeCandidateId
-    ? candidates.find((cand) => cand.id === activeCandidateId)
-    : null;
-
-  return (
-    <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
-      <div className="flex flex-col xl:flex-row gap-6 p-6">
-        <div className="flex-1 min-h-[520px] relative" ref={containerRef}>
-          <div className="absolute right-4 top-4 z-10">
-            {(activePositionId || activeCandidateId) && (
-              <button
-                onClick={handleClearSelection}
-                className="text-xs text-slate-500 hover:text-slate-700 bg-white border border-slate-200 px-2 py-1 rounded-full"
-              >
-                Reset evidenziazione
-              </button>
-            )}
-          </div>
-          <div className="overflow-auto border border-dashed border-slate-200 rounded-lg">
-            <svg width={dimensions.width} height={nodePositions.height} className="bg-slate-50">
-              {graphData.edges.map((edge) => {
-                const source = nodePositions.positions.get(edge.source);
-                const target = nodePositions.positions.get(edge.target);
-                if (!source || !target) return null;
-                const visibility = edgeVisibility(edge);
-                const strokeOpacity = visibility === "dimmed" ? 0.15 : 0.85;
-                return (
-                  <g key={edge.id}>
-                    <line
-                      x1={source.x}
-                      y1={source.y}
-                      x2={target.x}
-                      y2={target.y}
-                      stroke={GRAPH_STATUS_COLORS[edge.status]}
-                      strokeWidth={2}
-                      strokeOpacity={strokeOpacity}
-                    />
-                    <line
-                      x1={source.x}
-                      y1={source.y}
-                      x2={target.x}
-                      y2={target.y}
-                      stroke="transparent"
-                      strokeWidth={10}
-                      onMouseEnter={(event) => {
-                        const rect = containerRef.current?.getBoundingClientRect();
-                        if (!rect) return;
-                        const candidate = candidates.find((cand) => cand.id === edge.candidateId);
-                        const position = positions.find((pos) => pos.code === edge.positionId);
-                        setHoverInfo({
-                          x: event.clientX - rect.left + 12,
-                          y: event.clientY - rect.top + 12,
-                          title: `${candidate?.nominativo ?? "Candidato"} → ${position?.title ?? position?.code ?? "Posizione"}`,
-                          subtitle: `Stato: ${edge.rawStatus}`,
-                          details: edge.notes ? `Note: ${edge.notes}` : undefined
-                        });
-                      }}
-                      onMouseMove={(event) => {
-                        const rect = containerRef.current?.getBoundingClientRect();
-                        if (!rect) return;
-                        setHoverInfo((prev) =>
-                          prev
-                            ? {
-                                ...prev,
-                                x: event.clientX - rect.left + 12,
-                                y: event.clientY - rect.top + 12
-                              }
-                            : null
-                        );
-                      }}
-                      onMouseLeave={() => setHoverInfo(null)}
-                    />
-                  </g>
-                );
-              })}
-
-              {graphData.nodes.map((node) => {
-                const position = nodePositions.positions.get(node.id);
-                if (!position) return null;
-                const isPositionNode = node.type === "position" || node.type === "position-group";
-                const isActive =
-                  (activePositionId && node.id === activePositionId) ||
-                  (activeCandidateId && node.id === activeCandidateId);
-                const highlightOpacity =
-                  activePositionId || activeCandidateId ? (isActive ? 1 : 0.4) : 1;
-                return (
-                  <g
-                    key={node.id}
-                    style={{ cursor: node.type.includes("position") || node.type.includes("candidate") ? "pointer" : "default" }}
-                    onClick={() => {
-                      if (node.type === "position") {
-                        setActivePositionId(node.id);
-                        setActiveCandidateId(null);
-                      } else if (node.type === "candidate") {
-                        setActiveCandidateId(node.id);
-                        setActivePositionId(null);
-                      }
-                    }}
-                    onMouseEnter={(event) => {
-                      const rect = containerRef.current?.getBoundingClientRect();
-                      if (!rect) return;
-                      setHoverInfo({
-                        x: event.clientX - rect.left + 12,
-                        y: event.clientY - rect.top + 12,
-                        title: node.label,
-                        subtitle: node.subtitle,
-                        details: node.entity ? `Ente: ${node.entity}` : undefined
-                      });
-                    }}
-                    onMouseMove={(event) => {
-                      const rect = containerRef.current?.getBoundingClientRect();
-                      if (!rect) return;
-                      setHoverInfo((prev) =>
-                        prev
-                          ? {
-                              ...prev,
-                              x: event.clientX - rect.left + 12,
-                              y: event.clientY - rect.top + 12
-                            }
-                          : null
-                      );
-                    }}
-                    onMouseLeave={() => setHoverInfo(null)}
-                  >
-                    {isPositionNode ? (
-                      <rect
-                        x={position.x - 70}
-                        y={position.y - 20}
-                        width={140}
-                        height={40}
-                        rx={8}
-                        fill={node.type === "position-group" ? "#e2e8f0" : "#dbeafe"}
-                        stroke={isActive ? "#1d4ed8" : "#94a3b8"}
-                        strokeWidth={isActive ? 2 : 1}
-                        opacity={highlightOpacity}
-                      />
-                    ) : (
-                      <circle
-                        cx={position.x}
-                        cy={position.y}
-                        r={20}
-                        fill={node.type === "candidate-group" ? "#fef9c3" : "#fee2e2"}
-                        stroke={isActive ? "#b91c1c" : "#94a3b8"}
-                        strokeWidth={isActive ? 2 : 1}
-                        opacity={highlightOpacity}
-                      />
-                    )}
-                    <text
-                      x={position.x}
-                      y={position.y}
-                      textAnchor="middle"
-                      dominantBaseline="middle"
-                      className="fill-slate-700 text-[10px] font-semibold"
-                      style={{ pointerEvents: "none", opacity: highlightOpacity }}
-                    >
-                      {node.label.length > 16 ? `${node.label.slice(0, 15)}…` : node.label}
-                    </text>
-                  </g>
-                );
-              })}
-            </svg>
-          </div>
-          {hoverInfo && (
-            <div
-              className="absolute z-20 bg-white border border-slate-200 shadow-lg rounded-lg px-3 py-2 text-xs text-slate-700 max-w-xs"
-              style={{ left: hoverInfo.x, top: hoverInfo.y }}
-            >
-              <div className="font-semibold text-slate-800">{hoverInfo.title}</div>
-              {hoverInfo.subtitle && <div className="text-slate-500">{hoverInfo.subtitle}</div>}
-              {hoverInfo.details && <div className="text-slate-500 mt-1">{hoverInfo.details}</div>}
-            </div>
-          )}
-        </div>
-        <div className="w-full xl:w-80 space-y-4">
-          <div className="rounded-lg border border-slate-200 p-4">
-            <div className="text-sm font-semibold text-slate-700">Legenda stati</div>
-            <div className="mt-3 space-y-2 text-xs text-slate-600">
-              {(Object.keys(GRAPH_STATUS_LABELS) as GraphStatusCategory[]).map((status) => (
-                <label key={status} className="flex items-center gap-2">
-                  <span
-                    className="w-3 h-3 rounded-full"
-                    style={{ backgroundColor: GRAPH_STATUS_COLORS[status] }}
-                  ></span>
-                  <span>{GRAPH_STATUS_LABELS[status]}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-          <div className="rounded-lg border border-slate-200 p-4">
-            <div className="text-sm font-semibold text-slate-700">Focus selezione</div>
-            <div className="mt-3 text-xs text-slate-600 space-y-2">
-              {selectedPositionDetails && (
-                <div>
-                  <div className="font-semibold text-slate-700">Posizione</div>
-                  <div>{selectedPositionDetails.title || selectedPositionDetails.code}</div>
-                  <ul className="mt-2 space-y-1">
-                    {graphData.edges
-                      .filter((edge) => edge.positionId === selectedPositionDetails.code)
-                      .map((edge) => {
-                        const candidate = candidates.find((cand) => cand.id === edge.candidateId);
-                        return (
-                          <li key={edge.id} className="flex items-center gap-2">
-                            <span
-                              className="w-2 h-2 rounded-full"
-                              style={{ backgroundColor: GRAPH_STATUS_COLORS[edge.status] }}
-                            ></span>
-                            <span>{candidate?.nominativo ?? edge.candidateId}</span>
-                          </li>
-                        );
-                      })}
-                  </ul>
-                </div>
-              )}
-              {selectedCandidateDetails && (
-                <div>
-                  <div className="font-semibold text-slate-700">Candidato</div>
-                  <div>{selectedCandidateDetails.nominativo}</div>
-                  <ul className="mt-2 space-y-1">
-                    {graphData.edges
-                      .filter((edge) => edge.candidateId === selectedCandidateDetails.id)
-                      .map((edge) => {
-                        const position = positions.find((pos) => pos.code === edge.positionId);
-                        return (
-                          <li key={edge.id} className="flex items-center gap-2">
-                            <span
-                              className="w-2 h-2 rounded-full"
-                              style={{ backgroundColor: GRAPH_STATUS_COLORS[edge.status] }}
-                            ></span>
-                            <span>{position?.title || position?.code}</span>
-                          </li>
-                        );
-                      })}
-                  </ul>
-                </div>
-              )}
-              {!selectedPositionDetails && !selectedCandidateDetails && (
-                <div className="text-slate-500">Seleziona un nodo per vedere i collegamenti.</div>
-              )}
-            </div>
-          </div>
-          {clusterByEntity && (
-            <div className="rounded-lg border border-slate-200 p-4">
-              <div className="text-sm font-semibold text-slate-700">Cluster per ente</div>
-              <div className="mt-3">
-                <div className="text-xs font-semibold text-slate-600 uppercase">Posizioni</div>
-                <div className="mt-2 space-y-1">
-                  {positionGroups.map(([groupKey, groupPositions]) => (
-                    <label key={groupKey} className="flex items-center justify-between text-xs text-slate-600">
-                      <span>{groupKey}</span>
-                      <button
-                        onClick={() => onTogglePositionGroup(groupKey)}
-                        className="text-[11px] text-blue-600 hover:text-blue-700"
-                      >
-                        {collapsedPositionGroups[groupKey] ? "Espandi" : "Collassa"} ({groupPositions.length})
-                      </button>
-                    </label>
-                  ))}
-                </div>
-                <div className="mt-4 text-xs font-semibold text-slate-600 uppercase">Candidati</div>
-                <div className="mt-2 space-y-1">
-                  {candidateGroups.map(([groupKey, groupCandidates]) => (
-                    <label key={groupKey} className="flex items-center justify-between text-xs text-slate-600">
-                      <span>{groupKey}</span>
-                      <button
-                        onClick={() => onToggleCandidateGroup(groupKey)}
-                        className="text-[11px] text-blue-600 hover:text-blue-700"
-                      >
-                        {collapsedCandidateGroups[groupKey] ? "Espandi" : "Collassa"} ({groupCandidates.length})
-                      </button>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-};
-
 const PositionDetailView = ({
   position,
   allCandidates,
@@ -5347,18 +4703,6 @@ const RecruitmentApp = () => {
   const [isSettingsProcessing, setIsSettingsProcessing] = useState(false);
   const [importConflicts, setImportConflicts] = useState<ImportConflict[]>([]);
   const [importConflictsTotal, setImportConflictsTotal] = useState(0);
-  const [dashboardViewMode, setDashboardViewMode] = useState<"table" | "graph">("table");
-  const [graphStatusFilters, setGraphStatusFilters] = useState<Record<GraphStatusCategory, boolean>>({
-    selected: true,
-    reserve: true,
-    rejected: true,
-    pending: true
-  });
-  const [graphShowOnlyEvaluated, setGraphShowOnlyEvaluated] = useState(false);
-  const [graphTopNCandidates, setGraphTopNCandidates] = useState(10);
-  const [graphClusterByEntity, setGraphClusterByEntity] = useState(false);
-  const [collapsedPositionGroups, setCollapsedPositionGroups] = useState<Record<string, boolean>>({});
-  const [collapsedCandidateGroups, setCollapsedCandidateGroups] = useState<Record<string, boolean>>({});
 
   // Load from LocalStorage
   useEffect(() => {
@@ -5671,7 +5015,6 @@ const RecruitmentApp = () => {
         setFilterLevel("ALL");
         setFilterRole("ALL");
         setSearchTerm("");
-        setDashboardViewMode("table");
         setCurrentView(nextAppData.candidates.length && nextAppData.positions.length ? 'dashboard' : 'upload');
         setBackupSuccess("Backup caricato correttamente.");
       } catch (error: any) {
@@ -6028,18 +5371,6 @@ const RecruitmentApp = () => {
     setFilterLevel("ALL");
     setFilterRole("ALL");
     setSearchTerm("");
-    setDashboardViewMode("table");
-    setGraphStatusFilters({
-      selected: true,
-      reserve: true,
-      rejected: true,
-      pending: true
-    });
-    setGraphShowOnlyEvaluated(false);
-    setGraphTopNCandidates(10);
-    setGraphClusterByEntity(false);
-    setCollapsedPositionGroups({});
-    setCollapsedCandidateGroups({});
     setIsNewCycleModalOpen(false);
   };
 
@@ -6087,34 +5418,6 @@ const RecruitmentApp = () => {
     () => appData.positions.filter(p => appData.favoritePositionIds.includes(p.code)).filter(positionMatchesFilters),
     [appData.positions, appData.favoritePositionIds, positionMatchesFilters]
   );
-
-  const graphPositions = useMemo(
-    () => (currentView === "favorites" ? filteredFavoritePositions : filteredPositions),
-    [currentView, filteredFavoritePositions, filteredPositions]
-  );
-
-  const graphCandidates = useMemo(() => {
-    const positionIds = new Set(graphPositions.map((position) => position.code));
-    const candidateIds = new Set<string>();
-    Object.values(appData.evaluations).forEach((evaluation) => {
-      if (positionIds.has(evaluation.positionId)) {
-        candidateIds.add(evaluation.candidateId);
-      }
-    });
-    return appData.candidates.filter((candidate) => candidateIds.has(candidate.id));
-  }, [appData.candidates, appData.evaluations, graphPositions]);
-
-  const toggleGraphStatusFilter = (status: GraphStatusCategory) => {
-    setGraphStatusFilters((prev) => ({ ...prev, [status]: !prev[status] }));
-  };
-
-  const togglePositionGroupCollapsed = (groupKey: string) => {
-    setCollapsedPositionGroups((prev) => ({ ...prev, [groupKey]: !prev[groupKey] }));
-  };
-
-  const toggleCandidateGroupCollapsed = (groupKey: string) => {
-    setCollapsedCandidateGroups((prev) => ({ ...prev, [groupKey]: !prev[groupKey] }));
-  };
 
   // Views Logic
   if (currentView === 'upload') {
@@ -6250,33 +5553,6 @@ const RecruitmentApp = () => {
                     </div>
                   </div>
                 )}
-                <div className="flex flex-wrap items-center gap-3">
-                  <span className="text-sm font-semibold text-slate-600">Vista</span>
-                  <div className="flex items-center rounded-lg border border-slate-200 bg-white p-1">
-                    <button
-                      onClick={() => setDashboardViewMode("table")}
-                      className={`flex items-center gap-2 px-3 py-1.5 text-sm rounded-md transition-colors ${
-                        dashboardViewMode === "table"
-                          ? "bg-blue-600 text-white"
-                          : "text-slate-600 hover:bg-slate-100"
-                      }`}
-                    >
-                      <LayoutList className="w-4 h-4" />
-                      Tabella
-                    </button>
-                    <button
-                      onClick={() => setDashboardViewMode("graph")}
-                      className={`flex items-center gap-2 px-3 py-1.5 text-sm rounded-md transition-colors ${
-                        dashboardViewMode === "graph"
-                          ? "bg-blue-600 text-white"
-                          : "text-slate-600 hover:bg-slate-100"
-                      }`}
-                    >
-                      <Share2 className="w-4 h-4" />
-                      Graph View
-                    </button>
-                  </div>
-                </div>
                 <div className="flex gap-4">
                   <div className="relative flex-1 max-w-md">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -6321,53 +5597,6 @@ const RecruitmentApp = () => {
                   </select>
                 </div>
 
-                {dashboardViewMode === "graph" && (
-                  <div className="flex flex-wrap gap-4 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-semibold text-slate-700">Filtri stato</span>
-                      {(Object.keys(GRAPH_STATUS_LABELS) as GraphStatusCategory[]).map((status) => (
-                        <label key={status} className="flex items-center gap-2 text-xs">
-                          <input
-                            type="checkbox"
-                            checked={graphStatusFilters[status]}
-                            onChange={() => toggleGraphStatusFilter(status)}
-                          />
-                          <span>{GRAPH_STATUS_LABELS[status]}</span>
-                        </label>
-                      ))}
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <label className="flex items-center gap-2 text-xs">
-                        <input
-                          type="checkbox"
-                          checked={graphShowOnlyEvaluated}
-                          onChange={(event) => setGraphShowOnlyEvaluated(event.target.checked)}
-                        />
-                        Solo candidati con valutazione non pending
-                      </label>
-                      <label className="flex items-center gap-2 text-xs">
-                        Top N candidati per posizione
-                        <input
-                          type="number"
-                          min={1}
-                          max={50}
-                          value={graphTopNCandidates}
-                          onChange={(event) => setGraphTopNCandidates(Number(event.target.value) || 1)}
-                          className="w-16 rounded border border-slate-200 px-2 py-1 text-xs"
-                        />
-                      </label>
-                      <label className="flex items-center gap-2 text-xs">
-                        <input
-                          type="checkbox"
-                          checked={graphClusterByEntity}
-                          onChange={(event) => setGraphClusterByEntity(event.target.checked)}
-                        />
-                        Raggruppa per ente/sede (collapsible)
-                      </label>
-                    </div>
-                  </div>
-                )}
-
                 {/* Status Tabs */}
                 <div className="flex gap-2 border-b border-slate-200">
                   {(['all', 'todo', 'inprogress', 'completed'] as const).map(status => (
@@ -6387,65 +5616,47 @@ const RecruitmentApp = () => {
                 </div>
               </div>
 
-              {dashboardViewMode === "table" ? (
-                <>
-                  {/* Grid */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                    {(currentView === 'favorites' ? filteredFavoritePositions : filteredPositions).map(pos => {
-                      // Count candidates for this pos
-                      const relevantCands = appData.candidates.filter(c => 
-                         !!appData.evaluations[`${pos.code}_${c.id}`]
-                      );
-                      const count = relevantCands.length;
-                      const status = getPositionStatus(pos, appData.evaluations);
-                      const isFavorite = appData.favoritePositionIds.includes(pos.code);
-                      
-                      // Get selected candidates names
-                      const selectedCands = appData.candidates
-                        .filter(c => appData.evaluations[`${pos.code}_${c.id}`]?.status === 'selected');
-                      
-                      const selectedNames = selectedCands.map(c => c.nominativo);
+              {/* Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                {(currentView === 'favorites' ? filteredFavoritePositions : filteredPositions).map(pos => {
+                  // Count candidates for this pos
+                  const relevantCands = appData.candidates.filter(c => 
+                     !!appData.evaluations[`${pos.code}_${c.id}`]
+                  );
+                  const count = relevantCands.length;
+                  const status = getPositionStatus(pos, appData.evaluations);
+                  const isFavorite = appData.favoritePositionIds.includes(pos.code);
+                  
+                  // Get selected candidates names
+                  const selectedCands = appData.candidates
+                    .filter(c => appData.evaluations[`${pos.code}_${c.id}`]?.status === 'selected');
+                  
+                  const selectedNames = selectedCands.map(c => c.nominativo);
 
-                      return (
-                        <PositionCard 
-                          key={pos.code} 
-                          position={pos}
-                          status={status}
-                          candidateCount={count}
-                          selectedCandidatesNames={selectedNames}
-                          selectedCandidatesDetails={selectedCands}
-                          candidatesList={relevantCands}
-                          isFavorite={isFavorite}
-                          onToggleFavorite={toggleFavoritePosition}
-                          onClick={() => {
-                            setSelectedPositionId(pos.code);
-                            setPositionsReturnView(currentView === 'favorites' ? 'favorites' : 'dashboard');
-                            setCurrentView('position_detail');
-                          }} 
-                        />
-                      );
-                    })}
-                  </div>
-                  {currentView === 'favorites' && filteredFavoritePositions.length === 0 && (
-                    <div className="mt-8 text-center text-sm text-slate-500">
-                      Nessuna posizione in shortlist. Aggiungile dalla dashboard per ritrovarle qui.
-                    </div>
-                  )}
-                </>
-              ) : (
-                <GraphView
-                  positions={graphPositions}
-                  candidates={graphCandidates}
-                  evaluations={appData.evaluations}
-                  statusFilters={graphStatusFilters}
-                  showOnlyEvaluated={graphShowOnlyEvaluated}
-                  topNCandidates={graphTopNCandidates}
-                  clusterByEntity={graphClusterByEntity}
-                  collapsedPositionGroups={collapsedPositionGroups}
-                  collapsedCandidateGroups={collapsedCandidateGroups}
-                  onTogglePositionGroup={togglePositionGroupCollapsed}
-                  onToggleCandidateGroup={toggleCandidateGroupCollapsed}
-                />
+                  return (
+                    <PositionCard 
+                      key={pos.code} 
+                      position={pos}
+                      status={status}
+                      candidateCount={count}
+                      selectedCandidatesNames={selectedNames}
+                      selectedCandidatesDetails={selectedCands}
+                      candidatesList={relevantCands}
+                      isFavorite={isFavorite}
+                      onToggleFavorite={toggleFavoritePosition}
+                      onClick={() => {
+                        setSelectedPositionId(pos.code);
+                        setPositionsReturnView(currentView === 'favorites' ? 'favorites' : 'dashboard');
+                        setCurrentView('position_detail');
+                      }} 
+                    />
+                  );
+                })}
+              </div>
+              {currentView === 'favorites' && filteredFavoritePositions.length === 0 && (
+                <div className="mt-8 text-center text-sm text-slate-500">
+                  Nessuna posizione in shortlist. Aggiungile dalla dashboard per ritrovarle qui.
+                </div>
               )}
             </div>
           </>
