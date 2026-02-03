@@ -123,6 +123,12 @@ type ImportConflict =
   | { type: 'candidate'; existing: Candidate; incoming: Candidate }
   | { type: 'position'; existing: Position; incoming: Position };
 
+type MultiSelectOption = {
+  value: string;
+  label: string;
+  meta?: string;
+};
+
 // --- Helper: Excel Parsing Logic ---
 
 const normalizeHeader = (h: string) => h?.toString().trim().toUpperCase().replace(/\s+/g, ' ') || "";
@@ -4677,6 +4683,111 @@ const PositionDetailView = ({
   );
 };
 
+const MultiSelect = ({
+  label,
+  options,
+  selected,
+  onChange,
+  placeholder
+}: {
+  label: string;
+  options: MultiSelectOption[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+  placeholder: string;
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const selectedOptions = options.filter(option => selected.includes(option.value));
+  const displayValue = (() => {
+    if (selectedOptions.length === 0) return placeholder;
+    if (selectedOptions.length <= 2) return selectedOptions.map(option => option.label).join(", ");
+    const [first, second, ...rest] = selectedOptions;
+    return `${first.label}, ${second.label} +${rest.length}`;
+  })();
+
+  const toggleValue = (value: string) => {
+    if (selected.includes(value)) {
+      onChange(selected.filter(item => item !== value));
+    } else {
+      onChange([...selected, value]);
+    }
+  };
+
+  const clearSelection = () => {
+    onChange([]);
+  };
+
+  return (
+    <div className="relative min-w-[220px]" ref={containerRef}>
+      <button
+        type="button"
+        onClick={() => setIsOpen((prev) => !prev)}
+        className={`w-full px-3 py-2 rounded-lg border text-left shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+          isOpen ? "border-blue-400" : "border-slate-200"
+        } bg-white`}
+        aria-expanded={isOpen}
+      >
+        <div className="text-[11px] uppercase tracking-wide text-slate-400">{label}</div>
+        <div className="mt-1 flex items-center justify-between gap-2 text-sm text-slate-700">
+          <span className="truncate">{displayValue}</span>
+          <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+        </div>
+      </button>
+      {isOpen && (
+        <div className="absolute z-20 mt-2 w-full rounded-lg border border-slate-200 bg-white shadow-lg">
+          <div className="flex items-center justify-between px-3 py-2 text-xs text-slate-500 border-b border-slate-100">
+            <span>Seleziona uno o più</span>
+            <button
+              type="button"
+              className="text-blue-600 hover:text-blue-700 font-medium"
+              onClick={clearSelection}
+            >
+              Tutti
+            </button>
+          </div>
+          <div className="max-h-64 overflow-y-auto py-1">
+            {options.map(option => {
+              const isSelected = selected.includes(option.value);
+              return (
+                <label
+                  key={option.value}
+                  className="flex items-start gap-2 px-3 py-2 text-sm hover:bg-slate-50 cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={isSelected}
+                    onChange={() => toggleValue(option.value)}
+                  />
+                  <span className="flex flex-col text-slate-700">
+                    <span>{option.label}</span>
+                    {option.meta && <span className="text-xs text-slate-400">{option.meta}</span>}
+                  </span>
+                </label>
+              );
+            })}
+            {options.length === 0 && (
+              <div className="px-3 py-3 text-sm text-slate-400">Nessuna opzione disponibile.</div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // --- Main App ---
 
 const RecruitmentApp = () => {
@@ -4702,10 +4813,10 @@ const RecruitmentApp = () => {
   const [overlapPositionIds, setOverlapPositionIds] = useState<string[]>([]);
   const [positionsReturnView, setPositionsReturnView] = useState<'dashboard' | 'favorites'>('dashboard');
   const [searchTerm, setSearchTerm] = useState("");
-  const [filterEnte, setFilterEnte] = useState("ALL");
+  const [filterEnte, setFilterEnte] = useState<string[]>([]);
   const [filterStatus, setFilterStatus] = useState<PositionStatus | 'all'>('all');
-  const [filterLevel, setFilterLevel] = useState("ALL");
-  const [filterRole, setFilterRole] = useState<RoleFilterValue>("ALL");
+  const [filterLevel, setFilterLevel] = useState<string[]>([]);
+  const [filterRole, setFilterRole] = useState<RoleFilterValue[]>([]);
   const [isNewCycleModalOpen, setIsNewCycleModalOpen] = useState(false);
   const [newCycleName, setNewCycleName] = useState("");
   const [backupError, setBackupError] = useState("");
@@ -5024,10 +5135,10 @@ const RecruitmentApp = () => {
         setSelectedCandidateId(null);
         setSelectedPositionId(null);
         setOverlapPositionIds([]);
-        setFilterEnte("ALL");
+        setFilterEnte([]);
         setFilterStatus('all');
-        setFilterLevel("ALL");
-        setFilterRole("ALL");
+        setFilterLevel([]);
+        setFilterRole([]);
         setSearchTerm("");
         setCurrentView(nextAppData.candidates.length && nextAppData.positions.length ? 'dashboard' : 'upload');
         setBackupSuccess("Backup caricato correttamente.");
@@ -5380,10 +5491,10 @@ const RecruitmentApp = () => {
     setSelectedCandidateId(null);
     setSelectedPositionId(null);
     setOverlapPositionIds([]);
-    setFilterEnte("ALL");
+    setFilterEnte([]);
     setFilterStatus('all');
-    setFilterLevel("ALL");
-    setFilterRole("ALL");
+    setFilterLevel([]);
+    setFilterRole([]);
     setSearchTerm("");
     setIsNewCycleModalOpen(false);
   };
@@ -5391,10 +5502,31 @@ const RecruitmentApp = () => {
   // Derived state
   const distinctEntities = useMemo(() => {
     const entes = new Set(appData.positions.map(p => p.entity));
-    return ['ALL', ...Array.from(entes).sort()];
+    return Array.from(entes).sort();
   }, [appData.positions]);
 
   const distinctLevels = useMemo(() => getDistinctPositionLevels(appData.positions), [appData.positions]);
+  const entityOptions = useMemo(
+    () => distinctEntities.map(entity => ({ value: entity, label: entity })),
+    [distinctEntities]
+  );
+  const levelOptions = useMemo(
+    () =>
+      distinctLevels.map(level => ({
+        value: level.code,
+        label: level.code,
+        meta: level.description
+      })),
+    [distinctLevels]
+  );
+  const roleOptions = useMemo(
+    () =>
+      ROLE_FILTER_OPTIONS.filter(option => option.value !== "ALL").map(option => ({
+        value: option.value,
+        label: option.label
+      })),
+    []
+  );
   const currentConflict = importConflicts[0];
   const conflictStep =
     importConflictsTotal > 0 ? importConflictsTotal - importConflicts.length + 1 : 0;
@@ -5408,15 +5540,16 @@ const RecruitmentApp = () => {
         position.entity.toLowerCase().includes(lowerSearch) ||
         position.location.toLowerCase().includes(lowerSearch);
 
-      const matchesEnte = filterEnte === 'ALL' || position.entity === filterEnte;
+      const matchesEnte = filterEnte.length === 0 || filterEnte.includes(position.entity);
 
       const status = getPositionStatus(position, appData.evaluations);
       const matchesStatus = filterStatus === 'all' || status === filterStatus;
 
       const level = getPositionLevel(position);
-      const matchesLevel = filterLevel === "ALL" || level?.code === filterLevel;
+      const matchesLevel = filterLevel.length === 0 || (level?.code ? filterLevel.includes(level.code) : false);
 
-      const matchesRole = matchesPositionRoleFilter(position, filterRole);
+      const matchesRole =
+        filterRole.length === 0 || filterRole.some(role => matchesPositionRoleFilter(position, role));
 
       return matchesSearch && matchesEnte && matchesStatus && matchesLevel && matchesRole;
     },
@@ -5579,36 +5712,27 @@ const RecruitmentApp = () => {
                     />
                   </div>
                   
-                  <select 
-                    className="px-4 py-2 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    value={filterEnte}
-                    onChange={(e) => setFilterEnte(e.target.value)}
-                  >
-                    {distinctEntities.map(e => <option key={e} value={e}>{e === 'ALL' ? 'All Entities' : e}</option>)}
-                  </select>
-                  <select
-                    className="px-4 py-2 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    value={filterLevel}
-                    onChange={(e) => setFilterLevel(e.target.value)}
-                  >
-                    <option value="ALL">Tutti i livelli</option>
-                    {distinctLevels.map(level => (
-                      <option key={level.code} value={level.code}>
-                        {level.code} • {level.description}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    className="px-4 py-2 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    value={filterRole}
-                    onChange={(event) => setFilterRole(event.target.value as RoleFilterValue)}
-                  >
-                    {ROLE_FILTER_OPTIONS.map(option => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
+                  <MultiSelect
+                    label="Entità"
+                    options={entityOptions}
+                    selected={filterEnte}
+                    onChange={setFilterEnte}
+                    placeholder="Tutte le entità"
+                  />
+                  <MultiSelect
+                    label="Livello"
+                    options={levelOptions}
+                    selected={filterLevel}
+                    onChange={setFilterLevel}
+                    placeholder="Tutti i livelli"
+                  />
+                  <MultiSelect
+                    label="Ruolo"
+                    options={roleOptions}
+                    selected={filterRole}
+                    onChange={(next) => setFilterRole(next as RoleFilterValue[])}
+                    placeholder="Tutti i ruoli"
+                  />
                 </div>
 
                 {/* Status Tabs */}
