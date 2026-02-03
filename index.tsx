@@ -4383,9 +4383,6 @@ const GraphView = ({
   const [dimensions, setDimensions] = useState({ width: 900, height: 600 });
   const [activePositionId, setActivePositionId] = useState<string | null>(null);
   const [activeCandidateId, setActiveCandidateId] = useState<string | null>(null);
-  const [zoomState, setZoomState] = useState({ scale: 1, x: 0, y: 0 });
-  const nodePositionsRef = useRef<Map<string, { x: number; y: number; vx: number; vy: number }>>(new Map());
-  const [animationTick, setAnimationTick] = useState(0);
   const [hoverInfo, setHoverInfo] = useState<{
     x: number;
     y: number;
@@ -4620,104 +4617,34 @@ const GraphView = ({
     candidateGroups
   ]);
 
-  useEffect(() => {
-    const margin = 80;
-    const width = Math.max(200, dimensions.width - margin * 2);
-    const height = Math.max(200, dimensions.height - margin * 2);
-    const positions = new Map<string, { x: number; y: number; vx: number; vy: number }>();
-    graphData.nodes.forEach((node) => {
-      const existing = nodePositionsRef.current.get(node.id);
-      positions.set(node.id, {
-        x: existing?.x ?? margin + Math.random() * width,
-        y: existing?.y ?? margin + Math.random() * height,
-        vx: existing?.vx ?? 0,
-        vy: existing?.vy ?? 0
+  const nodePositions = useMemo(() => {
+    const leftNodes = graphData.nodes.filter((node) => node.type === "position" || node.type === "position-group");
+    const rightNodes = graphData.nodes.filter((node) => node.type === "candidate" || node.type === "candidate-group");
+    const nodeGap = 60;
+    const leftColumnX = 180;
+    const rightColumnX = dimensions.width - 180;
+    const height = Math.max(
+      500,
+      Math.max(leftNodes.length, rightNodes.length) * nodeGap + 120
+    );
+    const leftStartY = 80;
+    const rightStartY = 80;
+    const leftPositions = new Map<string, { x: number; y: number }>();
+    leftNodes.forEach((node, index) => {
+      leftPositions.set(node.id, {
+        x: leftColumnX,
+        y: leftStartY + index * nodeGap
       });
     });
-    nodePositionsRef.current = positions;
-  }, [graphData.nodes, dimensions.width, dimensions.height]);
-
-  useEffect(() => {
-    let animationFrameId: number;
-    let lastTime = performance.now();
-    const tick = (time: number) => {
-      const delta = Math.min(0.05, (time - lastTime) / 1000);
-      lastTime = time;
-      const nodes = graphData.nodes;
-      const edges = graphData.edges;
-      const positions = nodePositionsRef.current;
-      const areaWidth = dimensions.width;
-      const areaHeight = dimensions.height;
-      const centerX = areaWidth / 2;
-      const centerY = areaHeight / 2;
-      const repulsionStrength = 12000;
-      const springStrength = 0.02;
-      const springLength = 160;
-      const damping = 0.85;
-
-      nodes.forEach((node) => {
-        const pos = positions.get(node.id);
-        if (!pos) return;
-        pos.vx += (centerX - pos.x) * 0.0008;
-        pos.vy += (centerY - pos.y) * 0.0008;
+    const rightPositions = new Map<string, { x: number; y: number }>();
+    rightNodes.forEach((node, index) => {
+      rightPositions.set(node.id, {
+        x: rightColumnX,
+        y: rightStartY + index * nodeGap
       });
-
-      for (let i = 0; i < nodes.length; i += 1) {
-        const nodeA = nodes[i];
-        const posA = positions.get(nodeA.id);
-        if (!posA) continue;
-        for (let j = i + 1; j < nodes.length; j += 1) {
-          const nodeB = nodes[j];
-          const posB = positions.get(nodeB.id);
-          if (!posB) continue;
-          const dx = posB.x - posA.x;
-          const dy = posB.y - posA.y;
-          const distanceSq = Math.max(40 * 40, dx * dx + dy * dy);
-          const force = repulsionStrength / distanceSq;
-          const fx = (dx / Math.sqrt(distanceSq)) * force;
-          const fy = (dy / Math.sqrt(distanceSq)) * force;
-          posA.vx -= fx * delta;
-          posA.vy -= fy * delta;
-          posB.vx += fx * delta;
-          posB.vy += fy * delta;
-        }
-      }
-
-      edges.forEach((edge) => {
-        const source = positions.get(edge.source);
-        const target = positions.get(edge.target);
-        if (!source || !target) return;
-        const dx = target.x - source.x;
-        const dy = target.y - source.y;
-        const distance = Math.max(20, Math.sqrt(dx * dx + dy * dy));
-        const diff = distance - springLength;
-        const force = diff * springStrength;
-        const fx = (dx / distance) * force;
-        const fy = (dy / distance) * force;
-        source.vx += fx * delta;
-        source.vy += fy * delta;
-        target.vx -= fx * delta;
-        target.vy -= fy * delta;
-      });
-
-      nodes.forEach((node) => {
-        const pos = positions.get(node.id);
-        if (!pos) return;
-        pos.vx *= damping;
-        pos.vy *= damping;
-        pos.x += pos.vx;
-        pos.y += pos.vy;
-        pos.x = Math.min(areaWidth - 40, Math.max(40, pos.x));
-        pos.y = Math.min(areaHeight - 40, Math.max(40, pos.y));
-      });
-
-      setAnimationTick((prev) => prev + 1);
-      animationFrameId = requestAnimationFrame(tick);
-    };
-
-    animationFrameId = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(animationFrameId);
-  }, [graphData.nodes, graphData.edges, dimensions.width, dimensions.height]);
+    });
+    return { height, positions: new Map([...leftPositions, ...rightPositions]) };
+  }, [graphData.nodes, dimensions.width]);
 
   const edgeVisibility = useCallback(
     (edge: GraphEdge) => {
@@ -4733,20 +4660,6 @@ const GraphView = ({
     setActiveCandidateId(null);
   };
 
-  const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const delta = event.deltaY > 0 ? -0.08 : 0.08;
-    const nextScale = Math.min(2.5, Math.max(0.5, zoomState.scale + delta));
-    const pointerX = event.clientX - rect.left;
-    const pointerY = event.clientY - rect.top;
-    const scaleFactor = nextScale / zoomState.scale;
-    const nextX = pointerX - (pointerX - zoomState.x) * scaleFactor;
-    const nextY = pointerY - (pointerY - zoomState.y) * scaleFactor;
-    setZoomState({ scale: nextScale, x: nextX, y: nextY });
-  };
-
   const selectedPositionDetails = activePositionId
     ? positions.find((pos) => pos.code === activePositionId)
     : null;
@@ -4757,7 +4670,7 @@ const GraphView = ({
   return (
     <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
       <div className="flex flex-col xl:flex-row gap-6 p-6">
-        <div className="flex-1 min-h-[520px] relative" ref={containerRef} onWheel={handleWheel}>
+        <div className="flex-1 min-h-[520px] relative" ref={containerRef}>
           <div className="absolute right-4 top-4 z-10">
             {(activePositionId || activeCandidateId) && (
               <button
@@ -4768,12 +4681,11 @@ const GraphView = ({
               </button>
             )}
           </div>
-          <div className="overflow-hidden border border-dashed border-slate-200 rounded-lg">
-            <svg width={dimensions.width} height={dimensions.height} className="bg-slate-50" data-tick={animationTick}>
-              <g transform={`translate(${zoomState.x} ${zoomState.y}) scale(${zoomState.scale})`}>
-                {graphData.edges.map((edge) => {
-                  const source = nodePositionsRef.current.get(edge.source);
-                  const target = nodePositionsRef.current.get(edge.target);
+          <div className="overflow-auto border border-dashed border-slate-200 rounded-lg">
+            <svg width={dimensions.width} height={nodePositions.height} className="bg-slate-50">
+              {graphData.edges.map((edge) => {
+                const source = nodePositions.positions.get(edge.source);
+                const target = nodePositions.positions.get(edge.target);
                 if (!source || !target) return null;
                 const visibility = edgeVisibility(edge);
                 const strokeOpacity = visibility === "dimmed" ? 0.15 : 0.85;
@@ -4827,8 +4739,8 @@ const GraphView = ({
                 );
               })}
 
-                {graphData.nodes.map((node) => {
-                  const position = nodePositionsRef.current.get(node.id);
+              {graphData.nodes.map((node) => {
+                const position = nodePositions.positions.get(node.id);
                 if (!position) return null;
                 const isPositionNode = node.type === "position" || node.type === "position-group";
                 const isActive =
@@ -4910,12 +4822,8 @@ const GraphView = ({
                     </text>
                   </g>
                 );
-                })}
-              </g>
+              })}
             </svg>
-          </div>
-          <div className="absolute left-4 bottom-4 z-10 rounded-full bg-white border border-slate-200 px-3 py-1 text-xs text-slate-500">
-            Zoom: {(zoomState.scale * 100).toFixed(0)}%
           </div>
           {hoverInfo && (
             <div
