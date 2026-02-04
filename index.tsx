@@ -5462,30 +5462,27 @@ const RecruitmentApp = () => {
 
       let addedCount = 0;
       const conflicts: ImportConflict[] = [];
+      let nextState = appData;
+      const existingById = new Map(appData.candidates.map((candidate) => [candidate.id, candidate]));
 
-      setAppData((prev) => {
-        let nextState = prev;
-        const existingById = new Map(prev.candidates.map((candidate) => [candidate.id, candidate]));
-
-        candidatesResult.items.forEach((candidate) => {
-          const existing = existingById.get(candidate.id);
-          if (existing) {
-            const diffs = buildFieldDiffs(existing, candidate, candidateFieldDefinitions);
-            if (
-              hasDifferences(diffs)
-              || hasOriginalDataDifferences(existing.originalData, candidate.originalData)
-            ) {
-              conflicts.push({ type: "candidate", existing, incoming: candidate });
-            }
-            return;
+      candidatesResult.items.forEach((candidate) => {
+        const existing = existingById.get(candidate.id);
+        if (existing) {
+          const diffs = buildFieldDiffs(existing, candidate, candidateFieldDefinitions);
+          if (
+            hasDifferences(diffs)
+            || hasOriginalDataDifferences(existing.originalData, candidate.originalData)
+          ) {
+            conflicts.push({ type: "candidate", existing, incoming: candidate });
           }
-          nextState = integrateCandidate(nextState, candidate, "add");
-          existingById.set(candidate.id, candidate);
-          addedCount += 1;
-        });
-
-        return nextState;
+          return;
+        }
+        nextState = integrateCandidate(nextState, candidate, "add");
+        existingById.set(candidate.id, candidate);
+        addedCount += 1;
       });
+
+      setAppData(nextState);
 
       setLastImportStats({
         candidates: {
@@ -5532,29 +5529,27 @@ const RecruitmentApp = () => {
 
       let addedCount = 0;
       const conflicts: ImportConflict[] = [];
-      setAppData((prev) => {
-        let nextState = prev;
-        const positionsByCode = new Map(prev.positions.map((pos) => [pos.code, pos]));
+      let nextState = appData;
+      const positionsByCode = new Map(appData.positions.map((pos) => [pos.code, pos]));
 
-        positionsResult.items.forEach((position) => {
-          const existing = positionsByCode.get(position.code);
-          if (existing) {
-            const diffs = buildFieldDiffs(existing, position, positionFieldDefinitions);
-            if (
-              hasDifferences(diffs)
-              || hasOriginalDataDifferences(existing.originalData, position.originalData)
-            ) {
-              conflicts.push({ type: "position", existing, incoming: position });
-            }
-            return;
+      positionsResult.items.forEach((position) => {
+        const existing = positionsByCode.get(position.code);
+        if (existing) {
+          const diffs = buildFieldDiffs(existing, position, positionFieldDefinitions);
+          if (
+            hasDifferences(diffs)
+            || hasOriginalDataDifferences(existing.originalData, position.originalData)
+          ) {
+            conflicts.push({ type: "position", existing, incoming: position });
           }
-          nextState = integratePosition(nextState, position, "add");
-          positionsByCode.set(position.code, position);
-          addedCount += 1;
-        });
-
-        return nextState;
+          return;
+        }
+        nextState = integratePosition(nextState, position, "add");
+        positionsByCode.set(position.code, position);
+        addedCount += 1;
       });
+
+      setAppData(nextState);
 
       setLastImportStats({
         candidates: { imported: 0, duplicates: 0, totalRows: 0 },
