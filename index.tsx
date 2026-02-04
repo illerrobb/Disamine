@@ -201,6 +201,132 @@ interface ImportStats {
   positions: { imported: number; duplicates: number; totalRows: number };
 }
 
+type FieldDescriptor<T> = {
+  label: string;
+  getValue: (item: T) => unknown;
+  format?: (value: unknown) => string;
+  normalize?: (value: unknown) => string;
+};
+
+type FieldDiff = {
+  label: string;
+  existingDisplay: string;
+  incomingDisplay: string;
+  changed: boolean;
+};
+
+const normalizeText = (value: string) => value.trim().replace(/\s+/g, " ");
+
+const normalizeValue = (value: unknown): string => {
+  if (value === null || value === undefined) return "";
+  if (Array.isArray(value)) {
+    return value.map((entry) => normalizeValue(entry)).join("|");
+  }
+  if (typeof value === "string") return normalizeText(value);
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return normalizeText(String(value));
+};
+
+const formatRequirements = (requirements: Requirement[]) => {
+  if (!requirements || requirements.length === 0) return "-";
+  return requirements.map((req) => req.text.trim()).join(" • ");
+};
+
+const normalizeRequirements = (requirements: Requirement[]) => {
+  if (!requirements || requirements.length === 0) return "";
+  return requirements
+    .map((req) => req.text.trim().toLowerCase())
+    .sort()
+    .join("|");
+};
+
+const formatLanguages = (languages: Language[]) => {
+  if (!languages || languages.length === 0) return "-";
+  return languages
+    .map((lang) => `${lang.language.trim()} (${lang.level.trim() || "?"})`)
+    .join(" • ");
+};
+
+const normalizeLanguages = (languages: Language[]) => {
+  if (!languages || languages.length === 0) return "";
+  return languages
+    .map((lang) => `${lang.language.trim().toLowerCase()}|${lang.level.trim().toLowerCase()}`)
+    .sort()
+    .join("|");
+};
+
+const candidateFieldDefinitions: FieldDescriptor<Candidate>[] = [
+  { label: "Matricola", getValue: (candidate) => candidate.id },
+  { label: "Nominativo", getValue: (candidate) => candidate.nominativo },
+  { label: "Grado", getValue: (candidate) => candidate.rank },
+  { label: "Ruolo", getValue: (candidate) => candidate.role },
+  { label: "Categoria", getValue: (candidate) => candidate.category },
+  { label: "Specialità", getValue: (candidate) => candidate.specialty },
+  { label: "Ente", getValue: (candidate) => candidate.serviceEntity },
+  { label: "Livello NOS", getValue: (candidate) => candidate.nosLevel },
+  { label: "Qualifica NOS", getValue: (candidate) => candidate.nosQual },
+  { label: "Scadenza NOS", getValue: (candidate) => candidate.nosExpiry },
+  { label: "Mandati internazionali", getValue: (candidate) => candidate.internationalMandates },
+  { label: "Data FEO", getValue: (candidate) => candidate.feoDate },
+  { label: "Descrizione mix", getValue: (candidate) => candidate.mixDescription },
+  {
+    label: "Lingue",
+    getValue: (candidate) => candidate.languages,
+    format: (value) => formatLanguages(value as Language[]),
+    normalize: (value) => normalizeLanguages(value as Language[])
+  },
+  { label: "Posizioni segnalate", getValue: (candidate) => candidate.rawAppliedString },
+  { label: "Parere comandante", getValue: (candidate) => candidate.commanderOpinion },
+  { label: "Attribuzioni specifiche", getValue: (candidate) => candidate.specificAssignments },
+  { label: "Idoneità OFCN", getValue: (candidate) => candidate.ofcnSuitability },
+  { label: "Note generali", getValue: (candidate) => candidate.globalNotes }
+];
+
+const positionFieldDefinitions: FieldDescriptor<Position>[] = [
+  { label: "Codice", getValue: (position) => position.code },
+  { label: "Titolo", getValue: (position) => position.title },
+  { label: "Ente", getValue: (position) => position.entity },
+  { label: "Sede", getValue: (position) => position.location },
+  {
+    label: "Requisiti",
+    getValue: (position) => position.requirements,
+    format: (value) => formatRequirements(value as Requirement[]),
+    normalize: (value) => normalizeRequirements(value as Requirement[])
+  },
+  { label: "Inglese richiesto", getValue: (position) => position.englishReq },
+  { label: "NOS richiesto", getValue: (position) => position.nosReq },
+  { label: "Grado richiesto", getValue: (position) => position.rankReq },
+  { label: "Categoria/Specialità", getValue: (position) => position.catSpecQualReq },
+  { label: "OFCN", getValue: (position) => position.ofcn },
+  { label: "Interesse p.o.", getValue: (position) => position.poInterest },
+  { label: "Titolare", getValue: (position) => position.incumbent }
+];
+
+const buildFieldDiffs = <T,>(existing: T, incoming: T, fields: FieldDescriptor<T>[]): FieldDiff[] =>
+  fields.map((field) => {
+    const existingValue = field.getValue(existing);
+    const incomingValue = field.getValue(incoming);
+    const normalizedExisting = field.normalize
+      ? field.normalize(existingValue)
+      : normalizeValue(existingValue);
+    const normalizedIncoming = field.normalize
+      ? field.normalize(incomingValue)
+      : normalizeValue(incomingValue);
+    const format = field.format ?? ((value: unknown) => {
+      const normalized = normalizeValue(value);
+      return normalized ? normalized : "-";
+    });
+
+    return {
+      label: field.label,
+      existingDisplay: format(existingValue) || "-",
+      incomingDisplay: format(incomingValue) || "-",
+      changed: normalizedExisting !== normalizedIncoming
+    };
+  });
+
+const hasDifferences = (diffs: FieldDiff[]) => diffs.some((diff) => diff.changed);
+
 const parseCandidates = (data: any[]): DedupResult<Candidate> => {
   const map = new Map<string, Candidate>();
   let duplicateCount = 0;
@@ -5333,7 +5459,10 @@ const RecruitmentApp = () => {
         candidatesResult.items.forEach((candidate) => {
           const existing = existingById.get(candidate.id);
           if (existing) {
-            conflicts.push({ type: "candidate", existing, incoming: candidate });
+            const diffs = buildFieldDiffs(existing, candidate, candidateFieldDefinitions);
+            if (hasDifferences(diffs)) {
+              conflicts.push({ type: "candidate", existing, incoming: candidate });
+            }
             return;
           }
           nextState = integrateCandidate(nextState, candidate, "add");
@@ -5396,7 +5525,10 @@ const RecruitmentApp = () => {
         positionsResult.items.forEach((position) => {
           const existing = positionsByCode.get(position.code);
           if (existing) {
-            conflicts.push({ type: "position", existing, incoming: position });
+            const diffs = buildFieldDiffs(existing, position, positionFieldDefinitions);
+            if (hasDifferences(diffs)) {
+              conflicts.push({ type: "position", existing, incoming: position });
+            }
             return;
           }
           nextState = integratePosition(nextState, position, "add");
@@ -5546,6 +5678,14 @@ const RecruitmentApp = () => {
   const currentConflict = importConflicts[0];
   const conflictStep =
     importConflictsTotal > 0 ? importConflictsTotal - importConflicts.length + 1 : 0;
+  const conflictDiffs = useMemo(() => {
+    if (!currentConflict) return [];
+    if (currentConflict.type === "candidate") {
+      return buildFieldDiffs(currentConflict.existing, currentConflict.incoming, candidateFieldDefinitions);
+    }
+    return buildFieldDiffs(currentConflict.existing, currentConflict.incoming, positionFieldDefinitions);
+  }, [currentConflict]);
+  const changedFieldsCount = conflictDiffs.filter((diff) => diff.changed).length;
 
   const lowerSearch = searchTerm.trim().toLowerCase();
   const positionMatchesFilters = useCallback(
@@ -5895,6 +6035,9 @@ const RecruitmentApp = () => {
                 <p className="text-sm text-slate-500">
                   Conflitto {conflictStep} di {importConflictsTotal}
                 </p>
+                <p className="text-xs text-slate-500 mt-1">
+                  Campi modificati: <span className="font-semibold text-slate-700">{changedFieldsCount}</span>
+                </p>
               </div>
               <span className="text-xs uppercase font-semibold text-slate-400">
                 Risoluzione manuale
@@ -5904,47 +6047,41 @@ const RecruitmentApp = () => {
             <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
               <div className="border border-slate-200 rounded-lg p-4 bg-slate-50">
                 <div className="text-xs uppercase text-slate-400 font-semibold mb-3">Esistente</div>
-                {currentConflict.type === "candidate" ? (
-                  <dl className="space-y-2">
-                    <div><dt className="text-slate-400 text-xs">Matricola</dt><dd className="text-slate-700 font-semibold">{currentConflict.existing.id}</dd></div>
-                    <div><dt className="text-slate-400 text-xs">Nominativo</dt><dd className="text-slate-700">{currentConflict.existing.nominativo}</dd></div>
-                    <div><dt className="text-slate-400 text-xs">Ruolo</dt><dd className="text-slate-700">{currentConflict.existing.rank} {currentConflict.existing.role}</dd></div>
-                    <div><dt className="text-slate-400 text-xs">Categoria/Specialità</dt><dd className="text-slate-700">{currentConflict.existing.category} {currentConflict.existing.specialty}</dd></div>
-                    <div><dt className="text-slate-400 text-xs">Ente</dt><dd className="text-slate-700">{currentConflict.existing.serviceEntity}</dd></div>
-                    <div><dt className="text-slate-400 text-xs">Applicazioni</dt><dd className="text-slate-700 line-clamp-2">{currentConflict.existing.rawAppliedString}</dd></div>
-                  </dl>
-                ) : (
-                  <dl className="space-y-2">
-                    <div><dt className="text-slate-400 text-xs">Codice</dt><dd className="text-slate-700 font-semibold">{currentConflict.existing.code}</dd></div>
-                    <div><dt className="text-slate-400 text-xs">Titolo</dt><dd className="text-slate-700">{currentConflict.existing.title}</dd></div>
-                    <div><dt className="text-slate-400 text-xs">Ente</dt><dd className="text-slate-700">{currentConflict.existing.entity}</dd></div>
-                    <div><dt className="text-slate-400 text-xs">Sede</dt><dd className="text-slate-700">{currentConflict.existing.location}</dd></div>
-                    <div><dt className="text-slate-400 text-xs">Requisiti</dt><dd className="text-slate-700">{currentConflict.existing.requirements.length}</dd></div>
-                    <div><dt className="text-slate-400 text-xs">Profilo richiesto</dt><dd className="text-slate-700">{[currentConflict.existing.rankReq, currentConflict.existing.catSpecQualReq].filter(Boolean).join(" • ") || "-"}</dd></div>
-                  </dl>
-                )}
+                <dl className="space-y-2">
+                  {conflictDiffs.map((diff) => (
+                    <div
+                      key={`existing-${diff.label}`}
+                      className={`rounded-md border px-2 py-1.5 ${
+                        diff.changed ? "border-amber-200 bg-amber-50" : "border-transparent"
+                      }`}
+                    >
+                      <dt className="text-slate-400 text-xs flex items-center justify-between">
+                        <span>{diff.label}</span>
+                        {diff.changed && <span className="text-[10px] uppercase text-amber-600">modificato</span>}
+                      </dt>
+                      <dd className="text-slate-700 whitespace-pre-line break-words">{diff.existingDisplay}</dd>
+                    </div>
+                  ))}
+                </dl>
               </div>
               <div className="border border-blue-200 rounded-lg p-4 bg-blue-50">
                 <div className="text-xs uppercase text-blue-500 font-semibold mb-3">Nuovo</div>
-                {currentConflict.type === "candidate" ? (
-                  <dl className="space-y-2">
-                    <div><dt className="text-blue-400 text-xs">Matricola</dt><dd className="text-slate-700 font-semibold">{currentConflict.incoming.id}</dd></div>
-                    <div><dt className="text-blue-400 text-xs">Nominativo</dt><dd className="text-slate-700">{currentConflict.incoming.nominativo}</dd></div>
-                    <div><dt className="text-blue-400 text-xs">Ruolo</dt><dd className="text-slate-700">{currentConflict.incoming.rank} {currentConflict.incoming.role}</dd></div>
-                    <div><dt className="text-blue-400 text-xs">Categoria/Specialità</dt><dd className="text-slate-700">{currentConflict.incoming.category} {currentConflict.incoming.specialty}</dd></div>
-                    <div><dt className="text-blue-400 text-xs">Ente</dt><dd className="text-slate-700">{currentConflict.incoming.serviceEntity}</dd></div>
-                    <div><dt className="text-blue-400 text-xs">Applicazioni</dt><dd className="text-slate-700 line-clamp-2">{currentConflict.incoming.rawAppliedString}</dd></div>
-                  </dl>
-                ) : (
-                  <dl className="space-y-2">
-                    <div><dt className="text-blue-400 text-xs">Codice</dt><dd className="text-slate-700 font-semibold">{currentConflict.incoming.code}</dd></div>
-                    <div><dt className="text-blue-400 text-xs">Titolo</dt><dd className="text-slate-700">{currentConflict.incoming.title}</dd></div>
-                    <div><dt className="text-blue-400 text-xs">Ente</dt><dd className="text-slate-700">{currentConflict.incoming.entity}</dd></div>
-                    <div><dt className="text-blue-400 text-xs">Sede</dt><dd className="text-slate-700">{currentConflict.incoming.location}</dd></div>
-                    <div><dt className="text-blue-400 text-xs">Requisiti</dt><dd className="text-slate-700">{currentConflict.incoming.requirements.length}</dd></div>
-                    <div><dt className="text-blue-400 text-xs">Profilo richiesto</dt><dd className="text-slate-700">{[currentConflict.incoming.rankReq, currentConflict.incoming.catSpecQualReq].filter(Boolean).join(" • ") || "-"}</dd></div>
-                  </dl>
-                )}
+                <dl className="space-y-2">
+                  {conflictDiffs.map((diff) => (
+                    <div
+                      key={`incoming-${diff.label}`}
+                      className={`rounded-md border px-2 py-1.5 ${
+                        diff.changed ? "border-amber-200 bg-amber-50" : "border-transparent"
+                      }`}
+                    >
+                      <dt className="text-blue-400 text-xs flex items-center justify-between">
+                        <span>{diff.label}</span>
+                        {diff.changed && <span className="text-[10px] uppercase text-amber-600">modificato</span>}
+                      </dt>
+                      <dd className="text-slate-700 whitespace-pre-line break-words">{diff.incomingDisplay}</dd>
+                    </div>
+                  ))}
+                </dl>
               </div>
             </div>
 
