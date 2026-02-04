@@ -3325,6 +3325,23 @@ const CandidatesListView = ({
 }) => {
    const [search, setSearch] = useState("");
    const [roleFilter, setRoleFilter] = useState<RoleFilterValue>("ALL");
+   const getApplicationStatusClass = (status?: Evaluation["status"]) => {
+      switch (status) {
+         case "selected":
+            return "bg-green-100 text-green-700 border-green-200";
+         case "reserve":
+            return "bg-amber-100 text-amber-800 border-amber-200";
+         case "rejected":
+            return "bg-red-100 text-red-700 border-red-200";
+         case "non-compatible":
+            return "bg-gray-200 text-gray-700 border-gray-300";
+         case "excluded":
+            return "bg-red-200 text-red-900 border-red-300";
+         case "pending":
+         default:
+            return "bg-slate-100 text-slate-600 border-slate-200 hover:border-slate-300";
+      }
+   };
 
    const filtered = candidates.filter(c => 
       c.nominativo.toLowerCase().includes(search.toLowerCase()) ||
@@ -3391,12 +3408,11 @@ const CandidatesListView = ({
                                  <div className="flex flex-wrap gap-1">
                                     {apps.map(p => {
                                        const ev = evaluations[`${p.code}_${c.id}`];
-                                       const isSel = ev?.status === 'selected';
                                        return (
                                           <button 
                                              key={p.code}
                                              onClick={() => onNavigateToPosition(p.code)}
-                                             className={`text-xs px-2 py-0.5 rounded border ${isSel ? 'bg-green-100 text-green-700 border-green-200' : 'bg-slate-100 text-slate-600 border-slate-200 hover:border-slate-300'}`}
+                                             className={`text-xs px-2 py-0.5 rounded border ${getApplicationStatusClass(ev?.status)}`}
                                           >
                                              {p.code}
                                           </button>
