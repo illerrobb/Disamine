@@ -6038,7 +6038,7 @@ const RecruitmentApp = () => {
       )}
       {currentConflict && (
         <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center z-[60]">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl p-6">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto p-6">
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-lg font-semibold text-slate-800">
