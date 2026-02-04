@@ -327,6 +327,11 @@ const buildFieldDiffs = <T,>(existing: T, incoming: T, fields: FieldDescriptor<T
 
 const hasDifferences = (diffs: FieldDiff[]) => diffs.some((diff) => diff.changed);
 
+const hasOriginalDataDifferences = (existing: Record<string, unknown> | null, incoming: Record<string, unknown> | null) => {
+  if (!existing || !incoming) return false;
+  return Object.keys(incoming).some((key) => normalizeValue(existing[key]) !== normalizeValue(incoming[key]));
+};
+
 const parseCandidates = (data: any[]): DedupResult<Candidate> => {
   const map = new Map<string, Candidate>();
   let duplicateCount = 0;
@@ -5460,7 +5465,10 @@ const RecruitmentApp = () => {
           const existing = existingById.get(candidate.id);
           if (existing) {
             const diffs = buildFieldDiffs(existing, candidate, candidateFieldDefinitions);
-            if (hasDifferences(diffs)) {
+            if (
+              hasDifferences(diffs)
+              || hasOriginalDataDifferences(existing.originalData, candidate.originalData)
+            ) {
               conflicts.push({ type: "candidate", existing, incoming: candidate });
             }
             return;
@@ -5526,7 +5534,10 @@ const RecruitmentApp = () => {
           const existing = positionsByCode.get(position.code);
           if (existing) {
             const diffs = buildFieldDiffs(existing, position, positionFieldDefinitions);
-            if (hasDifferences(diffs)) {
+            if (
+              hasDifferences(diffs)
+              || hasOriginalDataDifferences(existing.originalData, position.originalData)
+            ) {
               conflicts.push({ type: "position", existing, incoming: position });
             }
             return;
