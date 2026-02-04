@@ -329,7 +329,13 @@ const hasDifferences = (diffs: FieldDiff[]) => diffs.some((diff) => diff.changed
 
 const hasOriginalDataDifferences = (existing: Record<string, unknown> | null, incoming: Record<string, unknown> | null) => {
   if (!existing || !incoming) return false;
-  return Object.keys(incoming).some((key) => normalizeValue(existing[key]) !== normalizeValue(incoming[key]));
+  const keys = new Set([...Object.keys(existing), ...Object.keys(incoming)]);
+  for (const key of keys) {
+    if (normalizeValue(existing[key]) !== normalizeValue(incoming[key])) {
+      return true;
+    }
+  }
+  return false;
 };
 
 const parseCandidates = (data: any[]): DedupResult<Candidate> => {
