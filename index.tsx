@@ -31,7 +31,8 @@ import {
   AlertTriangle,
   Ban,
   User,
-  Star
+  Star,
+  Pencil
 } from "lucide-react";
 
 // --- Types ---
@@ -869,7 +870,7 @@ const ScoreBar = ({
   );
 };
 
-const RequirementsDrawer = ({
+const PositionEditDrawer = ({
   isOpen,
   position,
   onClose,
@@ -878,50 +879,67 @@ const RequirementsDrawer = ({
   isOpen: boolean;
   position: Position | null;
   onClose: () => void;
-  onSave: (positionCode: string, requirements: Requirement[]) => void;
+  onSave: (originalCode: string, nextPosition: Position) => void;
 }) => {
-  const [draftRequirements, setDraftRequirements] = useState<Requirement[]>([]);
+  const [draftPosition, setDraftPosition] = useState<Position | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
 
   useEffect(() => {
     if (!position || !isOpen) return;
-    setDraftRequirements(position.requirements.map(req => ({ ...req })));
+    setDraftPosition({
+      ...position,
+      requirements: position.requirements.map(req => ({ ...req }))
+    });
     setHasChanges(false);
   }, [position, isOpen]);
 
+  if (!isOpen || !position || !draftPosition) return null;
+
   const updateRequirement = (id: string, changes: Partial<Requirement>) => {
-    setDraftRequirements(prev => {
-      const next = prev.map(req => (req.id === id ? { ...req, ...changes } : req));
-      return next;
+    setDraftPosition(prev => {
+      if (!prev) return prev;
+      const nextRequirements = prev.requirements.map(req =>
+        req.id === id ? { ...req, ...changes } : req
+      );
+      return { ...prev, requirements: nextRequirements };
+    });
+    setHasChanges(true);
+  };
+
+  const handleFieldChange = (field: keyof Position) => (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    setDraftPosition(prev => {
+      if (!prev) return prev;
+      return { ...prev, [field]: event.target.value };
     });
     setHasChanges(true);
   };
 
   const handleSave = () => {
-    if (!position) return;
-    onSave(position.code, draftRequirements);
+    if (!draftPosition) return;
+    onSave(position.code, {
+      ...draftPosition,
+      code: draftPosition.code.trim().toUpperCase()
+    });
     setHasChanges(false);
     onClose();
   };
-
-  if (!isOpen || !position) return null;
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex">
       <button
         className="absolute inset-0 bg-slate-900/40"
         onClick={onClose}
-        aria-label="Chiudi drawer requisiti"
+        aria-label="Chiudi drawer posizione"
       />
-      <aside className="ml-auto w-full max-w-xl h-full bg-white shadow-2xl border-l border-slate-200 flex flex-col relative">
+      <aside className="ml-auto w-full max-w-2xl h-full bg-white shadow-2xl border-l border-slate-200 flex flex-col relative">
         <div className="p-6 border-b border-slate-200 flex items-start justify-between gap-4">
           <div>
-            <p className="text-xs uppercase text-slate-400 font-semibold">Requisiti posizione</p>
+            <p className="text-xs uppercase text-slate-400 font-semibold">Dati posizione</p>
             <h3 className="text-lg font-bold text-slate-800">
               {position.code} • {position.title}
             </h3>
             <p className="text-xs text-slate-500 mt-1">
-              Modifica i requisiti E/D. Salva per aggiornare il fit score.
+              Modifica tutti i dati principali della posizione. I requisiti si gestiscono dal pannello dedicato.
             </p>
           </div>
           <button
@@ -934,43 +952,158 @@ const RequirementsDrawer = ({
         </div>
 
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          {draftRequirements.length === 0 && (
-            <div className="text-sm text-slate-400 italic">Nessun requisito presente.</div>
-          )}
-          {["essential", "desirable"].map(type => (
-            <div key={type} className="space-y-3">
-              <h4 className="text-xs font-bold text-slate-500 uppercase">
-                {type === "essential" ? "Essential (E)" : "Desirable (D)"}
-              </h4>
-              {draftRequirements
-                .filter(req => req.type === type)
-                .map(req => (
-                  <div key={req.id} className="rounded-lg border border-slate-200 bg-white p-3 space-y-2">
-                    <div className="flex items-center justify-between gap-3">
-                      <select
-                        value={req.type}
-                        onChange={(event) =>
-                          updateRequirement(req.id, { type: event.target.value as Requirement["type"] })
-                        }
-                        className="text-xs font-semibold uppercase text-slate-600 border border-slate-200 rounded px-2 py-1 bg-slate-50"
-                      >
-                        <option value="essential">Essential</option>
-                        <option value="desirable">Desirable</option>
-                      </select>
-                      {req.hidden && (
-                        <span className="text-[10px] uppercase text-slate-400">Hidden</span>
-                      )}
-                    </div>
-                    <textarea
-                      value={req.text}
-                      onChange={(event) => updateRequirement(req.id, { text: event.target.value })}
-                      className="w-full text-sm text-slate-700 border border-slate-200 rounded-md px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none resize-none"
-                      rows={3}
-                    />
-                  </div>
-                ))}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+              Codice
+              <input
+                value={draftPosition.code}
+                readOnly
+                disabled
+                className="mt-2 w-full rounded border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-500 outline-none cursor-not-allowed"
+              />
+            </label>
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+              Titolo
+              <input
+                value={draftPosition.title}
+                onChange={handleFieldChange("title")}
+                className="mt-2 w-full rounded border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none"
+              />
+            </label>
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+              Ente
+              <input
+                value={draftPosition.entity}
+                onChange={handleFieldChange("entity")}
+                className="mt-2 w-full rounded border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none"
+              />
+            </label>
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+              Sede
+              <input
+                value={draftPosition.location}
+                onChange={handleFieldChange("location")}
+                className="mt-2 w-full rounded border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none"
+              />
+            </label>
+          </div>
+
+          <div className="border-t border-slate-200 pt-6">
+            <h4 className="text-xs font-bold text-slate-400 uppercase mb-3">Requisiti profilo</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                Inglese richiesto
+                <input
+                  value={draftPosition.englishReq}
+                  onChange={handleFieldChange("englishReq")}
+                  className="mt-2 w-full rounded border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+              </label>
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                NOS richiesto
+                <input
+                  value={draftPosition.nosReq}
+                  onChange={handleFieldChange("nosReq")}
+                  className="mt-2 w-full rounded border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+              </label>
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                Grado richiesto
+                <input
+                  value={draftPosition.rankReq}
+                  onChange={handleFieldChange("rankReq")}
+                  className="mt-2 w-full rounded border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+              </label>
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                Categoria/Specialità
+                <input
+                  value={draftPosition.catSpecQualReq}
+                  onChange={handleFieldChange("catSpecQualReq")}
+                  className="mt-2 w-full rounded border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+              </label>
             </div>
-          ))}
+          </div>
+
+          <div className="border-t border-slate-200 pt-6">
+            <h4 className="text-xs font-bold text-slate-400 uppercase mb-3">Requisiti posizione</h4>
+            {draftPosition.requirements.length === 0 && (
+              <div className="text-sm text-slate-400 italic">Nessun requisito presente.</div>
+            )}
+            {["essential", "desirable"].map(type => (
+              <div key={type} className="space-y-3 mb-6">
+                <h5 className="text-xs font-bold text-slate-500 uppercase">
+                  {type === "essential" ? "Essential (E)" : "Desirable (D)"}
+                </h5>
+                {draftPosition.requirements
+                  .filter(req => req.type === type)
+                  .map(req => (
+                    <div key={req.id} className="rounded-lg border border-slate-200 bg-white p-3 space-y-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <select
+                          value={req.type}
+                          onChange={(event) =>
+                            updateRequirement(req.id, { type: event.target.value as Requirement["type"] })
+                          }
+                          className="text-xs font-semibold uppercase text-slate-600 border border-slate-200 rounded px-2 py-1 bg-slate-50"
+                        >
+                          <option value="essential">Essential</option>
+                          <option value="desirable">Desirable</option>
+                        </select>
+                        {req.hidden && (
+                          <span className="text-[10px] uppercase text-slate-400">Hidden</span>
+                        )}
+                      </div>
+                      <textarea
+                        value={req.text}
+                        onChange={(event) => updateRequirement(req.id, { text: event.target.value })}
+                        className="w-full text-sm text-slate-700 border border-slate-200 rounded-md px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none resize-none"
+                        rows={3}
+                      />
+                    </div>
+                  ))}
+              </div>
+            ))}
+          </div>
+
+          <div className="border-t border-slate-200 pt-6">
+            <h4 className="text-xs font-bold text-slate-400 uppercase mb-3">Dettagli aggiuntivi</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                OFCN
+                <input
+                  value={draftPosition.ofcn}
+                  onChange={handleFieldChange("ofcn")}
+                  className="mt-2 w-full rounded border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+              </label>
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                Interesse p.o.
+                <input
+                  value={draftPosition.poInterest}
+                  onChange={handleFieldChange("poInterest")}
+                  className="mt-2 w-full rounded border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+              </label>
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                Titolare
+                <input
+                  value={draftPosition.incumbent}
+                  onChange={handleFieldChange("incumbent")}
+                  className="mt-2 w-full rounded border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+              </label>
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                File Job Description
+                <input
+                  value={draftPosition.jobDescriptionFileName ?? ""}
+                  onChange={handleFieldChange("jobDescriptionFileName")}
+                  className="mt-2 w-full rounded border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+              </label>
+            </div>
+          </div>
         </div>
 
         <div className="p-6 border-t border-slate-200 flex items-center justify-between gap-3">
@@ -1799,7 +1932,6 @@ const WorksheetRow: React.FC<{
   otherSelection: Position | null;
   onUpdate: (e: Evaluation) => void;
   onUpdateCandidate: (c: Candidate) => void;
-  onOpenRequirementsDrawer: () => void;
   isDragging: boolean;
   isDropTarget: boolean;
   onDragHandlePointerDown: (candidateId: string, event: React.PointerEvent<HTMLButtonElement>) => void;
@@ -1811,7 +1943,6 @@ const WorksheetRow: React.FC<{
   otherSelection,
   onUpdate,
   onUpdateCandidate,
-  onOpenRequirementsDrawer,
   isDragging,
   isDropTarget,
   onDragHandlePointerDown,
@@ -1938,13 +2069,6 @@ const WorksheetRow: React.FC<{
              <option value="excluded">ESCLUSO</option>
            </select>
         </div>
-        <button
-          onClick={onOpenRequirementsDrawer}
-          className="text-xs text-blue-600 hover:text-blue-700 font-semibold border border-blue-100 bg-blue-50 px-2 py-1 rounded"
-        >
-          <FileText className="w-3 h-3 inline-block mr-1" />
-          Requisiti
-        </button>
       </div>
 
       {expanded && (
@@ -4483,7 +4607,7 @@ const PositionDetailView = ({
   onReorder,
   onBack,
   onToggleReqVisibility,
-  onUpdateRequirements,
+  onUpdatePosition,
   onExport,
   isFavorite,
   onToggleFavorite
@@ -4497,7 +4621,7 @@ const PositionDetailView = ({
   onReorder: (positionId: string, orderedCandidateIds: string[]) => void;
   onBack: () => void;
   onToggleReqVisibility: (posCode: string, reqId: string) => void;
-  onUpdateRequirements: (positionCode: string, requirements: Requirement[]) => void;
+  onUpdatePosition: (originalCode: string, nextPosition: Position) => void;
   onExport: (p: Position, c: Candidate[], e: Record<string, Evaluation>, pos: Position[]) => void;
   isFavorite: boolean;
   onToggleFavorite: (positionCode: string) => void;
@@ -4505,7 +4629,7 @@ const PositionDetailView = ({
   const [viewMode, setViewMode] = useState<'list' | 'matrix'>('list');
   const [filter, setFilter] = useState('all'); // all, selected, pending...
   const [isRequirementsOpen, setIsRequirementsOpen] = useState(true);
-  const [isRequirementsDrawerOpen, setIsRequirementsDrawerOpen] = useState(false);
+  const [isPositionEditOpen, setIsPositionEditOpen] = useState(false);
   const baseOrderMap = useMemo(() => new Map(allCandidates.map((c, index) => [c.id, index])), [allCandidates]);
   const previousRowPositionsRef = useRef<Map<string, DOMRect>>(new Map());
   const positionLevel = useMemo(() => getPositionLevel(position), [position]);
@@ -4644,6 +4768,9 @@ const PositionDetailView = ({
                   <div className="font-bold text-slate-700">{stats.total} Candidates</div>
                   <div>{stats.selected} Selected • {stats.pending} Pending</div>
                </div>
+               <Button variant="secondary" onClick={() => setIsPositionEditOpen(true)}>
+                  <Pencil className="w-4 h-4 mr-2" /> Modifica posizione
+               </Button>
                <Button
                  variant="secondary"
                  onClick={() => onToggleFavorite(position.code)}
@@ -4713,7 +4840,6 @@ const PositionDetailView = ({
                              otherSelection={other}
                              onUpdate={onUpdate}
                              onUpdateCandidate={onUpdateCandidate}
-                              onOpenRequirementsDrawer={() => setIsRequirementsDrawerOpen(true)}
                               isDragging={draggedCandidateId === c.id}
                               isDropTarget={dropTargetId === c.id}
                               onDragHandlePointerDown={handleDragHandlePointerDown}
@@ -4748,7 +4874,6 @@ const PositionDetailView = ({
                           )}
                           onUpdate={() => {}}
                           onUpdateCandidate={() => {}}
-                          onOpenRequirementsDrawer={() => {}}
                           isDragging={false}
                           isDropTarget={false}
                           onDragHandlePointerDown={() => {}}
@@ -4826,11 +4951,11 @@ const PositionDetailView = ({
          </div>
       </div>
 
-      <RequirementsDrawer
-        isOpen={isRequirementsDrawerOpen}
+      <PositionEditDrawer
+        isOpen={isPositionEditOpen}
         position={position}
-        onClose={() => setIsRequirementsDrawerOpen(false)}
-        onSave={onUpdateRequirements}
+        onClose={() => setIsPositionEditOpen(false)}
+        onSave={onUpdatePosition}
       />
     </div>
   );
@@ -5182,18 +5307,45 @@ const RecruitmentApp = () => {
     });
   };
 
-  const updatePositionRequirements = (positionCode: string, requirements: Requirement[]) => {
+  const updatePositionData = (originalCode: string, nextPosition: Position) => {
+    const normalizedCode = nextPosition.code.trim().toUpperCase();
+    const codeChanged = normalizedCode !== originalCode;
+
+    if (codeChanged) {
+      setSelectedPositionId(prev => (prev === originalCode ? normalizedCode : prev));
+      setOverlapPositionIds(prev => prev.map(code => (code === originalCode ? normalizedCode : code)));
+    }
+
     setAppData(prev => {
-      const positionIndex = prev.positions.findIndex(p => p.code === positionCode);
-      if (positionIndex === -1) return prev;
-      const newPositions = [...prev.positions];
-      newPositions[positionIndex] = {
-        ...newPositions[positionIndex],
-        requirements
-      };
+      const positions = prev.positions.map(position =>
+        position.code === originalCode ? { ...nextPosition, code: normalizedCode } : position
+      );
+
+      let evaluations = prev.evaluations;
+      let candidates = prev.candidates;
+      let favoritePositionIds = prev.favoritePositionIds;
+
+      if (codeChanged) {
+        evaluations = Object.values(prev.evaluations).reduce<Record<string, Evaluation>>((acc, ev) => {
+          const positionId = ev.positionId === originalCode ? normalizedCode : ev.positionId;
+          acc[`${positionId}_${ev.candidateId}`] = { ...ev, positionId };
+          return acc;
+        }, {});
+
+        candidates = prev.candidates.map(candidate => ({
+          ...candidate,
+          appliedPositionCodes: candidate.appliedPositionCodes.map(code => (code === originalCode ? normalizedCode : code))
+        }));
+
+        favoritePositionIds = prev.favoritePositionIds.map(code => (code === originalCode ? normalizedCode : code));
+      }
+
       return {
         ...prev,
-        positions: newPositions,
+        positions,
+        evaluations,
+        candidates,
+        favoritePositionIds,
         lastUpdated: Date.now()
       };
     });
@@ -5753,7 +5905,7 @@ const RecruitmentApp = () => {
           onReorder={updateManualOrder}
           onBack={() => setCurrentView(positionsReturnView)}
           onToggleReqVisibility={toggleRequirementVisibility}
-          onUpdateRequirements={updatePositionRequirements}
+          onUpdatePosition={updatePositionData}
           onExport={exportToExcel}
           isFavorite={appData.favoritePositionIds.includes(position.code)}
           onToggleFavorite={toggleFavoritePosition}
