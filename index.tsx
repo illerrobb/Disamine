@@ -40,6 +40,7 @@ import {
 interface Language {
   language: string;
   level: string;
+  expiry: string;
 }
 
 interface Candidate {
@@ -244,14 +245,18 @@ const normalizeRequirements = (requirements: Requirement[]) => {
 const formatLanguages = (languages: Language[]) => {
   if (!languages || languages.length === 0) return "-";
   return languages
-    .map((lang) => `${lang.language.trim()} (${lang.level.trim() || "?"})`)
+    .map((lang) => {
+      const level = lang.level.trim() || "?";
+      const expiry = lang.expiry.trim();
+      return expiry ? `${lang.language.trim()} (${level}, scad. ${expiry})` : `${lang.language.trim()} (${level})`;
+    })
     .join(" • ");
 };
 
 const normalizeLanguages = (languages: Language[]) => {
   if (!languages || languages.length === 0) return "";
   return languages
-    .map((lang) => `${lang.language.trim().toLowerCase()}|${lang.level.trim().toLowerCase()}`)
+    .map((lang) => `${lang.language.trim().toLowerCase()}|${lang.level.trim().toLowerCase()}|${lang.expiry.trim().toLowerCase()}`)
     .sort()
     .join("|");
 };
@@ -388,6 +393,10 @@ const parseCandidates = (data: any[]): DedupResult<Candidate> => {
     // Language & Applications
     const linguaKey = findKey(keys, "LINGUA", "LANGUAGE");
     const livelloKey = findKey(keys, "LIVELLO", "ACCERT", "LEVEL");
+    const linguaScadenzaKey = keys.find((k) => {
+      const normalized = normalizeHeader(k);
+      return normalized === "DATA SCAD. LINGUA" || normalized === "DATA SCAD LINGUA" || normalized.includes("SCAD") && normalized.includes("LINGUA");
+    });
     const poSegnalateKey = findKey(keys, "SEGNALATE", "POSIZIONI", "CANDIDATURE", "APPLIED", "PREFERENCES");
 
     if (!matricolaKey || !row[matricolaKey]) return;
@@ -446,10 +455,11 @@ const parseCandidates = (data: any[]): DedupResult<Candidate> => {
       const languageEntry = {
         language: String(row[linguaKey]).trim(),
         level: String(row[livelloKey] || "?").trim(),
+        expiry: formatExcelDate(row[linguaScadenzaKey]),
       };
-      const languageKey = `${languageEntry.language.toLowerCase()}|${languageEntry.level.toLowerCase()}`;
+      const languageKey = `${languageEntry.language.toLowerCase()}|${languageEntry.level.toLowerCase()}|${languageEntry.expiry.toLowerCase()}`;
       const hasLanguage = candidate.languages.some(
-        (lang) => `${lang.language.toLowerCase()}|${lang.level.toLowerCase()}` === languageKey
+        (lang) => `${lang.language.toLowerCase()}|${lang.level.toLowerCase()}|${lang.expiry.toLowerCase()}` === languageKey
       );
       if (!hasLanguage) {
         candidate.languages.push(languageEntry);
@@ -1330,7 +1340,7 @@ const CandidateMatchDrawer = ({
                 <span className="text-slate-400">Lingue</span>
                 <span className="font-semibold text-slate-700 text-right break-words">
                   {candidate.languages.length > 0
-                    ? candidate.languages.map(lang => `${lang.language} (${lang.level})`).join(", ")
+                    ? candidate.languages.map(lang => lang.expiry ? `${lang.language} (${lang.level}) - scad. ${lang.expiry}` : `${lang.language} (${lang.level})`).join(", ")
                     : "-"}
                 </span>
               </div>
@@ -1579,7 +1589,7 @@ const CandidateDetailView = ({
          <div className="grid grid-cols-3 gap-4 text-xs bg-slate-50 p-3 rounded border border-slate-200">
              <div><span className="font-semibold text-slate-400">Role:</span> {candidate.role} {candidate.category} {candidate.specialty}</div>
              <div><span className="font-semibold text-slate-400">NOS:</span> {candidate.nosLevel} {candidate.nosQual}</div>
-             <div><span className="font-semibold text-slate-400">Languages:</span> {candidate.languages.map(l => `${l.language} (${l.level})`).join(', ')}</div>
+             <div><span className="font-semibold text-slate-400">Languages:</span> {candidate.languages.map(l => l.expiry ? `${l.language} (${l.level}) - scad. ${l.expiry}` : `${l.language} (${l.level})`).join(', ')}</div>
              <div className="col-span-3 border-t border-slate-200 pt-2 mt-1">
                 <span className="font-semibold text-slate-400">Mix:</span> {candidate.mixDescription}
              </div>
@@ -2035,7 +2045,7 @@ const WorksheetRow: React.FC<{
                 <span className="text-slate-300">|</span>
                 <span className="truncate max-w-[200px]">{candidate.serviceEntity}</span>
                  <span className="text-slate-300">|</span>
-                 <span>{candidate.languages.map(l => `${l.language} (${l.level})`).join(', ')}</span>
+                 <span>{candidate.languages.map(l => l.expiry ? `${l.language} (${l.level}) - scad. ${l.expiry}` : `${l.language} (${l.level})`).join(', ')}</span>
                </>
              )}
           </div>
@@ -2498,13 +2508,6 @@ const readExcelFiles = async (files: File[], label: string) => {
   return data.flat();
 };
 
-const PROFILE_CODE_GROUPS: Record<string, string[]> = {
-  AA: ["AARAN", "AARAS", "AARNN", "AARNS"],
-  AARA: ["AARAN", "AARAS"],
-  AARN: ["AARNN", "AARNS"],
-  GA: ["GARN", "GARS"]
-};
-
 const ROLE_FILTER_OPTIONS = [
   { value: "ALL", label: "Tutti i ruoli" },
   { value: "NAVIGANTI", label: "Naviganti (AArnn/AArns, posizioni AA/AArn)" },
@@ -2515,8 +2518,6 @@ const ROLE_FILTER_OPTIONS = [
 ] as const;
 
 type RoleFilterValue = (typeof ROLE_FILTER_OPTIONS)[number]["value"];
-
-const RANK_ORDER = ["TCOL", "MAGG", "CAP", "TEN", "STEN"];
 
 const POSITION_LEVEL_ORDER = ["BASSO", "MEDIO", "ELEVATO", "ELEVATISSIMO", "N.D."] as const;
 type PositionLevelType = (typeof POSITION_LEVEL_ORDER)[number];
@@ -2707,143 +2708,6 @@ const matchesPositionRoleFilter = (position: Position, filter: RoleFilterValue) 
   return roles.has(filter);
 };
 
-const parseProfileOption = (option: string) => {
-  const tokens = option.split(/\s+/).filter(Boolean);
-  const role = tokens[0] ?? "";
-  const category = tokens[1] ?? "";
-  const specialty = tokens.slice(2).join(" ");
-
-  const roleCode = normalizeProfileCode(role);
-  const categoryCode = normalizeProfileCode(category);
-  const specialtyCode = normalizeProfileCode(specialty);
-
-  return {
-    roleCode,
-    categoryCode,
-    specialtyCode,
-    profileCode: `${roleCode}${categoryCode}`,
-    fullCode: `${roleCode}${categoryCode}${specialtyCode}`,
-    hasCategory: Boolean(categoryCode),
-    hasSpecialty: Boolean(specialtyCode)
-  };
-};
-
-const buildCandidateProfile = (candidate: Candidate) => {
-  const roleCode = normalizeProfileCode(candidate.role || "");
-  const categoryCode = normalizeProfileCode(candidate.category || "");
-  const specialtyCode = normalizeProfileCode(candidate.specialty || "");
-  const categorySpecialtyCode = `${categoryCode}${specialtyCode}`;
-  const profileCodes = new Set<string>();
-
-  if (roleCode) {
-    profileCodes.add(roleCode);
-    if (roleCode.length >= 4) {
-      profileCodes.add(`${roleCode.slice(0, 2)}${roleCode.slice(2, 4)}`);
-    }
-  }
-
-  if (roleCode.length >= 4) {
-    const rolePrefix = roleCode.slice(0, 2);
-    profileCodes.add(rolePrefix);
-    if (categoryCode) {
-      profileCodes.add(`${rolePrefix}${categoryCode}`);
-    }
-  }
-
-  if (roleCode.length === 2 && categoryCode) {
-    profileCodes.add(`${roleCode}${categoryCode}`);
-  }
-
-  return {
-    roleCode,
-    categoryCode,
-    specialtyCode,
-    categorySpecialtyCode,
-    profileCodes: Array.from(profileCodes),
-    fullCode: `${roleCode}${categoryCode}${specialtyCode}`
-  };
-};
-
-const matchesProfileCode = (requiredCode: string, candidateCode: string) => {
-  if (!requiredCode) return true;
-  if (!candidateCode) return false;
-  if (requiredCode === candidateCode) return true;
-
-  const requiredGroup = PROFILE_CODE_GROUPS[requiredCode];
-  const candidateGroup = PROFILE_CODE_GROUPS[candidateCode];
-
-  if (requiredGroup?.includes(candidateCode)) return true;
-  if (candidateGroup?.includes(requiredCode)) return true;
-
-  if (requiredCode.length <= 2 && candidateCode.startsWith(requiredCode)) return true;
-  if (requiredCode.length <= 4 && candidateCode.startsWith(requiredCode)) return true;
-
-  return false;
-};
-
-const profileMatchesRequirement = (candidate: Candidate, requirementRaw: string) => {
-  if (!requirementRaw.trim()) return true;
-
-  const candidateProfile = buildCandidateProfile(candidate);
-  const options = requirementRaw
-    .replace(/\r?\n/g, "/")
-    .split("/")
-    .map(opt => opt.trim())
-    .filter(Boolean);
-
-  return options.some(option => {
-    const parsed = parseProfileOption(option);
-
-    if (parsed.hasSpecialty) {
-      const specialtyMatches =
-        parsed.specialtyCode === candidateProfile.specialtyCode ||
-        parsed.specialtyCode === candidateProfile.categorySpecialtyCode;
-      if (!specialtyMatches) return false;
-    }
-
-    if (parsed.hasCategory) {
-      return candidateProfile.profileCodes.some(code => matchesProfileCode(parsed.profileCode, code));
-    }
-
-    return candidateProfile.profileCodes.some(code => matchesProfileCode(parsed.roleCode, code));
-  });
-};
-
-const normalizeRankCode = (value: string) =>
-  value
-    .toUpperCase()
-    .replace(/\s+/g, "")
-    .replace(/[^A-Z]/g, "");
-
-const parseRankRequirements = (rankReq: string) =>
-  rankReq
-    .split(/[\/,;]|(?:\s+-\s+)/)
-    .map(part => normalizeRankCode(part))
-    .filter(Boolean);
-
-const rankMatchesRequirement = (candidateRank: string, rankReq: string) => {
-  if (!rankReq.trim()) return true;
-  const candidateCode = normalizeRankCode(candidateRank);
-  const requiredCodes = parseRankRequirements(rankReq).filter(code => RANK_ORDER.includes(code));
-
-  if (!candidateCode || !RANK_ORDER.includes(candidateCode)) return false;
-  if (requiredCodes.length === 0) return false;
-
-  if (requiredCodes.length >= 2) {
-    return requiredCodes.includes(candidateCode);
-  }
-
-  const requiredIndex = RANK_ORDER.indexOf(requiredCodes[0]);
-  const candidateIndex = RANK_ORDER.indexOf(candidateCode);
-  return Math.abs(candidateIndex - requiredIndex) <= 1;
-};
-
-const isCandidateProfileCompatible = (candidate: Candidate, position: Position) => {
-  const profileOk = profileMatchesRequirement(candidate, position.catSpecQualReq || "");
-  const rankOk = rankMatchesRequirement(candidate.rank || "", position.rankReq || "");
-  return profileOk && rankOk;
-};
-
 const exportToExcel = (position: Position, candidates: Candidate[], evaluations: Record<string, Evaluation>, positions: Position[]) => {
   const XLSX = getStyledXlsx();
   const baseOrderMap = new Map(candidates.map((c, index) => [c.id, index]));
@@ -2868,7 +2732,7 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
 
   const baseHeaders = [
     "Nominativo",
-    `Profilo richiesto\n${position.rankReq} \\${position.catSpecQualReq}`,
+    "Profilo richiesto",
     "Attribuzioni specifiche/Corsi obbligatori",
     ...(includeOfcn ? ["Idoneità OFCN"] : []),
     `NOS\n${position.nosReq}`,
@@ -2970,6 +2834,9 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
     if (c.globalNotes) {
        noteParts.push(c.globalNotes);
     }
+    if (ev.status === "non-compatible") {
+       noteParts.push("NON COMPATIBILE");
+    }
     if (ev.notes) {
        noteParts.push(ev.notes);
     }
@@ -2979,7 +2846,6 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
        if (s === 'selected') return 'FAVOREVOLE';
        if (s === 'rejected') return 'NON FAVOREVOLE';
        if (s === 'reserve') return 'POSSIBILE MATCH';
-       if (s === 'non-compatible') return 'NON COMPATIBILE';
        if (s === 'excluded') return 'ESCLUSO';
        return '';
     };
@@ -2988,21 +2854,22 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
     const englishLevelRaw = englishLanguage?.level ?? "";
     const englishLevelDigits = englishLevelRaw.replace(/\D/g, "");
     const englishLevel = englishLevelDigits.length >= 4 ? englishLevelDigits.slice(0, 4) : englishLevelDigits;
-    const englishCell = englishLanguage ? `INGLESE\n${englishLevel || englishLevelRaw}` : "";
+    const englishExpiry = englishLanguage?.expiry || "";
+    const englishCell = englishLanguage
+      ? `INGLESE\n${englishLevel || englishLevelRaw}${englishExpiry ? `\n${englishExpiry}` : ""}`
+      : "";
 
     const nominativoLabel = `${[c.rank, c.role, c.category, c.specialty].filter(Boolean).join(" ")}\n${c.nominativo}`.trim();
-    const profileMatch = isCandidateProfileCompatible(c, position);
-
     const baseValues = [
        nominativoLabel, // Nominativo
-       profileMatch ? "SI" : "NO", // Profilo richiesto match
+       "", // Profilo richiesto (calcolo disabilitato)
        c.specificAssignments || "", // Attribuzioni specifiche/Corsi obbligatori
        ...(includeOfcn ? [c.ofcnSuitability || ""] : []), // Idoneità OFCN
        c.nosLevel, // NOS
        englishCell // Inglese
     ];
 
-    const corsoGraduat = [c.category, c.specialty].filter(Boolean).join(" / ");
+    const corsoGraduat = "";
     const mandatesDetail = [c.internationalMandates, c.mixDescription].filter(Boolean).join("\n");
 
     return {
