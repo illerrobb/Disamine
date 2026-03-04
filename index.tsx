@@ -1129,6 +1129,8 @@ const CandidateMatchDrawer = ({
   candidate,
   position,
   evaluation,
+  allPositions,
+  evaluations,
   onClose,
   onUpdate
 }: {
@@ -1136,10 +1138,16 @@ const CandidateMatchDrawer = ({
   candidate: Candidate | null;
   position: Position | null;
   evaluation: Evaluation | null;
+  allPositions: Position[];
+  evaluations: Record<string, Evaluation>;
   onClose: () => void;
   onUpdate: (ev: Evaluation) => void;
 }) => {
   if (!isOpen || !candidate || !position || !evaluation) return null;
+
+  const candidateApplications = allPositions
+    .filter((pos) => !!evaluations[`${pos.code}_${candidate.id}`])
+    .sort((a, b) => a.code.localeCompare(b.code));
 
   const activeReqs = position.requirements.filter(req => !req.hidden);
   const {
@@ -1363,6 +1371,21 @@ const CandidateMatchDrawer = ({
                 {candidate.globalNotes}
               </div>
             )}
+            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              <span className="block text-[10px] uppercase text-slate-400 font-semibold mb-1">Posizioni segnalate</span>
+              {candidateApplications.length > 0 ? (
+                <ul className="space-y-1">
+                  {candidateApplications.map((appliedPosition) => (
+                    <li key={appliedPosition.code} className="flex items-start gap-2">
+                      <span className="font-mono text-slate-500">{appliedPosition.code}</span>
+                      <span className="text-slate-600 break-words">{appliedPosition.title}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <span>-</span>
+              )}
+            </div>
           </div>
 
           {activeReqs.length === 0 ? (
@@ -1931,6 +1954,8 @@ const WorksheetRow: React.FC<{
   otherSelection: Position | null;
   onUpdate: (e: Evaluation) => void;
   onUpdateCandidate: (c: Candidate) => void;
+  allPositions: Position[];
+  allEvaluations: Record<string, Evaluation>;
   isDragging: boolean;
   isDropTarget: boolean;
   onDragHandlePointerDown: (candidateId: string, event: React.PointerEvent<HTMLButtonElement>) => void;
@@ -1942,6 +1967,8 @@ const WorksheetRow: React.FC<{
   otherSelection,
   onUpdate,
   onUpdateCandidate,
+  allPositions,
+  allEvaluations,
   isDragging,
   isDropTarget,
   onDragHandlePointerDown,
@@ -1987,6 +2014,10 @@ const WorksheetRow: React.FC<{
       default: return 'bg-slate-100 text-slate-600 border-slate-200';
     }
   };
+
+  const candidateApplications = allPositions
+    .filter((pos) => !!allEvaluations[`${pos.code}_${candidate.id}`])
+    .sort((a, b) => a.code.localeCompare(b.code));
 
   return (
     <div
@@ -2132,6 +2163,20 @@ const WorksheetRow: React.FC<{
                     <p className="text-slate-500 leading-relaxed">{candidate.mixDescription}</p>
                  </div>
                )}
+               <div className="border-t border-slate-100 pt-2">
+                  <span className="font-semibold text-slate-400 block mb-1">Posizioni segnalate:</span>
+                  {candidateApplications.length > 0 ? (
+                    <ul className="space-y-1">
+                      {candidateApplications.map((appliedPosition) => (
+                        <li key={appliedPosition.code} className="text-slate-500">
+                          <span className="font-mono">{appliedPosition.code}</span> - {appliedPosition.title}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-slate-400">-</p>
+                  )}
+               </div>
                {candidate.internationalMandates && (
                  <div className="border-t border-slate-100 pt-2">
                     <span className="font-semibold text-slate-400 block mb-1">Mandati Internazionali:</span>
@@ -4589,6 +4634,8 @@ const OverlapKanbanView = ({
         candidate={matchDrawerCandidate}
         position={matchDrawerPosition}
         evaluation={matchDrawerEvaluation}
+        allPositions={positions}
+        evaluations={evaluations}
         onClose={() => setMatchDrawerData(null)}
         onUpdate={onUpdate}
       />
@@ -4633,9 +4680,9 @@ const PositionDetailView = ({
   const previousRowPositionsRef = useRef<Map<string, DOMRect>>(new Map());
   const positionLevel = useMemo(() => getPositionLevel(position), [position]);
   const profileSummary = useMemo(() => {
-    const profileParts = [position.rankReq, position.catSpecQualReq].filter(Boolean);
+    const profileParts = [position.rankReq, position.catSpecQualReq, position.englishReq && `Inglese: ${position.englishReq}`].filter(Boolean);
     return profileParts.length > 0 ? profileParts.join(" • ") : "-";
-  }, [position.rankReq, position.catSpecQualReq]);
+  }, [position.rankReq, position.catSpecQualReq, position.englishReq]);
 
   const positionCandidates = useMemo(() => {
     return allCandidates.filter(c => !!evaluations[`${position.code}_${c.id}`]);
@@ -4839,6 +4886,8 @@ const PositionDetailView = ({
                              otherSelection={other}
                              onUpdate={onUpdate}
                              onUpdateCandidate={onUpdateCandidate}
+                             allPositions={allPositions}
+                             allEvaluations={evaluations}
                               isDragging={draggedCandidateId === c.id}
                               isDropTarget={dropTargetId === c.id}
                               onDragHandlePointerDown={handleDragHandlePointerDown}
@@ -4873,6 +4922,8 @@ const PositionDetailView = ({
                           )}
                           onUpdate={() => {}}
                           onUpdateCandidate={() => {}}
+                          allPositions={allPositions}
+                          allEvaluations={evaluations}
                           isDragging={false}
                           isDropTarget={false}
                           onDragHandlePointerDown={() => {}}
