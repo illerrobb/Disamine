@@ -1965,6 +1965,8 @@ const WorksheetRow: React.FC<{
   otherSelection: Position | null;
   onUpdate: (e: Evaluation) => void;
   onUpdateCandidate: (c: Candidate) => void;
+  allPositions: Position[];
+  allEvaluations: Record<string, Evaluation>;
   isDragging: boolean;
   isDropTarget: boolean;
   onDragHandlePointerDown: (candidateId: string, event: React.PointerEvent<HTMLButtonElement>) => void;
@@ -1976,6 +1978,8 @@ const WorksheetRow: React.FC<{
   otherSelection,
   onUpdate,
   onUpdateCandidate,
+  allPositions,
+  allEvaluations,
   isDragging,
   isDropTarget,
   onDragHandlePointerDown,
@@ -2021,6 +2025,10 @@ const WorksheetRow: React.FC<{
       default: return 'bg-slate-100 text-slate-600 border-slate-200';
     }
   };
+
+  const candidateApplications = allPositions
+    .filter((pos) => !!allEvaluations[`${pos.code}_${candidate.id}`])
+    .sort((a, b) => a.code.localeCompare(b.code));
 
   return (
     <div
@@ -2166,6 +2174,20 @@ const WorksheetRow: React.FC<{
                     <p className="text-slate-500 leading-relaxed">{candidate.mixDescription}</p>
                  </div>
                )}
+               <div className="border-t border-slate-100 pt-2">
+                  <span className="font-semibold text-slate-400 block mb-1">Posizioni segnalate:</span>
+                  {candidateApplications.length > 0 ? (
+                    <ul className="space-y-1">
+                      {candidateApplications.map((appliedPosition) => (
+                        <li key={appliedPosition.code} className="text-slate-500">
+                          <span className="font-mono">{appliedPosition.code}</span> - {appliedPosition.title}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-slate-400">-</p>
+                  )}
+               </div>
                {candidate.internationalMandates && (
                  <div className="border-t border-slate-100 pt-2">
                     <span className="font-semibold text-slate-400 block mb-1">Mandati Internazionali:</span>
@@ -4526,9 +4548,9 @@ const PositionDetailView = ({
   const previousRowPositionsRef = useRef<Map<string, DOMRect>>(new Map());
   const positionLevel = useMemo(() => getPositionLevel(position), [position]);
   const profileSummary = useMemo(() => {
-    const profileParts = [position.rankReq, position.catSpecQualReq].filter(Boolean);
+    const profileParts = [position.rankReq, position.catSpecQualReq, position.englishReq && `Inglese: ${position.englishReq}`].filter(Boolean);
     return profileParts.length > 0 ? profileParts.join(" • ") : "-";
-  }, [position.rankReq, position.catSpecQualReq]);
+  }, [position.rankReq, position.catSpecQualReq, position.englishReq]);
 
   const positionCandidates = useMemo(() => {
     return allCandidates.filter(c => !!evaluations[`${position.code}_${c.id}`]);
@@ -4732,6 +4754,8 @@ const PositionDetailView = ({
                              otherSelection={other}
                              onUpdate={onUpdate}
                              onUpdateCandidate={onUpdateCandidate}
+                             allPositions={allPositions}
+                             allEvaluations={evaluations}
                               isDragging={draggedCandidateId === c.id}
                               isDropTarget={dropTargetId === c.id}
                               onDragHandlePointerDown={handleDragHandlePointerDown}
@@ -4766,6 +4790,8 @@ const PositionDetailView = ({
                           )}
                           onUpdate={() => {}}
                           onUpdateCandidate={() => {}}
+                          allPositions={allPositions}
+                          allEvaluations={evaluations}
                           isDragging={false}
                           isDropTarget={false}
                           onDragHandlePointerDown={() => {}}
