@@ -1129,6 +1129,8 @@ const CandidateMatchDrawer = ({
   candidate,
   position,
   evaluation,
+  allPositions,
+  evaluations,
   onClose,
   onUpdate
 }: {
@@ -1136,10 +1138,16 @@ const CandidateMatchDrawer = ({
   candidate: Candidate | null;
   position: Position | null;
   evaluation: Evaluation | null;
+  allPositions: Position[];
+  evaluations: Record<string, Evaluation>;
   onClose: () => void;
   onUpdate: (ev: Evaluation) => void;
 }) => {
   if (!isOpen || !candidate || !position || !evaluation) return null;
+
+  const candidateApplications = allPositions
+    .filter((pos) => !!evaluations[`${pos.code}_${candidate.id}`])
+    .sort((a, b) => a.code.localeCompare(b.code));
 
   const activeReqs = position.requirements.filter(req => !req.hidden);
   const {
@@ -1363,6 +1371,21 @@ const CandidateMatchDrawer = ({
                 {candidate.globalNotes}
               </div>
             )}
+            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              <span className="block text-[10px] uppercase text-slate-400 font-semibold mb-1">Posizioni segnalate</span>
+              {candidateApplications.length > 0 ? (
+                <ul className="space-y-1">
+                  {candidateApplications.map((appliedPosition) => (
+                    <li key={appliedPosition.code} className="flex items-start gap-2">
+                      <span className="font-mono text-slate-500">{appliedPosition.code}</span>
+                      <span className="text-slate-600 break-words">{appliedPosition.title}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <span>-</span>
+              )}
+            </div>
           </div>
 
           {activeReqs.length === 0 ? (
@@ -4589,6 +4612,8 @@ const OverlapKanbanView = ({
         candidate={matchDrawerCandidate}
         position={matchDrawerPosition}
         evaluation={matchDrawerEvaluation}
+        allPositions={positions}
+        evaluations={evaluations}
         onClose={() => setMatchDrawerData(null)}
         onUpdate={onUpdate}
       />
