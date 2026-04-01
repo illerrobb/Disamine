@@ -217,7 +217,9 @@ type FieldDiff = {
   changed: boolean;
 };
 
-const normalizeText = (value: string) => value.trim().replace(/\s+/g, " ");
+const safeTrim = (value: unknown) => (value === null || value === undefined ? "" : String(value).trim());
+
+const normalizeText = (value: unknown) => safeTrim(value).replace(/\s+/g, " ");
 
 const normalizeValue = (value: unknown): string => {
   if (value === null || value === undefined) return "";
@@ -231,13 +233,14 @@ const normalizeValue = (value: unknown): string => {
 
 const formatRequirements = (requirements: Requirement[]) => {
   if (!requirements || requirements.length === 0) return "-";
-  return requirements.map((req) => req.text.trim()).join(" • ");
+  return requirements.map((req) => safeTrim(req?.text)).filter(Boolean).join(" • ");
 };
 
 const normalizeRequirements = (requirements: Requirement[]) => {
   if (!requirements || requirements.length === 0) return "";
   return requirements
-    .map((req) => req.text.trim().toLowerCase())
+    .map((req) => safeTrim(req?.text).toLowerCase())
+    .filter(Boolean)
     .sort()
     .join("|");
 };
@@ -246,17 +249,25 @@ const formatLanguages = (languages: Language[]) => {
   if (!languages || languages.length === 0) return "-";
   return languages
     .map((lang) => {
-      const level = lang.level.trim() || "?";
-      const expiry = lang.expiry.trim();
-      return expiry ? `${lang.language.trim()} (${level}, scad. ${expiry})` : `${lang.language.trim()} (${level})`;
+      const language = safeTrim(lang?.language);
+      if (!language) return "";
+      const level = safeTrim(lang?.level) || "?";
+      const expiry = safeTrim(lang?.expiry);
+      return expiry ? `${language} (${level}, scad. ${expiry})` : `${language} (${level})`;
     })
+    .filter(Boolean)
     .join(" • ");
 };
 
 const normalizeLanguages = (languages: Language[]) => {
   if (!languages || languages.length === 0) return "";
   return languages
-    .map((lang) => `${lang.language.trim().toLowerCase()}|${lang.level.trim().toLowerCase()}|${lang.expiry.trim().toLowerCase()}`)
+    .map((lang) => {
+      const language = safeTrim(lang?.language).toLowerCase();
+      if (!language) return "";
+      return `${language}|${safeTrim(lang?.level).toLowerCase()}|${safeTrim(lang?.expiry).toLowerCase()}`;
+    })
+    .filter(Boolean)
     .sort()
     .join("|");
 };
