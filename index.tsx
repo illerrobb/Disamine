@@ -355,6 +355,25 @@ const hasOriginalDataDifferences = (existing: Record<string, unknown> | null, in
   return false;
 };
 
+const mergeRawAppliedStrings = (existingRaw: string, incomingRaw: string) => {
+  const existing = existingRaw.trim();
+  const incoming = incomingRaw.trim();
+  if (!existing) return incoming;
+  if (!incoming) return existing;
+
+  const existingUpper = existing.toUpperCase();
+  const incomingUpper = incoming.toUpperCase();
+  if (existingUpper === incomingUpper) return existing;
+  if (existingUpper.includes(incomingUpper)) return existing;
+  if (incomingUpper.includes(existingUpper)) return incoming;
+  return `${existing} | ${incoming}`;
+};
+
+const mergeCandidateForImport = (existing: Candidate, incoming: Candidate): Candidate => ({
+  ...incoming,
+  rawAppliedString: mergeRawAppliedStrings(existing.rawAppliedString, incoming.rawAppliedString)
+});
+
 const parseCandidates = (data: any[]): DedupResult<Candidate> => {
   const map = new Map<string, Candidate>();
   let duplicateCount = 0;
@@ -5513,7 +5532,8 @@ const RecruitmentApp = () => {
       if (action === "replace") {
         setAppData((state) => {
           if (current.type === "candidate") {
-            return integrateCandidate(state, current.incoming, "replace");
+            const mergedCandidate = mergeCandidateForImport(current.existing, current.incoming);
+            return integrateCandidate(state, mergedCandidate, "replace");
           }
           return integratePosition(state, current.incoming, "replace");
         });
