@@ -32,7 +32,8 @@ import {
   Ban,
   User,
   Star,
-  Pencil
+  Pencil,
+  Link2
 } from "lucide-react";
 
 // --- Types ---
@@ -102,6 +103,8 @@ interface Evaluation {
   reqEvaluations: Record<string, 'yes' | 'no' | 'partial' | 'pending'>; // Key is requirement text/id
   notes: string;
   status: 'pending' | 'selected' | 'rejected' | 'reserve' | 'non-compatible' | 'excluded';
+  source?: 'native' | 'pool';
+  sourcePosition?: string;
   manualOrder?: number;
 }
 
@@ -1995,6 +1998,9 @@ const WorksheetRow: React.FC<{
   otherSelection: Position | null;
   onUpdate: (e: Evaluation) => void;
   onUpdateCandidate: (c: Candidate) => void;
+  onRemovePoolCandidate: (positionId: string, candidateId: string) => void;
+  onTogglePoolRemovalConfirm: (candidateId: string | null) => void;
+  poolRemovalCandidateId: string | null;
   allPositions: Position[];
   allEvaluations: Record<string, Evaluation>;
   isDragging: boolean;
@@ -2008,6 +2014,9 @@ const WorksheetRow: React.FC<{
   otherSelection,
   onUpdate,
   onUpdateCandidate,
+  onRemovePoolCandidate,
+  onTogglePoolRemovalConfirm,
+  poolRemovalCandidateId,
   allPositions,
   allEvaluations,
   isDragging,
@@ -2019,6 +2028,8 @@ const WorksheetRow: React.FC<{
   const isNonCompatible = evaluation.status === "non-compatible";
   const isExcluded = evaluation.status === "excluded";
   const isLocked = isNonCompatible || isExcluded;
+  const isPool = (evaluation.source ?? "native") === "pool";
+  const isRemovalPending = poolRemovalCandidateId === candidate.id;
 
   // Only count non-hidden requirements
   const activeReqs = position.requirements.filter(r => !r.hidden);
@@ -2063,7 +2074,7 @@ const WorksheetRow: React.FC<{
   return (
     <div
       {...(!isDragOverlay ? { "data-drag-row": true, "data-candidate-id": candidate.id } : {})}
-      className={`border rounded-lg mb-2 shadow-sm overflow-hidden transition-all duration-200 ease-out transform-gpu ${isNonCompatible ? 'bg-gray-50 border-gray-200 opacity-75' : isExcluded ? 'bg-red-50 border-red-200' : 'bg-white border-slate-200'} ${isDropTarget ? 'ring-2 ring-blue-300 bg-blue-50/40' : ''} ${isDragOverlay ? 'shadow-xl ring-2 ring-blue-200 pointer-events-none' : ''} ${isDragging && !isDragOverlay ? 'opacity-0 pointer-events-none' : ''}`}
+      className={`border rounded-lg mb-2 shadow-sm overflow-hidden transition-all duration-200 ease-out transform-gpu ${isNonCompatible ? 'bg-gray-50 border-gray-200 opacity-75' : isExcluded ? 'bg-red-50 border-red-200' : isPool ? 'bg-blue-50/30 border-blue-200' : 'bg-white border-slate-200'} ${isDropTarget ? 'ring-2 ring-blue-300 bg-blue-50/40' : ''} ${isDragOverlay ? 'shadow-xl ring-2 ring-blue-200 pointer-events-none' : ''} ${isDragging && !isDragOverlay ? 'opacity-0 pointer-events-none' : ''}`}
     >
       <div className={`flex items-center p-3 gap-4 hover:bg-slate-50 transition-colors ${isDragging && !isDragOverlay ? 'opacity-70' : ''}`}>
         <button
@@ -2083,6 +2094,11 @@ const WorksheetRow: React.FC<{
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className={`font-medium truncate ${isLocked ? 'text-gray-500 line-through' : 'text-slate-900'}`}>{candidate.nominativo}</span>
+            {isPool && (
+              <span className="text-blue-700" title={`Importato a bacino da ${evaluation.sourcePosition ?? "-"}`}>
+                <Link2 className="w-3.5 h-3.5" />
+              </span>
+            )}
             <span className="text-xs px-1.5 py-0.5 bg-slate-100 rounded text-slate-600">{candidate.rank}</span>
             
             {/* Added Role/Cat/Spec Details inline */}
@@ -2140,6 +2156,23 @@ const WorksheetRow: React.FC<{
              <option value="excluded">ESCLUSO</option>
            </select>
         </div>
+        {isPool && (
+          <div className="flex flex-col items-end gap-1">
+            {!isRemovalPending ? (
+              <button className="text-xs text-red-600 hover:text-red-700 underline" onClick={() => onTogglePoolRemovalConfirm(candidate.id)}>
+                Rimuovi dal bacino
+              </button>
+            ) : (
+              <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2 max-w-[290px]">
+                Questo candidato verrà rimosso dalla disamina. Confermi?
+                <div className="mt-1 flex gap-2">
+                  <button className="px-2 py-0.5 rounded bg-red-600 text-white" onClick={() => { onRemovePoolCandidate(position.code, candidate.id); onTogglePoolRemovalConfirm(null); }}>Conferma</button>
+                  <button className="px-2 py-0.5 rounded border border-slate-300 text-slate-600" onClick={() => onTogglePoolRemovalConfirm(null)}>Annulla</button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {expanded && (
@@ -2784,6 +2817,12 @@ const matchesPositionRoleFilter = (position: Position, filter: RoleFilterValue) 
   return roles.has(filter);
 };
 
+const normalizeEvaluation = (evaluation: Evaluation): Evaluation => ({
+  ...evaluation,
+  source: evaluation.source === "pool" ? "pool" : "native",
+  sourcePosition: evaluation.source === "pool" ? evaluation.sourcePosition : undefined
+});
+
 const exportToExcel = (position: Position, candidates: Candidate[], evaluations: Record<string, Evaluation>, positions: Position[]) => {
   const XLSX = getStyledXlsx();
   const baseOrderMap = new Map(candidates.map((c, index) => [c.id, index]));
@@ -2818,8 +2857,8 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
   // Total columns calculation
   // Fixed Left: baseHeaders
   // Requirements: totalReqsCount
-  // Fixed Right: Corso, Data FEO, Ente, Mandati Estero, Parere, Note (6 cols)
-  const totalCols = baseHeaders.length + totalReqsCount + 6;
+  // Fixed Right: Corso, Data FEO, Ente, Mandati Estero, Parere, Origine, Note (7 cols)
+  const totalCols = baseHeaders.length + totalReqsCount + 7;
 
   // --- Build Header Rows ---
 
@@ -2883,6 +2922,7 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
      "Ente FEO",
      "Nr. mandati estero / data ultimo rientro",
      "Parere Com.te",
+     "Origine",
      "Note"
   ];
 
@@ -2958,6 +2998,7 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
        c.serviceEntity, // Ente FEO
        mandatesDetail, // Mandati Estero / data ultimo rientro
        c.commanderOpinion || mapStatusToText(ev.status), // Parere
+       normalizeEvaluation(ev).source === "pool" ? `Bacino (da ${normalizeEvaluation(ev).sourcePosition || "-"})` : "Nativo",
        noteText // Note
       ],
       isSelected
@@ -4541,6 +4582,273 @@ const OverlapKanbanView = ({
   );
 };
 
+const PoolSearchDrawer = ({
+  isOpen,
+  currentPosition,
+  positions,
+  candidates,
+  evaluations,
+  onClose,
+  onApply
+}: {
+  isOpen: boolean;
+  currentPosition: Position;
+  positions: Position[];
+  candidates: Candidate[];
+  evaluations: Record<string, Evaluation>;
+  onClose: () => void;
+  onApply: (selectionBySource: Record<string, string[]>) => void;
+}) => {
+  const [step, setStep] = useState<1 | 2>(1);
+  const [search, setSearch] = useState("");
+  const [roleFilter, setRoleFilter] = useState<RoleFilterValue | "ALL">("ALL");
+  const [entityFilter, setEntityFilter] = useState("ALL");
+  const [selectedSources, setSelectedSources] = useState<string[]>([]);
+  const [selectedBySource, setSelectedBySource] = useState<Record<string, Record<string, boolean>>>({});
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setStep(1);
+    setSearch("");
+    setRoleFilter("ALL");
+    setEntityFilter("ALL");
+    setSelectedSources([]);
+    setSelectedBySource({});
+  }, [isOpen, currentPosition.code]);
+
+  if (!isOpen) return null;
+
+  const currentRoleSet = getPositionRoleFilters(currentPosition);
+  const existingEvaluations = Object.values(evaluations).filter(ev => ev.positionId === currentPosition.code);
+  const existingByCandidate = new Map(existingEvaluations.map(ev => [ev.candidateId, normalizeEvaluation(ev)]));
+
+  const sourcePositions = positions.filter(position => position.code !== currentPosition.code);
+  const entities = Array.from(new Set(sourcePositions.map(position => position.entity).filter(Boolean))).sort();
+
+  const filteredPositions = sourcePositions.filter(position => {
+    const haystack = `${position.code} ${position.title}`.toLowerCase();
+    const textMatch = !search.trim() || haystack.includes(search.trim().toLowerCase());
+    const roleMatch = roleFilter === "ALL" || matchesPositionRoleFilter(position, roleFilter);
+    const entityMatch = entityFilter === "ALL" || position.entity === entityFilter;
+    return textMatch && roleMatch && entityMatch;
+  });
+
+  const candidatesById = new Map(candidates.map(candidate => [candidate.id, candidate]));
+
+  const sourceCandidateRows = selectedSources.map((sourceCode) => {
+    const sourcePosition = positions.find(position => position.code === sourceCode);
+    if (!sourcePosition) return null;
+    const evs = Object.values(evaluations).filter(ev => ev.positionId === sourceCode);
+    const rows = evs
+      .map(ev => {
+        const candidate = candidatesById.get(ev.candidateId);
+        if (!candidate) return null;
+        const normalized = normalizeEvaluation(ev);
+        const existing = existingByCandidate.get(candidate.id);
+        const importedFromOther = existing?.source === "pool" && existing.sourcePosition !== sourceCode;
+        const blockedByDuplicate = !!existing && existing.sourcePosition !== sourceCode;
+        const alreadyFromSameSource = existing?.source === "pool" && existing.sourcePosition === sourceCode;
+        return {
+          candidate,
+          sourcePosition,
+          blockedByDuplicate,
+          importedFromOther,
+          alreadyFromSameSource,
+          blockedReason: importedFromOther
+            ? `Già presente in disamina (importato da ${existing?.sourcePosition})`
+            : existing
+            ? "Già presente in disamina"
+            : "",
+          defaultSelected: alreadyFromSameSource || !blockedByDuplicate
+        };
+      })
+      .filter(Boolean) as Array<{
+        candidate: Candidate;
+        sourcePosition: Position;
+        blockedByDuplicate: boolean;
+        importedFromOther: boolean;
+        alreadyFromSameSource: boolean;
+        blockedReason: string;
+        defaultSelected: boolean;
+      }>;
+    return { sourcePosition, rows };
+  }).filter(Boolean) as Array<{ sourcePosition: Position; rows: any[] }>;
+
+  const ensureStepTwoSelection = () => {
+    setSelectedBySource(prev => {
+      const next = { ...prev };
+      sourceCandidateRows.forEach(({ sourcePosition, rows }) => {
+        next[sourcePosition.code] = { ...(next[sourcePosition.code] ?? {}) };
+        rows.forEach(({ candidate, defaultSelected }) => {
+          if (next[sourcePosition.code][candidate.id] === undefined) {
+            next[sourcePosition.code][candidate.id] = defaultSelected;
+          }
+        });
+      });
+      return next;
+    });
+  };
+
+  const counters = sourceCandidateRows.reduce(
+    (acc, entry) => {
+      acc.positions += 1;
+      entry.rows.forEach(({ candidate, blockedByDuplicate }) => {
+        const isSelected = selectedBySource[entry.sourcePosition.code]?.[candidate.id];
+        if (!blockedByDuplicate) {
+          acc.eligible += 1;
+        }
+        if (isSelected && !blockedByDuplicate) {
+          acc.selected += 1;
+        }
+      });
+      return acc;
+    },
+    { positions: 0, eligible: 0, selected: 0 }
+  );
+  const stepOneCandidateEstimate = selectedSources.reduce((acc, sourceCode) => {
+    const sourceEvals = Object.values(evaluations).filter(ev => ev.positionId === sourceCode);
+    const eligible = sourceEvals.filter(ev => !existingByCandidate.has(ev.candidateId)).length;
+    return acc + eligible;
+  }, 0);
+
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex">
+      <button className="absolute inset-0 bg-slate-900/40" onClick={onClose} aria-label="Chiudi Ricerca a bacino" />
+      <aside className="ml-auto h-full w-full max-w-[640px] border-l border-slate-200 bg-white shadow-2xl relative flex flex-col">
+        <div className="p-4 border-b border-slate-200">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs uppercase font-semibold text-slate-400">Ricerca a bacino</p>
+              <h3 className="text-lg font-bold text-slate-800">{currentPosition.code} • {currentPosition.title}</h3>
+              <p className="text-xs text-slate-500 mt-1">Step {step} di 2</p>
+            </div>
+            <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
+          </div>
+        </div>
+        {step === 1 ? (
+          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Codice / Titolo" className="md:col-span-2 border border-slate-200 rounded px-3 py-2 text-sm" />
+              <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value as any)} className="border border-slate-200 rounded px-3 py-2 text-sm">
+                <option value="ALL">Ruolo: tutti</option>
+                {ROLE_FILTER_VALUES.map(value => <option key={value} value={value}>{value}</option>)}
+              </select>
+              <select value={entityFilter} onChange={(e) => setEntityFilter(e.target.value)} className="border border-slate-200 rounded px-3 py-2 text-sm md:col-span-3">
+                <option value="ALL">Entità/Sede: tutte</option>
+                {entities.map(entity => <option key={entity} value={entity}>{entity}</option>)}
+              </select>
+            </div>
+            <div className="text-xs text-slate-500 font-medium">{selectedSources.length} posizioni selezionate • {stepOneCandidateEstimate} candidati importabili</div>
+            <div className="space-y-2">
+              {filteredPositions.map(position => {
+                const isChecked = selectedSources.includes(position.code);
+                const roleOverlap = Array.from(getPositionRoleFilters(position)).some(value => currentRoleSet.has(value));
+                const sameEntity = position.entity === currentPosition.entity;
+                const candidateCount = Object.values(evaluations).filter(ev => ev.positionId === position.code).length;
+                return (
+                  <label key={position.code} className="border border-slate-200 rounded p-3 flex items-start gap-3 cursor-pointer hover:bg-slate-50">
+                    <input type="checkbox" checked={isChecked} onChange={(e) => setSelectedSources(prev => e.target.checked ? [...prev, position.code] : prev.filter(code => code !== position.code))} />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs text-blue-700">{position.code}</span>
+                        <PositionLevelBadge level={getPositionLevel(position)} />
+                        {roleOverlap && <Badge color="purple">stesso ruolo</Badge>}
+                        {sameEntity && <Badge color="blue">stessa entità</Badge>}
+                      </div>
+                      <div className="text-sm font-semibold text-slate-800 truncate">{position.title}</div>
+                      <div className="text-xs text-slate-500">{position.entity} • {position.location} • {candidateCount} candidati</div>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            <div className="text-sm font-medium text-slate-700">Verranno importati {counters.selected} candidati</div>
+            {sourceCandidateRows.map(({ sourcePosition, rows }) => {
+              const selectableRows = rows.filter(row => !row.blockedByDuplicate);
+              const allAlreadyPresent = selectableRows.length === 0;
+              return (
+                <div key={sourcePosition.code} className="border border-slate-200 rounded">
+                  <div className="px-3 py-2 border-b border-slate-200 bg-slate-50 text-sm font-semibold">
+                    {sourcePosition.code} • {sourcePosition.title}
+                  </div>
+                  <div className="p-2 space-y-1">
+                    {allAlreadyPresent && (
+                      <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                        Tutti i candidati di questa posizione sono già presenti in disamina.
+                      </div>
+                    )}
+                    {rows.map(({ candidate, blockedByDuplicate, blockedReason }) => (
+                      <label key={candidate.id} className={`flex items-center gap-2 rounded px-2 py-1 ${blockedByDuplicate ? "bg-slate-50 text-slate-400" : "hover:bg-slate-50 cursor-pointer"}`}>
+                        <input
+                          type="checkbox"
+                          checked={!!selectedBySource[sourcePosition.code]?.[candidate.id]}
+                          disabled={blockedByDuplicate}
+                          onChange={(e) => setSelectedBySource(prev => ({
+                            ...prev,
+                            [sourcePosition.code]: {
+                              ...(prev[sourcePosition.code] ?? {}),
+                              [candidate.id]: e.target.checked
+                            }
+                          }))}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm truncate">{candidate.nominativo}</div>
+                          <div className="text-xs">{candidate.id} • {candidate.rank} {candidate.role}</div>
+                          {blockedReason && <div className="text-xs text-amber-700">{blockedReason}</div>}
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <div className="border-t border-slate-200 p-4 flex items-center justify-between">
+          {step === 1 ? (
+            <>
+              <span className="text-xs text-slate-500">{selectedSources.length} posizioni selezionate</span>
+              <Button
+                variant="primary"
+                disabled={selectedSources.length === 0}
+                onClick={() => {
+                  ensureStepTwoSelection();
+                  setStep(2);
+                }}
+              >
+                Avanti
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button variant="secondary" onClick={() => setStep(1)}>Indietro</Button>
+              <Button
+                variant="primary"
+                disabled={counters.selected === 0 && counters.eligible === 0}
+                onClick={() => {
+                  const payload: Record<string, string[]> = {};
+                  sourceCandidateRows.forEach(({ sourcePosition, rows }) => {
+                    payload[sourcePosition.code] = rows
+                      .filter(({ candidate, blockedByDuplicate }) => !blockedByDuplicate && selectedBySource[sourcePosition.code]?.[candidate.id])
+                      .map(({ candidate }) => candidate.id);
+                  });
+                  onApply(payload);
+                }}
+              >
+                Importa {counters.selected} candidati
+              </Button>
+            </>
+          )}
+        </div>
+      </aside>
+    </div>,
+    document.body
+  );
+};
+
 const PositionDetailView = ({
   position,
   allCandidates,
@@ -4548,6 +4856,8 @@ const PositionDetailView = ({
   allPositions,
   onUpdate,
   onUpdateCandidate,
+  onApplyPoolSelection,
+  onRemovePoolCandidate,
   onReorder,
   onBack,
   onToggleReqVisibility,
@@ -4562,6 +4872,8 @@ const PositionDetailView = ({
   allPositions: Position[];
   onUpdate: (ev: Evaluation) => void;
   onUpdateCandidate: (candidate: Candidate) => void;
+  onApplyPoolSelection: (positionId: string, selectionBySource: Record<string, string[]>) => void;
+  onRemovePoolCandidate: (positionId: string, candidateId: string) => void;
   onReorder: (positionId: string, orderedCandidateIds: string[]) => void;
   onBack: () => void;
   onToggleReqVisibility: (posCode: string, reqId: string) => void;
@@ -4574,6 +4886,8 @@ const PositionDetailView = ({
   const [filter, setFilter] = useState('all'); // all, selected, pending...
   const [isRequirementsOpen, setIsRequirementsOpen] = useState(true);
   const [isPositionEditOpen, setIsPositionEditOpen] = useState(false);
+  const [isPoolDrawerOpen, setIsPoolDrawerOpen] = useState(false);
+  const [poolRemovalCandidateId, setPoolRemovalCandidateId] = useState<string | null>(null);
   const baseOrderMap = useMemo(() => new Map(allCandidates.map((c, index) => [c.id, index])), [allCandidates]);
   const previousRowPositionsRef = useRef<Map<string, DOMRect>>(new Map());
   const positionLevel = useMemo(() => getPositionLevel(position), [position]);
@@ -4630,8 +4944,18 @@ const PositionDetailView = ({
   const stats = useMemo(() => {
      const selected = positionCandidates.filter(c => evaluations[`${position.code}_${c.id}`]?.status === 'selected').length;
      const pending = positionCandidates.filter(c => evaluations[`${position.code}_${c.id}`]?.status === 'pending').length;
-     return { total: positionCandidates.length, selected, pending };
+     const pool = positionCandidates.filter(c => (evaluations[`${position.code}_${c.id}`]?.source ?? "native") === "pool").length;
+     return { total: positionCandidates.length, selected, pending, pool };
   }, [positionCandidates, evaluations, position.code]);
+
+  const nativeCandidates = useMemo(
+    () => candidates.filter(c => (evaluations[`${position.code}_${c.id}`]?.source ?? "native") !== "pool"),
+    [candidates, evaluations, position.code]
+  );
+  const poolCandidates = useMemo(
+    () => candidates.filter(c => (evaluations[`${position.code}_${c.id}`]?.source ?? "native") === "pool"),
+    [candidates, evaluations, position.code]
+  );
 
   useLayoutEffect(() => {
     if (viewMode !== 'list') {
@@ -4710,8 +5034,15 @@ const PositionDetailView = ({
             <div className="flex items-center gap-2">
                <div className="text-right mr-4 text-xs text-slate-500">
                   <div className="font-bold text-slate-700">{stats.total} Candidates</div>
-                  <div>{stats.selected} Selected • {stats.pending} Pending</div>
+                  <div>{stats.selected} Selected • {stats.pending} Pending • {stats.pool} a bacino</div>
                </div>
+               <Button
+                 variant={positionCandidates.length < 5 ? "primary" : "secondary"}
+                 onClick={() => setIsPoolDrawerOpen(true)}
+               >
+                  Ricerca a bacino
+                  {positionCandidates.length < 5 && <Badge color="amber">Consigliato</Badge>}
+               </Button>
                <Button variant="secondary" onClick={() => setIsPositionEditOpen(true)}>
                   <Pencil className="w-4 h-4 mr-2" /> Modifica posizione
                </Button>
@@ -4728,6 +5059,16 @@ const PositionDetailView = ({
                </Button>
             </div>
           </div>
+          {positionCandidates.length < 5 && (
+            <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 flex items-center justify-between gap-3">
+              <div>
+                <strong>Posizione sotto-popolata.</strong> Usa Ricerca a bacino per importare candidati da altre posizioni senza rimuoverli dalla sorgente.
+              </div>
+              <button className="underline font-semibold whitespace-nowrap" onClick={() => setIsPoolDrawerOpen(true)}>
+                Apri "Ricerca a bacino"
+              </button>
+            </div>
+          )}
 
           {/* Controls */}
           <div className="flex items-center justify-between gap-4 mt-6">
@@ -4771,7 +5112,7 @@ const PositionDetailView = ({
             {viewMode === 'list' ? (
                <>
                   <div className="max-w-4xl mx-auto">
-                     {candidates.map(c => {
+                     {nativeCandidates.map(c => {
                         const ev = evaluations[`${position.code}_${c.id}`];
                         const other = getOtherSelectionInfo(c.id, position.code, evaluations, allPositions);
                         if (!ev) return null;
@@ -4784,6 +5125,38 @@ const PositionDetailView = ({
                              otherSelection={other}
                              onUpdate={onUpdate}
                              onUpdateCandidate={onUpdateCandidate}
+                             onRemovePoolCandidate={onRemovePoolCandidate}
+                             onTogglePoolRemovalConfirm={setPoolRemovalCandidateId}
+                             poolRemovalCandidateId={poolRemovalCandidateId}
+                             allPositions={allPositions}
+                             allEvaluations={evaluations}
+                              isDragging={draggedCandidateId === c.id}
+                              isDropTarget={dropTargetId === c.id}
+                              onDragHandlePointerDown={handleDragHandlePointerDown}
+                           />
+                        );
+                     })}
+                     {poolCandidates.length > 0 && (
+                      <div className="mt-5 mb-3 border-t border-blue-200 pt-3">
+                        <h3 className="text-xs uppercase tracking-wide font-bold text-blue-800">Candidati a bacino</h3>
+                      </div>
+                     )}
+                     {poolCandidates.map(c => {
+                        const ev = evaluations[`${position.code}_${c.id}`];
+                        const other = getOtherSelectionInfo(c.id, position.code, evaluations, allPositions);
+                        if (!ev) return null;
+                        return (
+                           <WorksheetRow 
+                              key={c.id}
+                              candidate={c}
+                              evaluation={ev}
+                             position={position}
+                             otherSelection={other}
+                             onUpdate={onUpdate}
+                             onUpdateCandidate={onUpdateCandidate}
+                             onRemovePoolCandidate={onRemovePoolCandidate}
+                             onTogglePoolRemovalConfirm={setPoolRemovalCandidateId}
+                             poolRemovalCandidateId={poolRemovalCandidateId}
                              allPositions={allPositions}
                              allEvaluations={evaluations}
                               isDragging={draggedCandidateId === c.id}
@@ -4820,8 +5193,11 @@ const PositionDetailView = ({
                           )}
                           onUpdate={() => {}}
                           onUpdateCandidate={() => {}}
-                          allPositions={allPositions}
-                          allEvaluations={evaluations}
+                         allPositions={allPositions}
+                         allEvaluations={evaluations}
+                         onRemovePoolCandidate={onRemovePoolCandidate}
+                         onTogglePoolRemovalConfirm={setPoolRemovalCandidateId}
+                         poolRemovalCandidateId={poolRemovalCandidateId}
                           isDragging={false}
                           isDropTarget={false}
                           onDragHandlePointerDown={() => {}}
@@ -4904,6 +5280,18 @@ const PositionDetailView = ({
         position={position}
         onClose={() => setIsPositionEditOpen(false)}
         onSave={onUpdatePosition}
+      />
+      <PoolSearchDrawer
+        isOpen={isPoolDrawerOpen}
+        currentPosition={position}
+        positions={allPositions}
+        candidates={allCandidates}
+        evaluations={evaluations}
+        onClose={() => setIsPoolDrawerOpen(false)}
+        onApply={(selectionBySource) => {
+          onApplyPoolSelection(position.code, selectionBySource);
+          setIsPoolDrawerOpen(false);
+        }}
       />
     </div>
   );
@@ -5072,7 +5460,11 @@ const RecruitmentApp = () => {
               globalNotes: candidate.globalNotes ?? ""
             })),
             cycle: parsed.cycle ?? createDefaultCycle(),
-            favoritePositionIds: parsed.favoritePositionIds ?? []
+            favoritePositionIds: parsed.favoritePositionIds ?? [],
+            evaluations: Object.entries(parsed.evaluations ?? {}).reduce<Record<string, Evaluation>>((acc, [key, value]) => {
+              acc[key] = normalizeEvaluation(value as Evaluation);
+              return acc;
+            }, {})
           });
           setCurrentView('dashboard');
         }
@@ -5119,7 +5511,8 @@ const RecruitmentApp = () => {
                  positionId: pos.code,
                  reqEvaluations: {},
                  notes: "",
-                 status: 'pending'
+                 status: 'pending',
+                 source: "native"
                };
              }
           }
@@ -5188,7 +5581,7 @@ const RecruitmentApp = () => {
       }
 
       // Update the target evaluation
-      newEvaluations[`${ev.positionId}_${ev.candidateId}`] = ev;
+      newEvaluations[`${ev.positionId}_${ev.candidateId}`] = normalizeEvaluation(ev);
 
       return {
         ...prev,
@@ -5229,6 +5622,57 @@ const RecruitmentApp = () => {
         evaluations: newEvaluations,
         lastUpdated: Date.now()
       };
+    });
+  };
+
+  const applyPoolSelection = (positionId: string, selectionBySource: Record<string, string[]>) => {
+    setAppData(prev => {
+      const nextEvaluations: Record<string, Evaluation> = { ...prev.evaluations };
+      const selectionEntries = Object.entries(selectionBySource);
+      const selectedSourceCodes = new Set(selectionEntries.map(([sourceCode]) => sourceCode));
+      const desiredBySource = new Map(selectionEntries.map(([sourceCode, candidateIds]) => [sourceCode, new Set(candidateIds)]));
+
+      Object.entries(prev.evaluations).forEach(([key, rawEval]) => {
+        const evaluation = normalizeEvaluation(rawEval);
+        if (evaluation.positionId !== positionId || evaluation.source !== "pool" || !evaluation.sourcePosition) return;
+        if (!selectedSourceCodes.has(evaluation.sourcePosition)) return;
+        const desired = desiredBySource.get(evaluation.sourcePosition);
+        if (!desired?.has(evaluation.candidateId)) {
+          delete nextEvaluations[key];
+        }
+      });
+
+      selectionEntries.forEach(([sourceCode, candidateIds]) => {
+        candidateIds.forEach(candidateId => {
+          const key = `${positionId}_${candidateId}`;
+          const existing = nextEvaluations[key] ? normalizeEvaluation(nextEvaluations[key]) : null;
+          if (existing && !(existing.source === "pool" && existing.sourcePosition === sourceCode)) return;
+          if (!existing) {
+            nextEvaluations[key] = {
+              candidateId,
+              positionId,
+              reqEvaluations: {},
+              notes: "",
+              status: "pending",
+              source: "pool",
+              sourcePosition: sourceCode
+            };
+          }
+        });
+      });
+
+      return { ...prev, evaluations: nextEvaluations, lastUpdated: Date.now() };
+    });
+  };
+
+  const removePoolCandidate = (positionId: string, candidateId: string) => {
+    setAppData(prev => {
+      const key = `${positionId}_${candidateId}`;
+      const existing = prev.evaluations[key];
+      if (!existing || normalizeEvaluation(existing).source !== "pool") return prev;
+      const nextEvaluations = { ...prev.evaluations };
+      delete nextEvaluations[key];
+      return { ...prev, evaluations: nextEvaluations, lastUpdated: Date.now() };
     });
   };
 
@@ -5276,7 +5720,9 @@ const RecruitmentApp = () => {
       if (codeChanged) {
         evaluations = Object.values(prev.evaluations).reduce<Record<string, Evaluation>>((acc, ev) => {
           const positionId = ev.positionId === originalCode ? normalizedCode : ev.positionId;
-          acc[`${positionId}_${ev.candidateId}`] = { ...ev, positionId };
+          const normalized = normalizeEvaluation(ev);
+          const sourcePosition = normalized.sourcePosition === originalCode ? normalizedCode : normalized.sourcePosition;
+          acc[`${positionId}_${ev.candidateId}`] = { ...normalized, positionId, sourcePosition };
           return acc;
         }, {});
 
@@ -5380,7 +5826,10 @@ const RecruitmentApp = () => {
         setAppData({
           candidates: nextAppData.candidates,
           positions: nextAppData.positions,
-          evaluations: nextAppData.evaluations,
+          evaluations: Object.entries(nextAppData.evaluations).reduce<Record<string, Evaluation>>((acc, [key, value]) => {
+            acc[key] = normalizeEvaluation(value);
+            return acc;
+          }, {}),
           favoritePositionIds: nextAppData.favoritePositionIds ?? [],
           lastUpdated: nextAppData.lastUpdated,
           cycle: nextAppData.cycle
@@ -5437,7 +5886,8 @@ const RecruitmentApp = () => {
             positionId: pos.code,
             reqEvaluations: {},
             notes: "",
-            status: "pending"
+            status: "pending",
+            source: "native"
           };
         }
       }
@@ -5498,7 +5948,8 @@ const RecruitmentApp = () => {
               positionId: position.code,
               reqEvaluations: {},
               notes: "",
-              status: "pending"
+              status: "pending",
+              source: "native"
             };
           }
         }
@@ -5851,6 +6302,8 @@ const RecruitmentApp = () => {
           allPositions={appData.positions}
           onUpdate={updateEvaluation}
           onUpdateCandidate={updateCandidate}
+          onApplyPoolSelection={applyPoolSelection}
+          onRemovePoolCandidate={removePoolCandidate}
           onReorder={updateManualOrder}
           onBack={() => setCurrentView(positionsReturnView)}
           onToggleReqVisibility={toggleRequirementVisibility}
