@@ -39,8 +39,7 @@ import {
   Target,
   Plus,
   FolderSearch,
-  MoreVertical,
-  ExternalLink
+  MoreVertical
 } from "lucide-react";
 
 // --- Types ---
@@ -150,6 +149,10 @@ type NavigationState = {
   filterStatus: PositionStatus | 'all';
   filterLevel: string[];
   filterRole: RoleFilterValue[];
+};
+type WorkspaceTab = {
+  id: string;
+  navigation: NavigationState;
 };
 
 type ReiterationPriority = 'alta' | 'media' | 'osservazione';
@@ -5744,6 +5747,24 @@ const RecruitmentApp = () => {
   const [filterStatus, setFilterStatus] = useState<PositionStatus | 'all'>('all');
   const [filterLevel, setFilterLevel] = useState<string[]>([]);
   const [filterRole, setFilterRole] = useState<RoleFilterValue[]>([]);
+  const initialWorkspaceTabId = useRef(`tab-${Date.now()}`).current;
+  const [workspaceTabs, setWorkspaceTabs] = useState<WorkspaceTab[]>(() => [{
+    id: initialWorkspaceTabId,
+    navigation: {
+      researchId: researchStore.activeResearchId,
+      view: appData.candidates.length && appData.positions.length ? 'dashboard' : 'upload',
+      selectedPositionId: null,
+      selectedCandidateId: null,
+      positionsReturnView: 'dashboard',
+      searchTerm: '',
+      candidateSearch: '',
+      filterEnte: [],
+      filterStatus: 'all',
+      filterLevel: [],
+      filterRole: []
+    }
+  }]);
+  const [activeWorkspaceTabId, setActiveWorkspaceTabId] = useState(initialWorkspaceTabId);
   const [isNewCycleModalOpen, setIsNewCycleModalOpen] = useState(false);
   const [newCycleName, setNewCycleName] = useState("");
   const [researchMenuId, setResearchMenuId] = useState<string | null>(null);
@@ -5795,15 +5816,17 @@ const RecruitmentApp = () => {
   const navigate = useCallback((view: AppView, overrides: Partial<NavigationState> = {}, replace = false) => {
     const next = getNavigationState(view, overrides);
     navigationRef.current = next;
+    setWorkspaceTabs(tabs => tabs.map(tab => tab.id === activeWorkspaceTabId ? { ...tab, navigation: next } : tab));
     restoreNavigation(next);
     window.history[replace ? 'replaceState' : 'pushState'](next, '', window.location.href);
-  }, [getNavigationState, restoreNavigation]);
+  }, [activeWorkspaceTabId, getNavigationState, restoreNavigation]);
 
   useEffect(() => {
     const state = getNavigationState();
     navigationRef.current = state;
+    setWorkspaceTabs(tabs => tabs.map(tab => tab.id === activeWorkspaceTabId ? { ...tab, navigation: state } : tab));
     window.history.replaceState(state, '', window.location.href);
-  }, [getNavigationState]);
+  }, [activeWorkspaceTabId, getNavigationState]);
 
   // Keep every browser tab aligned with edits made in the others.
   useEffect(() => {
@@ -6603,13 +6626,42 @@ const RecruitmentApp = () => {
 
     // Activate the research before restoring entity-dependent navigation state.
     setResearchStore(store => ({ ...store, activeResearchId: researchId }));
+    setWorkspaceTabs(tabs => tabs.map(tab => tab.id === activeWorkspaceTabId ? { ...tab, navigation: next } : tab));
     setOverlapPositionIds([]);
     restoreNavigation(next);
     if (historyAction !== 'none') {
       window.history[historyAction === 'replace' ? 'replaceState' : 'pushState'](next, '', window.location.href);
     }
     return true;
-  }, [getNavigationState, researchStore.activeResearchId, researchStore.researches, restoreNavigation]);
+  }, [activeWorkspaceTabId, getNavigationState, researchStore.activeResearchId, researchStore.researches, restoreNavigation]);
+
+  const switchWorkspaceTab = (tab: WorkspaceTab) => {
+    if (!researchStore.researches.some(research => research.cycle.id === tab.navigation.researchId)) return;
+    setActiveWorkspaceTabId(tab.id);
+    setResearchStore(store => ({ ...store, activeResearchId: tab.navigation.researchId }));
+    setOverlapPositionIds([]);
+    restoreNavigation(tab.navigation);
+    window.history.pushState(tab.navigation, '', window.location.href);
+  };
+
+  const addWorkspaceTab = () => {
+    const id = `tab-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const navigation = getNavigationState('dashboard', {
+      selectedPositionId: null,
+      selectedCandidateId: null,
+      positionsReturnView: 'dashboard',
+      searchTerm: '',
+      candidateSearch: '',
+      filterEnte: [],
+      filterStatus: 'all',
+      filterLevel: [],
+      filterRole: []
+    });
+    setWorkspaceTabs(tabs => [...tabs, { id, navigation }]);
+    setActiveWorkspaceTabId(id);
+    restoreNavigation(navigation);
+    window.history.pushState(navigation, '', window.location.href);
+  };
 
   useEffect(() => {
     const onPopState = (event: PopStateEvent) => {
@@ -6897,14 +6949,6 @@ const RecruitmentApp = () => {
         </nav>
         <div className="p-4 border-t border-slate-800">
           <button
-            onClick={() => window.open(window.location.href, '_blank', 'noopener,noreferrer')}
-            className="w-full flex items-center gap-2 text-slate-200 hover:text-white text-sm mb-3 px-3 py-2 rounded-md bg-blue-600 hover:bg-blue-500"
-            title="Apri una seconda finestra della ricerca corrente"
-            aria-label="Apri una seconda finestra della ricerca corrente"
-          >
-            <ExternalLink className="w-4 h-4" /> Seconda finestra
-          </button>
-          <button
             onClick={() => setIsSettingsOpen(true)}
             className="w-full flex items-center gap-2 text-slate-200 hover:text-white text-sm px-3 py-2 rounded-md bg-slate-800/60 hover:bg-slate-800"
           >
@@ -6915,6 +6959,58 @@ const RecruitmentApp = () => {
 
       {/* Main Content Area */}
       <main className="flex-1 overflow-hidden flex flex-col">
+        <div className="flex h-11 flex-shrink-0 items-end gap-1 overflow-x-auto border-b border-slate-300 bg-slate-200 px-2 pt-2" role="tablist" aria-label="Schede aperte">
+          {workspaceTabs.map(tab => {
+            const research = researchStore.researches.find(item => item.cycle.id === tab.navigation.researchId);
+            if (!research) return null;
+            const isActive = tab.id === activeWorkspaceTabId;
+            const position = tab.navigation.selectedPositionId
+              ? research.positions.find(item => item.code === tab.navigation.selectedPositionId)
+              : undefined;
+            const candidate = tab.navigation.selectedCandidateId
+              ? research.candidates.find(item => item.id === tab.navigation.selectedCandidateId)
+              : undefined;
+            const viewLabel: Record<AppView, string> = {
+              upload: 'Importazione',
+              researches: 'Ricerche',
+              dashboard: 'Posizioni',
+              favorites: 'Posizioni salvate',
+              position_detail: position?.code ?? 'Posizione',
+              candidates_list: 'Persone',
+              candidate_detail: candidate?.nominativo ?? 'Persona',
+              overlap_kanban: 'Overlap Kanban',
+              reiteration_analysis: 'Reiterazioni'
+            };
+            const label = `${viewLabel[tab.navigation.view]} · ${research.cycle.name}`;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={isActive}
+                title={label}
+                onClick={() => switchWorkspaceTab(tab)}
+                className={`group flex h-9 max-w-56 flex-shrink-0 items-center gap-2 rounded-t-lg border px-4 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500 ${
+                  isActive
+                    ? 'border-slate-300 border-b-white bg-white font-semibold text-slate-900'
+                    : 'border-transparent bg-slate-300/70 text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                }`}
+              >
+                <span className={`h-2 w-2 flex-shrink-0 rounded-full ${isActive ? 'bg-blue-600' : 'bg-slate-400 group-hover:bg-slate-500'}`} />
+                <span className="truncate">{label}</span>
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            onClick={addWorkspaceTab}
+            className="mb-1 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md text-slate-600 transition-colors hover:bg-slate-100 hover:text-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            title="Nuova scheda"
+            aria-label="Apri una nuova scheda"
+          >
+            <Plus className="h-5 w-5" />
+          </button>
+        </div>
         {renderedView === 'researches' && (
           <>
             <header className="bg-white border-b border-slate-200 px-5 sm:px-8 py-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
