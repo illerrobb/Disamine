@@ -37,7 +37,10 @@ import {
   RefreshCw,
   BarChart3,
   Target,
-  Plus
+  Plus,
+  FolderSearch,
+  MoreVertical,
+  ExternalLink
 } from "lucide-react";
 
 // --- Types ---
@@ -134,7 +137,7 @@ interface ResearchStore {
 }
 
 type PositionStatus = 'todo' | 'inprogress' | 'completed';
-type AppView = 'upload' | 'dashboard' | 'favorites' | 'position_detail' | 'candidates_list' | 'candidate_detail' | 'overlap_kanban' | 'reiteration_analysis';
+type AppView = 'upload' | 'researches' | 'dashboard' | 'favorites' | 'position_detail' | 'candidates_list' | 'candidate_detail' | 'overlap_kanban' | 'reiteration_analysis';
 type NavigationState = {
   view: AppView;
   selectedPositionId: string | null;
@@ -5640,10 +5643,9 @@ const RecruitmentApp = () => {
     const parsed = value as any;
     if (Array.isArray(parsed.researches)) {
       const researches = parsed.researches.map((research: AppData) => normalizeResearch(research));
-      if (!researches.length) return null;
       const activeResearchId = researches.some(research => research.cycle.id === parsed.activeResearchId)
         ? parsed.activeResearchId
-        : researches[0].cycle.id;
+        : (researches[0]?.cycle.id ?? "");
       return { schemaVersion: researchStoreSchemaVersion, researches, activeResearchId };
     }
     // Automatic migration from the original single-research localStorage shape.
@@ -5665,8 +5667,10 @@ const RecruitmentApp = () => {
     const initial = createEmptyResearch();
     return { schemaVersion: researchStoreSchemaVersion, researches: [initial], activeResearchId: initial.cycle.id };
   });
+  const emptyResearch = useMemo(() => createEmptyResearch({ name: "Nessuna ricerca selezionata", startedAt: 0, id: "" }), []);
   const appData = researchStore.researches.find(research => research.cycle.id === researchStore.activeResearchId)
-    ?? researchStore.researches[0];
+    ?? researchStore.researches[0]
+    ?? emptyResearch;
   const setAppData: React.Dispatch<React.SetStateAction<AppData>> = useCallback((action) => {
     setResearchStore(store => ({
       ...store,
@@ -5690,6 +5694,10 @@ const RecruitmentApp = () => {
   const [filterRole, setFilterRole] = useState<RoleFilterValue[]>([]);
   const [isNewCycleModalOpen, setIsNewCycleModalOpen] = useState(false);
   const [newCycleName, setNewCycleName] = useState("");
+  const [researchMenuId, setResearchMenuId] = useState<string | null>(null);
+  const [researchToRename, setResearchToRename] = useState<AppData | null>(null);
+  const [renameResearchName, setRenameResearchName] = useState("");
+  const [researchToDelete, setResearchToDelete] = useState<AppData | null>(null);
   const [backupError, setBackupError] = useState("");
   const [backupSuccess, setBackupSuccess] = useState("");
   const [lastImportStats, setLastImportStats] = useState<ImportStats | null>(null);
@@ -5700,6 +5708,8 @@ const RecruitmentApp = () => {
   const [importConflicts, setImportConflicts] = useState<ImportConflict[]>([]);
   const [importConflictsTotal, setImportConflictsTotal] = useState(0);
   const navigationRef = useRef<NavigationState | null>(null);
+  const newResearchInputRef = useRef<HTMLInputElement | null>(null);
+  const renameResearchInputRef = useRef<HTMLInputElement | null>(null);
 
   const getNavigationState = useCallback((view: AppView = currentView, overrides: Partial<NavigationState> = {}): NavigationState => ({
     view,
@@ -6462,11 +6472,82 @@ const RecruitmentApp = () => {
     setSettingsFileSuccess("Tutte le posizioni sono state eliminate.");
   };
 
+  const resetResearchNavigation = useCallback(() => {
+    setSelectedCandidateId(null);
+    setSelectedPositionId(null);
+    setOverlapPositionIds([]);
+    setPositionsReturnView('dashboard');
+    setFilterEnte([]);
+    setFilterStatus('all');
+    setFilterLevel([]);
+    setFilterRole([]);
+    setSearchTerm("");
+    setCandidateSearch("");
+  }, []);
+
   const startNewSearch = () => {
-    const confirmed = confirm("Vuoi avviare una nuova ricerca di personale? La ricerca attuale resterà archiviata.");
-    if (!confirmed) return;
     setNewCycleName("");
     setIsNewCycleModalOpen(true);
+  };
+
+  const openResearch = (researchId: string) => {
+    if (!researchStore.researches.some(research => research.cycle.id === researchId)) return;
+    setResearchStore(store => ({ ...store, activeResearchId: researchId }));
+    resetResearchNavigation();
+    navigate('dashboard', {
+      selectedPositionId: null,
+      selectedCandidateId: null,
+      positionsReturnView: 'dashboard',
+      searchTerm: '',
+      candidateSearch: '',
+      filterEnte: [],
+      filterStatus: 'all',
+      filterLevel: [],
+      filterRole: []
+    });
+  };
+
+  const beginRenameResearch = (research: AppData) => {
+    setResearchMenuId(null);
+    setResearchToRename(research);
+    setRenameResearchName(research.cycle.name);
+  };
+
+  const applyResearchRename = () => {
+    const name = renameResearchName.trim();
+    if (!researchToRename || !name) return;
+    setResearchStore(store => ({
+      ...store,
+      researches: store.researches.map(research => research.cycle.id === researchToRename.cycle.id
+        ? { ...research, cycle: { ...research.cycle, name }, lastUpdated: Date.now() }
+        : research)
+    }));
+    setResearchToRename(null);
+  };
+
+  const deleteResearch = () => {
+    if (!researchToDelete) return;
+    setResearchStore(store => {
+      const researches = store.researches.filter(research => research.cycle.id !== researchToDelete.cycle.id);
+      const activeStillExists = researches.some(research => research.cycle.id === store.activeResearchId);
+      const nextActive = activeStillExists
+        ? store.activeResearchId
+        : ([...researches].sort((a, b) => b.lastUpdated - a.lastUpdated)[0]?.cycle.id ?? "");
+      return { ...store, researches, activeResearchId: nextActive };
+    });
+    setResearchToDelete(null);
+    setResearchMenuId(null);
+    resetResearchNavigation();
+    navigate('researches', {
+      selectedPositionId: null,
+      selectedCandidateId: null,
+      searchTerm: '',
+      candidateSearch: '',
+      filterEnte: [],
+      filterStatus: 'all',
+      filterLevel: [],
+      filterRole: []
+    }, true);
   };
 
   const applyNewCycle = () => {
@@ -6489,17 +6570,18 @@ const RecruitmentApp = () => {
       researches: [...store.researches, nextResearch],
       activeResearchId: nextCycle.id
     }));
+    resetResearchNavigation();
     setCurrentView('upload');
-    setSelectedCandidateId(null);
-    setSelectedPositionId(null);
-    setOverlapPositionIds([]);
-    setFilterEnte([]);
-    setFilterStatus('all');
-    setFilterLevel([]);
-    setFilterRole([]);
-    setSearchTerm("");
     setIsNewCycleModalOpen(false);
   };
+
+  useEffect(() => {
+    if (isNewCycleModalOpen) newResearchInputRef.current?.focus();
+  }, [isNewCycleModalOpen]);
+
+  useEffect(() => {
+    if (researchToRename) renameResearchInputRef.current?.focus();
+  }, [researchToRename]);
 
   // Derived state
   const distinctEntities = useMemo(() => {
@@ -6576,6 +6658,14 @@ const RecruitmentApp = () => {
     [appData.positions, appData.favoritePositionIds, positionMatchesFilters]
   );
 
+  const sortedResearches = useMemo(
+    () => [...researchStore.researches].sort((a, b) => b.lastUpdated - a.lastUpdated),
+    [researchStore.researches]
+  );
+  const formatResearchDate = (timestamp: number) => timestamp
+    ? new Intl.DateTimeFormat('it-IT', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(timestamp))
+    : 'Mai';
+
   // Views Logic
   if (currentView === 'upload') {
     return <FileUploadView onDataLoaded={handleDataLoaded} />;
@@ -6634,6 +6724,14 @@ const RecruitmentApp = () => {
           </p>
         </div>
         <nav className="flex-1 p-4 space-y-2">
+          <button
+            onClick={() => navigate('researches')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400 ${currentView === 'researches' ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 text-slate-300'}`}
+          >
+            <FolderSearch className="w-5 h-5" />
+            Ricerche
+            <span className="text-xs ml-auto bg-slate-700 px-2 py-0.5 rounded">{researchStore.researches.length}</span>
+          </button>
           <button 
              onClick={() => navigate('dashboard')}
              className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${currentView === 'dashboard' ? 'bg-slate-800 text-white' : 'hover:bg-slate-800 text-slate-400'}`}
@@ -6677,12 +6775,10 @@ const RecruitmentApp = () => {
           <button
             onClick={() => window.open(window.location.href, '_blank', 'noopener,noreferrer')}
             className="w-full flex items-center gap-2 text-slate-200 hover:text-white text-sm mb-3 px-3 py-2 rounded-md bg-blue-600 hover:bg-blue-500"
-            title="Apri una visualizzazione indipendente, sincronizzata in tempo reale"
+            title="Apri una seconda finestra della ricerca corrente"
+            aria-label="Apri una seconda finestra della ricerca corrente"
           >
-            <Plus className="w-4 h-4" /> Nuovo tab
-          </button>
-          <button onClick={startNewSearch} className="flex items-center gap-2 text-slate-200 hover:text-white text-sm mb-3">
-            <FileText className="w-4 h-4" /> Avvia nuova ricerca di personale
+            <ExternalLink className="w-4 h-4" /> Seconda finestra
           </button>
           <button
             onClick={() => setIsSettingsOpen(true)}
@@ -6695,6 +6791,56 @@ const RecruitmentApp = () => {
 
       {/* Main Content Area */}
       <main className="flex-1 overflow-hidden flex flex-col">
+        {currentView === 'researches' && (
+          <>
+            <header className="bg-white border-b border-slate-200 px-5 sm:px-8 py-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h1 className="text-2xl font-bold text-slate-900">Ricerche</h1>
+                <p className="text-sm text-slate-500 mt-1">Gestisci e riapri le ricerche di personale archiviate.</p>
+              </div>
+              <button
+                onClick={startNewSearch}
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              >
+                <Plus className="w-5 h-5" /> Nuova ricerca
+              </button>
+            </header>
+            <div className="flex-1 overflow-y-auto p-5 sm:p-8">
+              {sortedResearches.length === 0 ? (
+                <div className="mx-auto max-w-xl rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center shadow-sm">
+                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-50 text-blue-600"><FolderSearch className="w-7 h-7" /></div>
+                  <h2 className="mt-4 text-lg font-bold text-slate-900">Nessuna ricerca archiviata</h2>
+                  <p className="mt-2 text-sm text-slate-500">Crea la prima ricerca per importare posizioni e candidati e iniziare la disamina.</p>
+                  <button onClick={startNewSearch} className="mt-6 inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"><Plus className="w-4 h-4" /> Nuova ricerca</button>
+                </div>
+              ) : (
+                <div className="overflow-visible rounded-xl border border-slate-200 bg-white shadow-sm">
+                  <div className="overflow-x-auto overflow-y-visible">
+                    <table className="w-full min-w-[860px] text-left text-sm">
+                      <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                        <tr><th className="px-5 py-4 font-semibold">Nome</th><th className="px-4 py-4 font-semibold">Creazione</th><th className="px-4 py-4 font-semibold">Ultimo aggiornamento</th><th className="px-4 py-4 text-center font-semibold">Posizioni</th><th className="px-4 py-4 text-center font-semibold">Candidati</th><th className="px-4 py-4 font-semibold">Stato</th><th className="px-5 py-4 text-right font-semibold">Azioni</th></tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {sortedResearches.map(research => {
+                          const isActive = research.cycle.id === researchStore.activeResearchId;
+                          return <tr key={research.cycle.id} className="hover:bg-slate-50/80">
+                            <td className="px-5 py-4"><div className="font-semibold text-slate-900">{research.cycle.name}</div><div className="mt-0.5 text-xs text-slate-400">ID {research.cycle.id.slice(0, 8)}</div></td>
+                            <td className="px-4 py-4 whitespace-nowrap text-slate-600">{formatResearchDate(research.cycle.startedAt)}</td>
+                            <td className="px-4 py-4 whitespace-nowrap text-slate-600">{formatResearchDate(research.lastUpdated)}</td>
+                            <td className="px-4 py-4 text-center font-medium text-slate-700">{research.positions.length}</td>
+                            <td className="px-4 py-4 text-center font-medium text-slate-700">{research.candidates.length}</td>
+                            <td className="px-4 py-4"><span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${isActive ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}><span className={`h-2 w-2 rounded-full ${isActive ? 'bg-emerald-500' : 'bg-slate-400'}`} />{isActive ? 'Attiva' : 'In archivio'}</span></td>
+                            <td className="px-5 py-4"><div className="flex items-center justify-end gap-2"><button onClick={() => openResearch(research.cycle.id)} className="rounded-lg bg-blue-600 px-3.5 py-2 text-sm font-semibold text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2" aria-label={`Apri la ricerca ${research.cycle.name}`}>Apri</button><div className="relative"><button onClick={() => setResearchMenuId(id => id === research.cycle.id ? null : research.cycle.id)} onKeyDown={event => { if (event.key === 'Escape') setResearchMenuId(null); }} className="rounded-lg border border-slate-200 p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label={`Altre azioni per ${research.cycle.name}`} aria-haspopup="menu" aria-expanded={researchMenuId === research.cycle.id}><MoreVertical className="w-5 h-5" /></button>{researchMenuId === research.cycle.id && <div role="menu" className="absolute right-0 z-20 mt-2 w-44 rounded-lg border border-slate-200 bg-white p-1.5 shadow-xl" onKeyDown={event => { if (event.key === 'Escape') { setResearchMenuId(null); (event.currentTarget.previousElementSibling as HTMLButtonElement)?.focus(); } }}><button role="menuitem" onClick={() => beginRenameResearch(research)} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100 focus:bg-slate-100 focus:outline-none"><Pencil className="w-4 h-4" /> Rinomina</button><button role="menuitem" onClick={() => { setResearchMenuId(null); setResearchToDelete(research); }} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 focus:bg-red-50 focus:outline-none"><Trash2 className="w-4 h-4" /> Elimina</button></div>}</div></div></td>
+                          </tr>;
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          </>
+        )}
         {(currentView === 'dashboard' || currentView === 'favorites') && (
           <>
             <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between">
@@ -6867,15 +7013,17 @@ const RecruitmentApp = () => {
       </main>
 
       {isNewCycleModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
-            <h3 className="text-lg font-semibold text-slate-800">Avvia nuova ricerca di personale</h3>
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4" onMouseDown={event => { if (event.target === event.currentTarget) setIsNewCycleModalOpen(false); }} onKeyDown={event => { if (event.key === 'Escape') setIsNewCycleModalOpen(false); }}>
+          <div role="dialog" aria-modal="true" aria-labelledby="new-research-title" className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+            <h3 id="new-research-title" className="text-lg font-semibold text-slate-800">Nuova ricerca</h3>
             <p className="text-sm text-slate-500 mt-1">
-              Inserisci il nome del ciclo per la nuova ricerca.
+              Verrà aggiunta una nuova voce all'archivio senza modificare le ricerche esistenti.
             </p>
             <div className="mt-4">
-              <label className="text-xs font-medium text-slate-500">Nome ciclo</label>
+              <label htmlFor="new-research-name" className="text-xs font-medium text-slate-500">Nome ricerca</label>
               <input
+                ref={newResearchInputRef}
+                id="new-research-name"
                 type="text"
                 className="mt-2 w-full px-3 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="Es. Ciclo disamine 2026/2027"
@@ -6900,9 +7048,30 @@ const RecruitmentApp = () => {
                 disabled={!newCycleName.trim()}
                 className="px-4 py-2 rounded-lg bg-blue-600 text-white disabled:bg-slate-300 disabled:text-slate-500"
               >
-                Avvia
+                Crea ricerca
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {researchToRename && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" onMouseDown={event => { if (event.target === event.currentTarget) setResearchToRename(null); }} onKeyDown={event => { if (event.key === 'Escape') setResearchToRename(null); }}>
+          <div role="dialog" aria-modal="true" aria-labelledby="rename-research-title" className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+            <h3 id="rename-research-title" className="text-lg font-semibold text-slate-800">Rinomina ricerca</h3>
+            <p className="mt-1 text-sm text-slate-500">Scegli un nome riconoscibile per la ricerca archiviata.</p>
+            <label htmlFor="rename-research-name" className="mt-4 block text-xs font-medium text-slate-500">Nome ricerca</label>
+            <input ref={renameResearchInputRef} id="rename-research-name" value={renameResearchName} onChange={event => setRenameResearchName(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') applyResearchRename(); }} className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            <div className="mt-6 flex justify-end gap-3"><button onClick={() => setResearchToRename(null)} className="rounded-lg border border-slate-200 px-4 py-2 text-slate-600 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500">Annulla</button><button onClick={applyResearchRename} disabled={!renameResearchName.trim()} className="rounded-lg bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 disabled:bg-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">Salva</button></div>
+          </div>
+        </div>
+      )}
+      {researchToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4" onKeyDown={event => { if (event.key === 'Escape') setResearchToDelete(null); }}>
+          <div role="alertdialog" aria-modal="true" aria-labelledby="delete-research-title" aria-describedby="delete-research-description" className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+            <div className="flex h-11 w-11 items-center justify-center rounded-full bg-red-50 text-red-600"><AlertTriangle className="w-5 h-5" /></div>
+            <h3 id="delete-research-title" className="mt-4 text-lg font-semibold text-slate-900">Eliminare la ricerca?</h3>
+            <p id="delete-research-description" className="mt-2 text-sm text-slate-600">Stai per eliminare definitivamente <strong className="text-slate-900">“{researchToDelete.cycle.name}”</strong>. Le altre ricerche non verranno modificate.</p>
+            <div className="mt-6 flex justify-end gap-3"><button autoFocus onClick={() => setResearchToDelete(null)} className="rounded-lg border border-slate-200 px-4 py-2 text-slate-600 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500">Annulla</button><button onClick={deleteResearch} className="rounded-lg bg-red-600 px-4 py-2 font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2">Elimina ricerca</button></div>
           </div>
         </div>
       )}
