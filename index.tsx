@@ -98,6 +98,7 @@ interface Position {
   ofcn: string;
   poInterest: string;
   incumbent: string; // TITOLARE
+  administrativeStatus?: PositionAdministrativeStatus;
 
   originalData: any;
   jobDescriptionFileName?: string;
@@ -136,6 +137,7 @@ interface ResearchStore {
 }
 
 type PositionStatus = 'todo' | 'inprogress' | 'completed';
+type PositionAdministrativeStatus = 'non-alimentazione' | 'estensione-mandato-titolare';
 type AppView = 'upload' | 'researches' | 'dashboard' | 'favorites' | 'position_detail' | 'candidates_list' | 'candidate_detail' | 'overlap_kanban' | 'reiteration_analysis';
 type NavigationState = {
   researchId: string;
@@ -2207,7 +2209,7 @@ const WorksheetRow: React.FC<{
 
   return (
     <div
-      {...(!isDragOverlay ? { "data-drag-row": true, "data-candidate-id": candidate.id } : {})}
+      {...(!isDragOverlay ? { "data-drag-row": true, "data-candidate-id": candidate.id, "data-position-code": position.code } : {})}
       className={`border rounded-lg mb-2 shadow-sm overflow-hidden transition-all duration-200 ease-out transform-gpu ${isNonCompatible ? 'bg-gray-50 border-gray-200 opacity-75' : isExcluded ? 'bg-red-50 border-red-200' : isPool ? 'bg-blue-50/30 border-blue-200' : 'bg-white border-slate-200'} ${isDropTarget ? 'ring-2 ring-blue-300 bg-blue-50/40' : ''} ${isDragOverlay ? 'shadow-xl ring-2 ring-blue-200 pointer-events-none' : ''} ${isDragging && !isDragOverlay ? 'opacity-0 pointer-events-none' : ''}`}
     >
       <div className={`flex items-center p-3 gap-4 hover:bg-slate-50 transition-colors ${isDragging && !isDragOverlay ? 'opacity-70' : ''}`}>
@@ -2483,7 +2485,15 @@ const useCandidateReorder = ({
         });
       }
 
-      const rows = Array.from(document.querySelectorAll('[data-drag-row]')) as HTMLElement[];
+      const scrollContainer = document.querySelector('[data-candidate-scroll]') as HTMLElement | null;
+      if (scrollContainer) {
+        const bounds = scrollContainer.getBoundingClientRect();
+        const edge = 72;
+        const speed = event.clientY < bounds.top + edge ? -14 : event.clientY > bounds.bottom - edge ? 14 : 0;
+        if (speed) scrollContainer.scrollBy({ top: speed });
+      }
+
+      const rows = Array.from(document.querySelectorAll(`[data-drag-row][data-position-code="${CSS.escape(positionCode)}"]`)) as HTMLElement[];
       const activeRows = rows.filter(row => row.dataset.candidateId !== draggedCandidateId);
       if (activeRows.length === 0) {
         setDropTargetId(null);
@@ -2507,23 +2517,16 @@ const useCandidateReorder = ({
         }
       }
 
-      const orderBase = dragOrderRef.current ?? baseOrderedIds;
-      const orderWithoutActive = orderBase.filter(id => id !== draggedCandidateId);
+      const orderWithoutActive = baseOrderedIds.filter(id => id !== draggedCandidateId);
       const indexMap = new Map(orderWithoutActive.map((id, index) => [id, index]));
       const targetIndex = targetId ? indexMap.get(targetId) ?? orderWithoutActive.length : orderWithoutActive.length;
       const finalTargetId = targetId ?? orderWithoutActive[orderWithoutActive.length - 1] ?? null;
 
       setDropTargetId(finalTargetId);
 
-      setDragOrderIds((prev) => {
-        const currentOrder = prev ?? baseOrderedIds;
-        const nextOrder = moveCandidateToIndex(currentOrder, draggedCandidateId, targetIndex);
-        if (nextOrder.join("|") === currentOrder.join("|")) {
-          return prev;
-        }
-        dragOrderRef.current = nextOrder;
-        return nextOrder;
-      });
+      // Keep the list stationary while dragging. Reordering the DOM on every
+      // pointer movement made long lists oscillate as row midpoints moved.
+      dragOrderRef.current = moveCandidateToIndex(baseOrderedIds, draggedCandidateId, targetIndex);
     };
 
     const handlePointerUp = () => {
@@ -2580,6 +2583,18 @@ const useCandidateReorder = ({
   };
 };
 
+const PositionStatusMenu = ({ position, onChange }: { position: Position; onChange: (code: string, status?: PositionAdministrativeStatus) => void }) => {
+  const [open, setOpen] = useState(false);
+  return <div className="relative inline-block" onClick={event => event.stopPropagation()}>
+    <button onClick={() => setOpen(value => !value)} className="rounded-lg border border-slate-200 p-2 text-slate-500 hover:bg-slate-100" aria-label={`Imposta stato per ${position.code}`} aria-haspopup="menu" aria-expanded={open}><MoreVertical className="w-4 h-4" /></button>
+    {open && <div role="menu" className="absolute right-0 z-40 mt-2 w-60 rounded-lg border border-slate-200 bg-white p-1.5 text-left shadow-xl">
+      <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-400">Stato posizione</div>
+      {([['non-alimentazione', 'Non alimentazione'], ['estensione-mandato-titolare', 'Estensione mandato titolare']] as const).map(([value, label]) => <button key={value} onClick={() => { onChange(position.code, value); setOpen(false); }} className="flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-slate-700 hover:bg-slate-100">{label}{position.administrativeStatus === value && <Check className="w-4 h-4 text-blue-600" />}</button>)}
+      {position.administrativeStatus && <button onClick={() => { onChange(position.code); setOpen(false); }} className="mt-1 w-full border-t border-slate-100 px-3 py-2 text-left text-sm text-slate-500 hover:bg-slate-100">Rimuovi stato</button>}
+    </div>}
+  </div>;
+};
+
 const PositionCard: React.FC<{ 
   position: Position; 
   status: PositionStatus; 
@@ -2590,6 +2605,7 @@ const PositionCard: React.FC<{
   isFavorite: boolean;
   onClick: () => void;
   onToggleFavorite: (positionCode: string) => void;
+  onSetAdministrativeStatus: (positionCode: string, status?: PositionAdministrativeStatus) => void;
 }> = ({ 
   position, 
   status, 
@@ -2599,8 +2615,10 @@ const PositionCard: React.FC<{
   candidatesList,
   isFavorite,
   onClick,
-  onToggleFavorite
+  onToggleFavorite,
+  onSetAdministrativeStatus
 }) => {
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const statusColors = {
     todo: "bg-slate-100 text-slate-600",
     inprogress: "bg-blue-100 text-blue-700",
@@ -2643,8 +2661,39 @@ const PositionCard: React.FC<{
             >
               <Star className="w-3.5 h-3.5" fill={isFavorite ? "currentColor" : "none"} />
             </button>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={(event) => { event.stopPropagation(); setIsMenuOpen(open => !open); }}
+                className="p-1 rounded-full border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-700"
+                aria-label={`Imposta stato per ${position.code}`}
+                aria-haspopup="menu"
+                aria-expanded={isMenuOpen}
+              >
+                <MoreVertical className="w-3.5 h-3.5" />
+              </button>
+              {isMenuOpen && (
+                <div role="menu" onClick={event => event.stopPropagation()} className="absolute right-0 z-30 mt-2 w-60 rounded-lg border border-slate-200 bg-white p-1.5 shadow-xl">
+                  <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-400">Stato posizione</div>
+                  {([
+                    ['non-alimentazione', 'Non alimentazione'],
+                    ['estensione-mandato-titolare', 'Estensione mandato titolare']
+                  ] as const).map(([value, label]) => (
+                    <button key={value} role="menuitemradio" aria-checked={position.administrativeStatus === value} onClick={() => { onSetAdministrativeStatus(position.code, value); setIsMenuOpen(false); }} className="flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100">
+                      {label}{position.administrativeStatus === value && <Check className="w-4 h-4 text-blue-600" />}
+                    </button>
+                  ))}
+                  {position.administrativeStatus && <button role="menuitem" onClick={() => { onSetAdministrativeStatus(position.code); setIsMenuOpen(false); }} className="mt-1 w-full rounded-md border-t border-slate-100 px-3 py-2 text-left text-sm text-slate-500 hover:bg-slate-100">Rimuovi stato</button>}
+                </div>
+              )}
+            </div>
           </div>
         </div>
+        {position.administrativeStatus && (
+          <div className="mb-3 inline-flex rounded-full bg-violet-50 px-2.5 py-1 text-[11px] font-semibold text-violet-700 border border-violet-100">
+            {position.administrativeStatus === 'non-alimentazione' ? 'Non alimentazione' : 'Estensione mandato titolare'}
+          </div>
+        )}
         <h3 className="font-bold text-slate-800 mb-1 line-clamp-2" title={position.title}>{position.title}</h3>
         <p className="text-sm text-slate-500 flex items-center gap-1 mb-4">
           <Building className="w-3 h-3" /> {position.entity}
@@ -5181,6 +5230,10 @@ const PositionDetailView = ({
                  <span className="uppercase text-slate-400">Profilo previsto</span>
                  <span className="font-semibold text-slate-600">{profileSummary}</span>
                </div>
+               <div className={`mt-2 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${position.incumbent ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
+                 <User className="w-3.5 h-3.5" />
+                 {position.incumbent ? `Titolare: ${position.incumbent}` : 'Posizione vacante'}
+               </div>
             </div>
             <div className="flex items-center gap-2">
                <div className="text-right mr-4 text-xs text-slate-500">
@@ -5259,7 +5312,7 @@ const PositionDetailView = ({
 
       <div className="flex-1 overflow-hidden flex flex-row">
          {/* Main Content */}
-         <div className="flex-1 overflow-y-auto p-6">
+         <div data-candidate-scroll className="flex-1 overflow-y-auto p-6">
             {viewMode === 'list' ? (
                <>
                   <div className="max-w-4xl mx-auto">
@@ -5747,6 +5800,7 @@ const RecruitmentApp = () => {
   const [filterStatus, setFilterStatus] = useState<PositionStatus | 'all'>('all');
   const [filterLevel, setFilterLevel] = useState<string[]>([]);
   const [filterRole, setFilterRole] = useState<RoleFilterValue[]>([]);
+  const [positionsViewMode, setPositionsViewMode] = useState<'cards' | 'table'>('cards');
   const initialWorkspaceTabId = useRef(`tab-${Date.now()}`).current;
   const [workspaceTabs, setWorkspaceTabs] = useState<WorkspaceTab[]>(() => [{
     id: initialWorkspaceTabId,
@@ -6117,6 +6171,14 @@ const RecruitmentApp = () => {
         lastUpdated: Date.now()
       };
     });
+  };
+
+  const setPositionAdministrativeStatus = (positionCode: string, status?: PositionAdministrativeStatus) => {
+    setAppData(prev => ({
+      ...prev,
+      positions: prev.positions.map(position => position.code === positionCode ? { ...position, administrativeStatus: status } : position),
+      lastUpdated: Date.now()
+    }));
   };
 
   const toggleFavoritePosition = (positionCode: string) => {
@@ -7143,11 +7205,15 @@ const RecruitmentApp = () => {
                        status === 'inprogress' ? 'In Progress' : 'Completed'}
                     </button>
                   ))}
+                  <div className="ml-auto mb-2 flex rounded-lg bg-slate-100 p-1">
+                    <button onClick={() => setPositionsViewMode('cards')} className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold ${positionsViewMode === 'cards' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'}`}><LayoutList className="w-4 h-4" /> Schede</button>
+                    <button onClick={() => setPositionsViewMode('table')} className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold ${positionsViewMode === 'table' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'}`}><TableIcon className="w-4 h-4" /> Tabella</button>
+                  </div>
                 </div>
               </div>
 
               {/* Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+              {positionsViewMode === 'cards' ? <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                 {(renderedView === 'favorites' ? filteredFavoritePositions : filteredPositions).map(pos => {
                   // Count candidates for this pos
                   const relevantCands = appData.candidates.filter(c => 
@@ -7174,6 +7240,7 @@ const RecruitmentApp = () => {
                       candidatesList={relevantCands}
                       isFavorite={isFavorite}
                       onToggleFavorite={toggleFavoritePosition}
+                      onSetAdministrativeStatus={setPositionAdministrativeStatus}
                       onClick={() => {
                         navigate('position_detail', {
                           selectedPositionId: pos.code,
@@ -7183,7 +7250,21 @@ const RecruitmentApp = () => {
                     />
                   );
                 })}
-              </div>
+              </div> : (
+                <div className="overflow-visible rounded-xl border border-slate-200 bg-white shadow-sm">
+                  <table className="w-full border-collapse text-left text-sm">
+                    <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">Codice</th><th className="px-4 py-3">Posizione</th><th className="px-4 py-3">Ente / sede</th><th className="px-4 py-3">Titolare</th><th className="px-4 py-3">Stato</th><th className="px-4 py-3 text-center">Candidati</th><th className="px-4 py-3 text-right">Azioni</th></tr></thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {(renderedView === 'favorites' ? filteredFavoritePositions : filteredPositions).map(pos => {
+                        const candidateCount = appData.candidates.filter(candidate => !!appData.evaluations[`${pos.code}_${candidate.id}`]).length;
+                        return <tr key={pos.code} onClick={() => navigate('position_detail', { selectedPositionId: pos.code, positionsReturnView: renderedView === 'favorites' ? 'favorites' : 'dashboard' })} className="cursor-pointer hover:bg-blue-50/40">
+                          <td className="px-4 py-3 font-mono text-xs font-semibold text-blue-700">{pos.code}</td><td className="px-4 py-3"><div className="max-w-xs font-semibold text-slate-800">{pos.title || '-'}</div><div className="mt-1"><PositionLevelBadge level={getPositionLevel(pos)} /></div></td><td className="px-4 py-3 text-slate-600"><div>{pos.entity || '-'}</div><div className="text-xs text-slate-400">{pos.location || '-'}</div></td><td className="px-4 py-3">{pos.incumbent ? <span className="text-slate-700">{pos.incumbent}</span> : <span className="font-semibold text-amber-700">Vacante</span>}</td><td className="px-4 py-3">{pos.administrativeStatus ? <span className="rounded-full border border-violet-100 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-700">{pos.administrativeStatus === 'non-alimentazione' ? 'Non alimentazione' : 'Estensione mandato titolare'}</span> : <span className="text-slate-400">-</span>}</td><td className="px-4 py-3 text-center font-semibold">{candidateCount}</td><td className="px-4 py-3 text-right"><PositionStatusMenu position={pos} onChange={setPositionAdministrativeStatus} /></td>
+                        </tr>;
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
               {renderedView === 'favorites' && filteredFavoritePositions.length === 0 && (
                 <div className="mt-8 text-center text-sm text-slate-500">
                   Nessuna posizione in shortlist. Aggiungile dalla dashboard per ritrovarle qui.
