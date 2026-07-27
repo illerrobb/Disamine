@@ -4797,251 +4797,192 @@ const PoolSearchDrawer = ({
   onClose: () => void;
   onApply: (selectionBySource: Record<string, string[]>) => void;
 }) => {
-  const [step, setStep] = useState<1 | 2>(1);
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<RoleFilterValue | "ALL">("ALL");
-  const [entityFilter, setEntityFilter] = useState("ALL");
-  const [selectedSources, setSelectedSources] = useState<string[]>([]);
-  const [selectedBySource, setSelectedBySource] = useState<Record<string, Record<string, boolean>>>({});
+  const [associationFilters, setAssociationFilters] = useState<string[]>([]);
+  const [selectedCandidateIds, setSelectedCandidateIds] = useState<Set<string>>(new Set());
+  const [selectedSourceByCandidate, setSelectedSourceByCandidate] = useState<Record<string, string>>({});
+  const [expandedCandidateIds, setExpandedCandidateIds] = useState<Set<string>>(new Set());
+
+  const positionByCode = useMemo(() => new Map(positions.map(position => [position.code, position])), [positions]);
+  const evaluationsByCandidate = useMemo(() => {
+    const result = new Map<string, Evaluation[]>();
+    Object.values(evaluations).forEach(rawEvaluation => {
+      const evaluation = normalizeEvaluation(rawEvaluation);
+      const entries = result.get(evaluation.candidateId) ?? [];
+      entries.push(evaluation);
+      result.set(evaluation.candidateId, entries);
+    });
+    return result;
+  }, [evaluations]);
+
+  const poolRows = useMemo(() => candidates.map(candidate => {
+    const candidateEvaluations = evaluationsByCandidate.get(candidate.id) ?? [];
+    const linkedCodes = new Set(candidate.appliedPositionCodes ?? []);
+    candidateEvaluations.forEach(evaluation => {
+      linkedCodes.add(evaluation.positionId);
+      if (evaluation.sourcePosition) linkedCodes.add(evaluation.sourcePosition);
+    });
+    const linkedPositions = Array.from(linkedCodes)
+      .map(code => positionByCode.get(code))
+      .filter(Boolean) as Position[];
+    const sourcePositions = linkedPositions.filter(position => position.code !== currentPosition.code);
+    const currentEvaluation = candidateEvaluations.find(evaluation => evaluation.positionId === currentPosition.code);
+    const selectedElsewhere = candidateEvaluations.find(evaluation =>
+      evaluation.positionId !== currentPosition.code && evaluation.status === "selected"
+    );
+    const origins = Array.from(new Set(candidateEvaluations.map(evaluation => evaluation.source ?? "native")));
+    return { candidate, candidateEvaluations, linkedPositions, sourcePositions, currentEvaluation, selectedElsewhere, origins };
+  }).filter(row => row.sourcePositions.length > 0), [candidates, currentPosition.code, evaluationsByCandidate, positionByCode]);
 
   useEffect(() => {
     if (!isOpen) return;
-    setStep(1);
+    const selected = new Set<string>();
+    const sources: Record<string, string> = {};
+    poolRows.forEach(row => {
+      if (row.currentEvaluation?.source === "pool" && row.currentEvaluation.sourcePosition) {
+        selected.add(row.candidate.id);
+        sources[row.candidate.id] = row.currentEvaluation.sourcePosition;
+      } else if (!row.currentEvaluation && row.sourcePositions[0]) {
+        sources[row.candidate.id] = row.sourcePositions[0].code;
+      }
+    });
     setSearch("");
     setRoleFilter("ALL");
-    setEntityFilter("ALL");
-    setSelectedSources([]);
-    setSelectedBySource({});
-  }, [isOpen, currentPosition.code]);
+    setAssociationFilters([]);
+    setSelectedCandidateIds(selected);
+    setSelectedSourceByCandidate(sources);
+    setExpandedCandidateIds(new Set());
+  }, [isOpen, currentPosition.code, poolRows]);
 
   if (!isOpen) return null;
 
-  const currentRoleSet = getPositionRoleFilters(currentPosition);
-  const existingEvaluations = Object.values(evaluations).filter(ev => ev.positionId === currentPosition.code);
-  const existingByCandidate = new Map(existingEvaluations.map(ev => [ev.candidateId, normalizeEvaluation(ev)]));
-
-  const sourcePositions = positions.filter(position => position.code !== currentPosition.code);
-  const entities = Array.from(new Set(sourcePositions.map(position => position.entity).filter(Boolean))).sort();
-
-  const filteredPositions = sourcePositions.filter(position => {
-    const haystack = `${position.code} ${position.title}`.toLowerCase();
-    const textMatch = !search.trim() || haystack.includes(search.trim().toLowerCase());
-    const roleMatch = roleFilter === "ALL" || matchesPositionRoleFilter(position, roleFilter);
-    const entityMatch = entityFilter === "ALL" || position.entity === entityFilter;
-    return textMatch && roleMatch && entityMatch;
+  const associationOptions: MultiSelectOption[] = [
+    ...positions.filter(position => position.code !== currentPosition.code).map(position => ({
+      value: `position:${position.code}`,
+      label: `${position.code} · ${position.title}`
+    })),
+    ...Array.from(new Set(positions.map(position => position.entity).filter(Boolean))).sort().map(entity => ({
+      value: `entity:${entity}`,
+      label: `Ente · ${entity}`
+    }))
+  ];
+  const filteredRows = poolRows.filter(row => {
+    const query = search.trim().toLowerCase();
+    const haystack = [row.candidate.id, row.candidate.nominativo, row.candidate.rank, row.candidate.role,
+      ...row.linkedPositions.flatMap(position => [position.code, position.title, position.entity])].join(" ").toLowerCase();
+    const textMatch = !query || haystack.includes(query);
+    const roleMatch = roleFilter === "ALL" || row.sourcePositions.some(position => matchesPositionRoleFilter(position, roleFilter));
+    const associationMatch = associationFilters.length === 0 || associationFilters.some(filter => {
+      const separator = filter.indexOf(":");
+      const kind = filter.slice(0, separator);
+      const value = filter.slice(separator + 1);
+      return kind === "position"
+        ? row.sourcePositions.some(position => position.code === value)
+        : row.sourcePositions.some(position => position.entity === value);
+    });
+    return textMatch && roleMatch && associationMatch;
   });
-
-  const candidatesById = new Map(candidates.map(candidate => [candidate.id, candidate]));
-
-  const sourceCandidateRows = selectedSources.map((sourceCode) => {
-    const sourcePosition = positions.find(position => position.code === sourceCode);
-    if (!sourcePosition) return null;
-    const evs = Object.values(evaluations).filter(ev => ev.positionId === sourceCode);
-    const rows = evs
-      .map(ev => {
-        const candidate = candidatesById.get(ev.candidateId);
-        if (!candidate) return null;
-        const normalized = normalizeEvaluation(ev);
-        const existing = existingByCandidate.get(candidate.id);
-        const importedFromOther = existing?.source === "pool" && existing.sourcePosition !== sourceCode;
-        const blockedByDuplicate = !!existing && existing.sourcePosition !== sourceCode;
-        const alreadyFromSameSource = existing?.source === "pool" && existing.sourcePosition === sourceCode;
-        return {
-          candidate,
-          sourcePosition,
-          blockedByDuplicate,
-          importedFromOther,
-          alreadyFromSameSource,
-          blockedReason: importedFromOther
-            ? `Già presente in disamina (importato da ${existing?.sourcePosition})`
-            : existing
-            ? "Già presente in disamina"
-            : "",
-          defaultSelected: alreadyFromSameSource || !blockedByDuplicate
-        };
-      })
-      .filter(Boolean) as Array<{
-        candidate: Candidate;
-        sourcePosition: Position;
-        blockedByDuplicate: boolean;
-        importedFromOther: boolean;
-        alreadyFromSameSource: boolean;
-        blockedReason: string;
-        defaultSelected: boolean;
-      }>;
-    return { sourcePosition, rows };
-  }).filter(Boolean) as Array<{ sourcePosition: Position; rows: any[] }>;
-
-  const ensureStepTwoSelection = () => {
-    setSelectedBySource(prev => {
-      const next = { ...prev };
-      sourceCandidateRows.forEach(({ sourcePosition, rows }) => {
-        next[sourcePosition.code] = { ...(next[sourcePosition.code] ?? {}) };
-        rows.forEach(({ candidate, defaultSelected }) => {
-          if (next[sourcePosition.code][candidate.id] === undefined) {
-            next[sourcePosition.code][candidate.id] = defaultSelected;
-          }
-        });
-      });
+  const statusLabel = (status: Evaluation["status"]) => ({
+    pending: "Pending", selected: "Selezionato", reserve: "Possibile match", rejected: "Respinto",
+    "non-compatible": "Non compatibile", excluded: "Escluso"
+  })[status];
+  const toggleCandidate = (candidateId: string, checked: boolean, defaultSource?: string) => {
+    setSelectedCandidateIds(previous => {
+      const next = new Set(previous);
+      checked ? next.add(candidateId) : next.delete(candidateId);
       return next;
     });
+    if (checked && defaultSource) {
+      setSelectedSourceByCandidate(previous => previous[candidateId] ? previous : { ...previous, [candidateId]: defaultSource });
+    }
   };
-
-  const counters = sourceCandidateRows.reduce(
-    (acc, entry) => {
-      acc.positions += 1;
-      entry.rows.forEach(({ candidate, blockedByDuplicate }) => {
-        const isSelected = selectedBySource[entry.sourcePosition.code]?.[candidate.id];
-        if (!blockedByDuplicate) {
-          acc.eligible += 1;
-        }
-        if (isSelected && !blockedByDuplicate) {
-          acc.selected += 1;
-        }
-      });
-      return acc;
-    },
-    { positions: 0, eligible: 0, selected: 0 }
-  );
-  const stepOneCandidateEstimate = selectedSources.reduce((acc, sourceCode) => {
-    const sourceEvals = Object.values(evaluations).filter(ev => ev.positionId === sourceCode);
-    const eligible = sourceEvals.filter(ev => !existingByCandidate.has(ev.candidateId)).length;
-    return acc + eligible;
-  }, 0);
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex">
       <button className="absolute inset-0 bg-slate-900/40" onClick={onClose} aria-label="Chiudi Ricerca a bacino" />
-      <aside className="ml-auto h-full w-full max-w-[640px] border-l border-slate-200 bg-white shadow-2xl relative flex flex-col">
+      <aside className="ml-auto h-full w-full max-w-[760px] border-l border-slate-200 bg-white shadow-2xl relative flex flex-col">
         <div className="p-4 border-b border-slate-200">
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-xs uppercase font-semibold text-slate-400">Ricerca a bacino</p>
               <h3 className="text-lg font-bold text-slate-800">{currentPosition.code} • {currentPosition.title}</h3>
-              <p className="text-xs text-slate-500 mt-1">Step {step} di 2</p>
+              <p className="text-xs text-slate-500 mt-1">Seleziona direttamente le persone da importare, senza duplicati.</p>
             </div>
             <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
           </div>
         </div>
-        {step === 1 ? (
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Codice / Titolo" className="md:col-span-2 border border-slate-200 rounded px-3 py-2 text-sm" />
-              <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value as any)} className="border border-slate-200 rounded px-3 py-2 text-sm">
-                <option value="ALL">Ruolo: tutti</option>
-                {ROLE_FILTER_OPTIONS.filter(option => option.value !== "ALL").map(option => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
-              <select value={entityFilter} onChange={(e) => setEntityFilter(e.target.value)} className="border border-slate-200 rounded px-3 py-2 text-sm md:col-span-3">
-                <option value="ALL">Entità/Sede: tutte</option>
-                {entities.map(entity => <option key={entity} value={entity}>{entity}</option>)}
-              </select>
-            </div>
-            <div className="text-xs text-slate-500 font-medium">{selectedSources.length} posizioni selezionate • {stepOneCandidateEstimate} candidati importabili</div>
-            <div className="space-y-2">
-              {filteredPositions.map(position => {
-                const isChecked = selectedSources.includes(position.code);
-                const roleOverlap = Array.from(getPositionRoleFilters(position)).some(value => currentRoleSet.has(value));
-                const sameEntity = position.entity === currentPosition.entity;
-                const candidateCount = Object.values(evaluations).filter(ev => ev.positionId === position.code).length;
-                return (
-                  <label key={position.code} className="border border-slate-200 rounded p-3 flex items-start gap-3 cursor-pointer hover:bg-slate-50">
-                    <input type="checkbox" checked={isChecked} onChange={(e) => setSelectedSources(prev => e.target.checked ? [...prev, position.code] : prev.filter(code => code !== position.code))} />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-xs text-blue-700">{position.code}</span>
-                        <PositionLevelBadge level={getPositionLevel(position)} />
-                        {roleOverlap && <Badge color="purple">stesso ruolo</Badge>}
-                        {sameEntity && <Badge color="blue">stessa entità</Badge>}
-                      </div>
-                      <div className="text-sm font-semibold text-slate-800 truncate">{position.title}</div>
-                      <div className="text-xs text-slate-500">{position.entity} • {position.location} • {candidateCount} candidati</div>
-                    </div>
-                  </label>
-                );
-              })}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Cerca candidato, posizione o ente" className="border border-slate-200 rounded-lg px-3 py-2 text-sm" />
+            <select value={roleFilter} onChange={(event) => setRoleFilter(event.target.value as RoleFilterValue | "ALL")} className="border border-slate-200 rounded-lg px-3 py-2 text-sm">
+              <option value="ALL">Ruolo: tutti</option>
+              {ROLE_FILTER_OPTIONS.filter(option => option.value !== "ALL").map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+            <div className="md:col-span-2">
+              <MultiSelect label="Posizioni/enti di candidatura" options={associationOptions} selected={associationFilters} onChange={setAssociationFilters} placeholder="Tutte le posizioni e gli enti" />
             </div>
           </div>
-        ) : (
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            <div className="text-sm font-medium text-slate-700">Verranno importati {counters.selected} candidati</div>
-            {sourceCandidateRows.map(({ sourcePosition, rows }) => {
-              const selectableRows = rows.filter(row => !row.blockedByDuplicate);
-              const allAlreadyPresent = selectableRows.length === 0;
+          <div className="flex items-center justify-between text-xs text-slate-500 font-medium">
+            <span>{filteredRows.length} candidati trovati</span><span>{selectedCandidateIds.size} selezionati</span>
+          </div>
+          <div className="space-y-2">
+            {filteredRows.map(row => {
+              const { candidate, currentEvaluation, sourcePositions } = row;
+              const blocked = !!currentEvaluation && currentEvaluation.source !== "pool";
+              const selected = selectedCandidateIds.has(candidate.id);
+              const expanded = expandedCandidateIds.has(candidate.id);
               return (
-                <div key={sourcePosition.code} className="border border-slate-200 rounded">
-                  <div className="px-3 py-2 border-b border-slate-200 bg-slate-50 text-sm font-semibold">
-                    {sourcePosition.code} • {sourcePosition.title}
-                  </div>
-                  <div className="p-2 space-y-1">
-                    {allAlreadyPresent && (
-                      <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
-                        Tutti i candidati di questa posizione sono già presenti in disamina.
+                <div key={candidate.id} className={`border rounded-lg ${selected ? "border-blue-300 bg-blue-50/30" : "border-slate-200"}`}>
+                  <div className="p-3 flex items-start gap-3">
+                    <input type="checkbox" className="mt-1" checked={selected} disabled={blocked} onChange={event => toggleCandidate(candidate.id, event.target.checked, sourcePositions[0]?.code)} />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-semibold text-sm text-slate-800">{candidate.nominativo}</span>
+                        {row.origins.map(origin => <Badge key={origin} color={origin === "pool" ? "purple" : "blue"}>{origin === "pool" ? "Da bacino" : "Nativo"}</Badge>)}
+                        {row.selectedElsewhere && <Badge color="green">Selezionato su {row.selectedElsewhere.positionId}</Badge>}
                       </div>
-                    )}
-                    {rows.map(({ candidate, blockedByDuplicate, blockedReason }) => (
-                      <label key={candidate.id} className={`flex items-center gap-2 rounded px-2 py-1 ${blockedByDuplicate ? "bg-slate-50 text-slate-400" : "hover:bg-slate-50 cursor-pointer"}`}>
-                        <input
-                          type="checkbox"
-                          checked={!!selectedBySource[sourcePosition.code]?.[candidate.id]}
-                          disabled={blockedByDuplicate}
-                          onChange={(e) => setSelectedBySource(prev => ({
-                            ...prev,
-                            [sourcePosition.code]: {
-                              ...(prev[sourcePosition.code] ?? {}),
-                              [candidate.id]: e.target.checked
-                            }
-                          }))}
-                        />
-                        <div className="flex-1 min-w-0">
-                          <div className="text-sm truncate">{candidate.nominativo}</div>
-                          <div className="text-xs">{candidate.id} • {candidate.rank} {candidate.role}</div>
-                          {blockedReason && <div className="text-xs text-amber-700">{blockedReason}</div>}
-                        </div>
-                      </label>
-                    ))}
+                      <div className="text-xs text-slate-500">{candidate.id} • {candidate.rank} {candidate.role}</div>
+                      {blocked && <div className="mt-1 text-xs text-amber-700">Già presente nella disamina corrente come candidatura nativa.</div>}
+                      {selected && sourcePositions.length > 1 && (
+                        <label className="mt-2 flex items-center gap-2 text-xs text-slate-600">
+                          Provenienza da importare
+                          <select className="border border-slate-200 bg-white rounded px-2 py-1" value={selectedSourceByCandidate[candidate.id] ?? sourcePositions[0].code} onChange={event => setSelectedSourceByCandidate(previous => ({ ...previous, [candidate.id]: event.target.value }))}>
+                            {sourcePositions.map(position => <option key={position.code} value={position.code}>{position.code} · {position.entity}</option>)}
+                          </select>
+                        </label>
+                      )}
+                    </div>
+                    <button type="button" aria-label="Mostra posizioni ed esiti" onClick={() => setExpandedCandidateIds(previous => { const next = new Set(previous); next.has(candidate.id) ? next.delete(candidate.id) : next.add(candidate.id); return next; })} className="p-1 text-slate-400 hover:text-slate-700">
+                      <ChevronDown className={`w-4 h-4 transition-transform ${expanded ? "rotate-180" : ""}`} />
+                    </button>
                   </div>
+                  {expanded && <div className="border-t border-slate-200 bg-white px-3 py-2 space-y-2">
+                    <div className="text-[11px] uppercase font-semibold text-slate-400">Posizioni/enti di candidatura</div>
+                    {row.linkedPositions.map(position => {
+                      const evaluation = row.candidateEvaluations.find(item => item.positionId === position.code);
+                      return <div key={position.code} className="flex items-start justify-between gap-3 text-xs">
+                        <div><span className="font-mono text-blue-700">{position.code}</span> <span className="font-medium text-slate-700">{position.title}</span><div className="text-slate-500">{position.entity} • {position.location}</div></div>
+                        <span className="shrink-0 font-medium text-slate-600">{evaluation ? statusLabel(evaluation.status) : "Candidatura"} · {(evaluation?.source ?? "native") === "pool" ? "Da bacino" : "Nativa"}</span>
+                      </div>;
+                    })}
+                  </div>}
                 </div>
               );
             })}
+            {filteredRows.length === 0 && <div className="border border-dashed border-slate-300 rounded-lg p-8 text-center text-sm text-slate-500">Nessun candidato corrisponde ai filtri.</div>}
           </div>
-        )}
+        </div>
         <div className="border-t border-slate-200 p-4 flex items-center justify-between">
-          {step === 1 ? (
-            <>
-              <span className="text-xs text-slate-500">{selectedSources.length} posizioni selezionate</span>
-              <Button
-                variant="primary"
-                disabled={selectedSources.length === 0}
-                onClick={() => {
-                  ensureStepTwoSelection();
-                  setStep(2);
-                }}
-              >
-                Avanti
-              </Button>
-            </>
-          ) : (
-            <>
-              <Button variant="secondary" onClick={() => setStep(1)}>Indietro</Button>
-              <Button
-                variant="primary"
-                disabled={counters.selected === 0 && counters.eligible === 0}
-                onClick={() => {
-                  const payload: Record<string, string[]> = {};
-                  sourceCandidateRows.forEach(({ sourcePosition, rows }) => {
-                    payload[sourcePosition.code] = rows
-                      .filter(({ candidate, blockedByDuplicate }) => !blockedByDuplicate && selectedBySource[sourcePosition.code]?.[candidate.id])
-                      .map(({ candidate }) => candidate.id);
-                  });
-                  onApply(payload);
-                }}
-              >
-                Importa {counters.selected} candidati
-              </Button>
-            </>
-          )}
+          <span className="text-xs text-slate-500">La selezione è deduplicata per matricola.</span>
+          <Button variant="primary" disabled={selectedCandidateIds.size === 0 && !poolRows.some(row => row.currentEvaluation?.source === "pool")} onClick={() => {
+            const payload: Record<string, string[]> = Object.fromEntries(positions.filter(position => position.code !== currentPosition.code).map(position => [position.code, []]));
+            selectedCandidateIds.forEach(candidateId => {
+              const source = selectedSourceByCandidate[candidateId] ?? poolRows.find(row => row.candidate.id === candidateId)?.sourcePositions[0]?.code;
+              if (source) (payload[source] ??= []).push(candidateId);
+            });
+            onApply(payload);
+          }}>Importa {selectedCandidateIds.size} candidati</Button>
         </div>
       </aside>
     </div>,
