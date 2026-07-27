@@ -4854,7 +4854,9 @@ const PoolSearchDrawer = ({
               <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Codice / Titolo" className="md:col-span-2 border border-slate-200 rounded px-3 py-2 text-sm" />
               <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value as any)} className="border border-slate-200 rounded px-3 py-2 text-sm">
                 <option value="ALL">Ruolo: tutti</option>
-                {ROLE_FILTER_VALUES.map(value => <option key={value} value={value}>{value}</option>)}
+                {ROLE_FILTER_OPTIONS.filter(option => option.value !== "ALL").map(option => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
               </select>
               <select value={entityFilter} onChange={(e) => setEntityFilter(e.target.value)} className="border border-slate-200 rounded px-3 py-2 text-sm md:col-span-3">
                 <option value="ALL">Entità/Sede: tutte</option>
