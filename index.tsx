@@ -36,7 +36,8 @@ import {
   Link2,
   RefreshCw,
   BarChart3,
-  Target
+  Target,
+  Plus
 } from "lucide-react";
 
 // --- Types ---
@@ -127,6 +128,19 @@ interface AppData {
 }
 
 type PositionStatus = 'todo' | 'inprogress' | 'completed';
+type AppView = 'upload' | 'dashboard' | 'favorites' | 'position_detail' | 'candidates_list' | 'candidate_detail' | 'overlap_kanban' | 'reiteration_analysis';
+type NavigationState = {
+  view: AppView;
+  selectedPositionId: string | null;
+  selectedCandidateId: string | null;
+  positionsReturnView: 'dashboard' | 'favorites';
+  searchTerm: string;
+  candidateSearch: string;
+  filterEnte: string[];
+  filterStatus: PositionStatus | 'all';
+  filterLevel: string[];
+  filterRole: RoleFilterValue[];
+};
 
 type ReiterationPriority = 'alta' | 'media' | 'osservazione';
 
@@ -3655,15 +3669,18 @@ const CandidatesListView = ({
    positions,
    evaluations,
    onNavigateToPosition,
-   onOpenCandidateDetail
+   onOpenCandidateDetail,
+   search,
+   onSearchChange
 }: {
    candidates: Candidate[];
    positions: Position[];
    evaluations: Record<string, Evaluation>;
    onNavigateToPosition: (code: string) => void;
    onOpenCandidateDetail: (id: string) => void;
+   search: string;
+   onSearchChange: (value: string) => void;
 }) => {
-   const [search, setSearch] = useState("");
    const [roleFilter, setRoleFilter] = useState<RoleFilterValue>("ALL");
    const getApplicationStatusClass = (status?: Evaluation["status"]) => {
       switch (status) {
@@ -3704,7 +3721,7 @@ const CandidatesListView = ({
                      placeholder="Search candidates by name, ID, or rank..."
                      className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
                      value={search}
-                     onChange={(e) => setSearch(e.target.value)}
+                     onChange={(e) => onSearchChange(e.target.value)}
                   />
                </div>
                <select
@@ -5592,12 +5609,13 @@ const RecruitmentApp = () => {
     cycle: createDefaultCycle()
   }));
 
-  const [currentView, setCurrentView] = useState<'upload' | 'dashboard' | 'favorites' | 'position_detail' | 'candidates_list' | 'candidate_detail' | 'overlap_kanban' | 'reiteration_analysis'>('upload');
+  const [currentView, setCurrentView] = useState<AppView>('upload');
   const [selectedPositionId, setSelectedPositionId] = useState<string | null>(null);
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
   const [overlapPositionIds, setOverlapPositionIds] = useState<string[]>([]);
   const [positionsReturnView, setPositionsReturnView] = useState<'dashboard' | 'favorites'>('dashboard');
   const [searchTerm, setSearchTerm] = useState("");
+  const [candidateSearch, setCandidateSearch] = useState("");
   const [filterEnte, setFilterEnte] = useState<string[]>([]);
   const [filterStatus, setFilterStatus] = useState<PositionStatus | 'all'>('all');
   const [filterLevel, setFilterLevel] = useState<string[]>([]);
@@ -5613,6 +5631,56 @@ const RecruitmentApp = () => {
   const [isSettingsProcessing, setIsSettingsProcessing] = useState(false);
   const [importConflicts, setImportConflicts] = useState<ImportConflict[]>([]);
   const [importConflictsTotal, setImportConflictsTotal] = useState(0);
+  const navigationRef = useRef<NavigationState | null>(null);
+
+  const getNavigationState = useCallback((view: AppView = currentView, overrides: Partial<NavigationState> = {}): NavigationState => ({
+    view,
+    selectedPositionId,
+    selectedCandidateId,
+    positionsReturnView,
+    searchTerm,
+    candidateSearch,
+    filterEnte,
+    filterStatus,
+    filterLevel,
+    filterRole,
+    ...overrides
+  }), [currentView, selectedPositionId, selectedCandidateId, positionsReturnView, searchTerm, candidateSearch, filterEnte, filterStatus, filterLevel, filterRole]);
+
+  const restoreNavigation = useCallback((state: NavigationState) => {
+    navigationRef.current = state;
+    setCurrentView(state.view);
+    setSelectedPositionId(state.selectedPositionId);
+    setSelectedCandidateId(state.selectedCandidateId);
+    setPositionsReturnView(state.positionsReturnView);
+    setSearchTerm(state.searchTerm);
+    setCandidateSearch(state.candidateSearch ?? "");
+    setFilterEnte(state.filterEnte);
+    setFilterStatus(state.filterStatus);
+    setFilterLevel(state.filterLevel);
+    setFilterRole(state.filterRole);
+  }, []);
+
+  const navigate = useCallback((view: AppView, overrides: Partial<NavigationState> = {}, replace = false) => {
+    const next = getNavigationState(view, overrides);
+    navigationRef.current = next;
+    restoreNavigation(next);
+    window.history[replace ? 'replaceState' : 'pushState'](next, '', window.location.href);
+  }, [getNavigationState, restoreNavigation]);
+
+  useEffect(() => {
+    const state = getNavigationState();
+    navigationRef.current = state;
+    window.history.replaceState(state, '', window.location.href);
+  }, [getNavigationState]);
+
+  useEffect(() => {
+    const onPopState = (event: PopStateEvent) => {
+      if (event.state?.view) restoreNavigation(event.state as NavigationState);
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [restoreNavigation]);
 
   // Load from LocalStorage
   useEffect(() => {
@@ -5642,6 +5710,21 @@ const RecruitmentApp = () => {
       } catch (e) { console.error("Failed to load DB", e); }
     }
   }, []);
+
+  // Keep every browser tab aligned with edits made in the others.
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== 'recruitment_db' || !event.newValue) return;
+      try {
+        const incoming = JSON.parse(event.newValue) as AppData;
+        if (incoming.lastUpdated >= appData.lastUpdated) setAppData(incoming);
+      } catch (error) {
+        console.error('Failed to synchronize tab', error);
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [appData.lastUpdated]);
 
   // Save to LocalStorage
   useEffect(() => {
@@ -6476,7 +6559,7 @@ const RecruitmentApp = () => {
           onApplyPoolSelection={applyPoolSelection}
           onRemovePoolCandidate={removePoolCandidate}
           onReorder={updateManualOrder}
-          onBack={() => setCurrentView(positionsReturnView)}
+          onBack={() => window.history.back()}
           onToggleReqVisibility={toggleRequirementVisibility}
           onUpdatePosition={updatePositionData}
           onExport={exportToExcel}
@@ -6495,7 +6578,7 @@ const RecruitmentApp = () => {
          evaluations={appData.evaluations}
          onUpdate={updateEvaluation}
          onUpdateCandidate={updateCandidate}
-         onBack={() => setCurrentView('candidates_list')}
+         onBack={() => window.history.back()}
       />
     )
   }
@@ -6516,14 +6599,14 @@ const RecruitmentApp = () => {
         </div>
         <nav className="flex-1 p-4 space-y-2">
           <button 
-             onClick={() => setCurrentView('dashboard')}
+             onClick={() => navigate('dashboard')}
              className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${currentView === 'dashboard' ? 'bg-slate-800 text-white' : 'hover:bg-slate-800 text-slate-400'}`}
           >
             <Briefcase className="w-5 h-5" />
             Positions
           </button>
           <button
-            onClick={() => setCurrentView('favorites')}
+            onClick={() => navigate('favorites')}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${currentView === 'favorites' ? 'bg-slate-800 text-white' : 'hover:bg-slate-800 text-slate-400'}`}
           >
             <Star className="w-5 h-5" />
@@ -6533,21 +6616,21 @@ const RecruitmentApp = () => {
             </span>
           </button>
           <button 
-             onClick={() => setCurrentView('candidates_list')}
+             onClick={() => navigate('candidates_list')}
              className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${currentView === 'candidates_list' || currentView === 'candidate_detail' ? 'bg-slate-800 text-white' : 'hover:bg-slate-800 text-slate-400'}`}
           >
             <Users className="w-5 h-5" />
             Candidates <span className="text-xs ml-auto bg-slate-700 px-2 py-0.5 rounded">{appData.candidates.length}</span>
           </button>
           <button 
-             onClick={() => setCurrentView('overlap_kanban')}
+             onClick={() => navigate('overlap_kanban')}
              className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${currentView === 'overlap_kanban' ? 'bg-slate-800 text-white' : 'hover:bg-slate-800 text-slate-400'}`}
           >
             <TableIcon className="w-5 h-5" />
             Overlap Kanban
           </button>
           <button
-            onClick={() => setCurrentView('reiteration_analysis')}
+            onClick={() => navigate('reiteration_analysis')}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${currentView === 'reiteration_analysis' ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 text-slate-400'}`}
           >
             <RefreshCw className="w-5 h-5" />
@@ -6555,6 +6638,13 @@ const RecruitmentApp = () => {
           </button>
         </nav>
         <div className="p-4 border-t border-slate-800">
+          <button
+            onClick={() => window.open(window.location.href, '_blank', 'noopener,noreferrer')}
+            className="w-full flex items-center gap-2 text-slate-200 hover:text-white text-sm mb-3 px-3 py-2 rounded-md bg-blue-600 hover:bg-blue-500"
+            title="Apri una visualizzazione indipendente, sincronizzata in tempo reale"
+          >
+            <Plus className="w-4 h-4" /> Nuovo tab
+          </button>
           <button onClick={startNewSearch} className="flex items-center gap-2 text-slate-200 hover:text-white text-sm mb-3">
             <FileText className="w-4 h-4" /> Avvia nuova ricerca di personale
           </button>
@@ -6683,9 +6773,10 @@ const RecruitmentApp = () => {
                       isFavorite={isFavorite}
                       onToggleFavorite={toggleFavoritePosition}
                       onClick={() => {
-                        setSelectedPositionId(pos.code);
-                        setPositionsReturnView(currentView === 'favorites' ? 'favorites' : 'dashboard');
-                        setCurrentView('position_detail');
+                        navigate('position_detail', {
+                          selectedPositionId: pos.code,
+                          positionsReturnView: currentView === 'favorites' ? 'favorites' : 'dashboard'
+                        });
                       }} 
                     />
                   );
@@ -6706,13 +6797,13 @@ const RecruitmentApp = () => {
               positions={appData.positions}
               evaluations={appData.evaluations}
               onNavigateToPosition={(posCode) => {
-                 setSelectedPositionId(posCode);
-                 setCurrentView('position_detail');
+                 navigate('position_detail', { selectedPositionId: posCode });
               }}
               onOpenCandidateDetail={(candId) => {
-                 setSelectedCandidateId(candId);
-                 setCurrentView('candidate_detail');
+                 navigate('candidate_detail', { selectedCandidateId: candId });
               }}
+              search={candidateSearch}
+              onSearchChange={setCandidateSearch}
            />
         )}
 
@@ -6733,9 +6824,7 @@ const RecruitmentApp = () => {
             positions={appData.positions}
             evaluations={appData.evaluations}
             onOpenPosition={(positionCode) => {
-              setSelectedPositionId(positionCode);
-              setPositionsReturnView('dashboard');
-              setCurrentView('position_detail');
+              navigate('position_detail', { selectedPositionId: positionCode, positionsReturnView: 'dashboard' });
             }}
           />
         )}
