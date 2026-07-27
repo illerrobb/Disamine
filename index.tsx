@@ -2,6 +2,8 @@ import React, { useState, useEffect, useMemo, useRef, useCallback, useLayoutEffe
 import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
 import * as XLSX from "xlsx-js-style";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 import {
   Upload,
   FileSpreadsheet,
@@ -776,7 +778,7 @@ const buildReiterationSuggestions = (
       ['rejected', 'non-compatible', 'excluded', 'withdrawn'].includes(evaluation.status)
     ).length;
     const rejectionRatio = nativeCandidates ? rejectedCount / nativeCandidates : 0;
-    const poolRatio = viableCandidates ? poolEvaluations.filter(evaluation => viableStatuses.has(evaluation.status)).length / viableCandidates : 0;
+    const poolRatio = viableCandidates ? poolEvaluations.filter(isActuallyAvailable).length / viableCandidates : 0;
     const incompleteRatio = viable.length ? viable.filter(evaluation => {
       const visibleRequirements = position.requirements.filter(requirement => !requirement.hidden);
       return visibleRequirements.length > 0 && visibleRequirements.some(requirement =>
@@ -794,11 +796,15 @@ const buildReiterationSuggestions = (
       ? Math.round((1 - nativeCandidates / medianNative) * 10)
       : 0;
     const uncertaintyRisk = Math.round(incompleteRatio * 10);
-    const score = Math.max(0, Math.min(100,
-      supplyRisk + competitionRisk + rejectionRisk + poolRisk + relativeRisk + uncertaintyRisk - (selected ? 45 : 0)
-    ));
+    // Two unambiguous business conditions take precedence over the weighted
+    // indicators: a covered position does not need reiteration, while a position
+    // with no direct applications is the maximum-priority case. This also makes
+    // equal input conditions produce the same, readily explainable score.
+    const weightedScore = supplyRisk + competitionRisk + rejectionRisk + poolRisk + relativeRisk + uncertaintyRisk;
+    const score = selected ? 0 : nativeCandidates === 0 ? 100 : Math.max(0, Math.min(100, weightedScore));
     const priority: ReiterationPriority = score >= 60 ? 'alta' : score >= 40 ? 'media' : 'osservazione';
     const reasons: string[] = [];
+    if (nativeCandidates === 0) reasons.push('Nessuna candidatura diretta: priorità massima di reiterazione.');
     if (viableCandidates === 0) reasons.push('Nessun candidato attualmente utilizzabile.');
     else if (viableCandidates <= 2) reasons.push(`Bacino utilizzabile insufficiente: ${viableCandidates} candidat${viableCandidates === 1 ? 'o' : 'i'}.`);
     if (sharedRatio >= .5) reasons.push(`${Math.round(sharedRatio * 100)}% dei candidati utili concorre anche per altre posizioni.`);
@@ -5585,6 +5591,69 @@ const MultiSelect = ({
   );
 };
 
+const getReiterationReportRows = (suggestions: ReiterationSuggestion[]) =>
+  [...suggestions]
+    .sort((a, b) => a.position.entity.localeCompare(b.position.entity, 'it') || b.score - a.score || a.position.code.localeCompare(b.position.code))
+    .map(suggestion => ({
+      ente: suggestion.position.entity || 'Ente non indicato',
+      codice: suggestion.position.code,
+      posizione: suggestion.position.title || 'Posizione senza titolo',
+      sede: suggestion.position.location || '-',
+      livello: getPositionLevel(suggestion.position).code,
+      ruolo: Array.from(getPositionRoleFilters(suggestion.position)).map(role => ROLE_FILTER_OPTIONS.find(option => option.value === role)?.label.split(' (')[0] ?? role).join(', ') || 'N.D.',
+      priorita: suggestion.priority,
+      punteggio: suggestion.score,
+      segnalati: suggestion.nativeCandidates,
+      utilizzabili: suggestion.viableCandidates,
+      motivazioni: suggestion.reasons.join(' ')
+    }));
+
+const exportReiterationExcel = (suggestions: ReiterationSuggestion[]) => {
+  const rows = getReiterationReportRows(suggestions);
+  const sheet = XLSX.utils.json_to_sheet(rows.map(row => ({
+    Ente: row.ente, Codice: row.codice, Posizione: row.posizione, Sede: row.sede,
+    Livello: row.livello, Ruolo: row.ruolo, Priorità: row.priorita.toUpperCase(),
+    Punteggio: row.punteggio, Segnalati: row.segnalati, Utilizzabili: row.utilizzabili,
+    Motivazioni: row.motivazioni
+  })));
+  sheet['!cols'] = [24, 14, 34, 20, 12, 18, 12, 12, 12, 12, 60].map(wch => ({ wch }));
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Reiterazioni');
+  XLSX.writeFile(workbook, `report-reiterazioni-${new Date().toISOString().slice(0, 10)}.xlsx`);
+};
+
+const exportReiterationPdf = (suggestions: ReiterationSuggestion[]) => {
+  const document = new jsPDF({ orientation: 'landscape' });
+  const rows = getReiterationReportRows(suggestions);
+  const entities = Array.from(new Set(rows.map(row => row.ente)));
+  document.setFontSize(18);
+  document.text('Report posizioni da reiterare', 14, 16);
+  document.setFontSize(9);
+  document.setTextColor(90);
+  document.text(`Generato il ${new Intl.DateTimeFormat('it-IT').format(new Date())} · ${rows.length} posizioni`, 14, 22);
+  let startY = 28;
+  entities.forEach((entity, index) => {
+    if (index > 0) {
+      document.addPage();
+      startY = 18;
+    }
+    document.setTextColor(20);
+    document.setFontSize(14);
+    document.text(entity, 14, startY);
+    autoTable(document, {
+      startY: startY + 4,
+      head: [['Codice', 'Posizione / sede', 'Livello', 'Ruolo', 'Priorità', 'Score', 'Segnalati', 'Utilizzabili', 'Motivazioni']],
+      body: rows.filter(row => row.ente === entity).map(row => [row.codice, `${row.posizione}\n${row.sede}`, row.livello, row.ruolo, row.priorita.toUpperCase(), row.punteggio, row.segnalati, row.utilizzabili, row.motivazioni]),
+      styles: { fontSize: 7, cellPadding: 2, overflow: 'linebreak' },
+      headStyles: { fillColor: [30, 64, 175] },
+      columnStyles: { 0: { cellWidth: 22 }, 1: { cellWidth: 45 }, 8: { cellWidth: 72 } },
+      margin: { left: 14, right: 14 }
+    });
+  });
+  if (!entities.length) document.text('Nessuna posizione corrisponde ai filtri selezionati.', 14, 32);
+  document.save(`report-reiterazioni-${new Date().toISOString().slice(0, 10)}.pdf`);
+};
+
 const ReiterationAnalysisView = ({
   positions,
   candidates,
@@ -5601,6 +5670,9 @@ const ReiterationAnalysisView = ({
   const [search, setSearch] = useState("");
   const [priorityFilter, setPriorityFilter] = useState<ReiterationPriority | 'tutte'>('tutte');
   const [occupancyFilter, setOccupancyFilter] = useState<'tutte' | 'vacanti' | 'con-titolare'>('tutte');
+  const [entityFilter, setEntityFilter] = useState<string[]>([]);
+  const [levelFilter, setLevelFilter] = useState<string[]>([]);
+  const [roleFilter, setRoleFilter] = useState<string[]>([]);
   const suggestions = useMemo(
     () => buildReiterationSuggestions(positions, candidates, evaluations),
     [positions, candidates, evaluations]
@@ -5608,6 +5680,9 @@ const ReiterationAnalysisView = ({
   const recommended = suggestions.filter(suggestion => suggestion.score >= 40 && !suggestion.selected);
   const baseVisible = showAll ? suggestions : recommended;
   const normalizedSearch = search.trim().toLocaleLowerCase('it');
+  const entityOptions = useMemo(() => Array.from(new Set(positions.map(position => position.entity || 'Ente non indicato'))).sort((a, b) => a.localeCompare(b, 'it')).map(value => ({ value, label: value })), [positions]);
+  const levelOptions = useMemo(() => getDistinctPositionLevels(positions).map(level => ({ value: level.code, label: level.code, meta: level.description })), [positions]);
+  const roleOptions = useMemo(() => ROLE_FILTER_OPTIONS.filter(option => option.value !== 'ALL').map(option => ({ value: option.value, label: option.label })), []);
   const visible = baseVisible.filter(suggestion => {
     const searchable = [suggestion.position.code, suggestion.position.title, suggestion.position.entity, suggestion.position.location, suggestion.position.incumbent]
       .filter(Boolean).join(' ').toLocaleLowerCase('it');
@@ -5615,7 +5690,10 @@ const ReiterationAnalysisView = ({
     const matchesPriority = priorityFilter === 'tutte' || suggestion.priority === priorityFilter;
     const matchesOccupancy = occupancyFilter === 'tutte'
       || (occupancyFilter === 'vacanti' ? !suggestion.position.incumbent : Boolean(suggestion.position.incumbent));
-    return matchesSearch && matchesPriority && matchesOccupancy;
+    const matchesEntity = entityFilter.length === 0 || entityFilter.includes(suggestion.position.entity || 'Ente non indicato');
+    const matchesLevel = levelFilter.length === 0 || levelFilter.includes(getPositionLevel(suggestion.position).code);
+    const matchesRole = roleFilter.length === 0 || roleFilter.some(role => matchesPositionRoleFilter(suggestion.position, role as RoleFilterValue));
+    return matchesSearch && matchesPriority && matchesOccupancy && matchesEntity && matchesLevel && matchesRole;
   });
   const highPriority = recommended.filter(suggestion => suggestion.priority === 'alta').length;
 
@@ -5628,9 +5706,16 @@ const ReiterationAnalysisView = ({
             <h1 className="text-2xl font-bold text-slate-900 mt-1">Posizioni da reiterare</h1>
             <p className="text-sm text-slate-500 mt-1 max-w-2xl">Priorità calcolata sull'intero ciclo considerando disponibilità reale, candidature multiple, esiti, dipendenza dal bacino e completezza della valutazione.</p>
           </div>
-          <button onClick={() => setShowAll(value => !value)} className="px-4 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-700 hover:bg-slate-50">
-            {showAll ? 'Solo suggerite' : 'Mostra tutte le posizioni'}
-          </button>
+          <div className="flex items-start gap-2">
+            <button onClick={() => setShowAll(value => !value)} className="px-4 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-700 hover:bg-slate-50">{showAll ? 'Solo suggerite' : 'Mostra tutte le posizioni'}</button>
+            <details className="relative">
+              <summary className="list-none cursor-pointer px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 flex items-center gap-2"><Download className="w-4 h-4" /> Esporta <ChevronDown className="w-4 h-4" /></summary>
+              <div className="absolute right-0 z-30 mt-2 w-48 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-xl">
+                <button onClick={() => exportReiterationExcel(visible)} className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"><FileSpreadsheet className="w-4 h-4 text-emerald-600" /> Esporta Excel</button>
+                <button onClick={() => exportReiterationPdf(visible)} className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"><FileText className="w-4 h-4 text-red-600" /> Esporta PDF</button>
+              </div>
+            </details>
+          </div>
         </div>
       </header>
 
@@ -5643,10 +5728,10 @@ const ReiterationAnalysisView = ({
 
         <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 mb-5 flex items-start gap-3 text-sm text-blue-900">
           <BarChart3 className="w-5 h-5 shrink-0 mt-0.5" />
-          <p><strong>Come leggere il risultato:</strong> il punteggio 0–100 è un indicatore di necessità, non una decisione automatica. Da 60 la priorità è alta, da 40 è media. Apri “Dettaglio analisi” per verificare dati e motivazioni prima di reiterare.</p>
+          <p><strong>Come leggere il risultato:</strong> il punteggio 0–100 è un indicatore di necessità, non una decisione automatica. Una posizione già coperta vale 0; senza candidature dirette vale 100. Negli altri casi somma scarsità del bacino, concorrenza, esiti negativi, dipendenza dal pool, domanda relativa e dati incompleti. Da 60 la priorità è alta, da 40 è media.</p>
         </div>
 
-        <div className="mb-5 grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-3 rounded-xl border border-slate-200 bg-white p-4">
+        <div className="mb-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 rounded-xl border border-slate-200 bg-white p-4">
           <label className="relative">
             <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
             <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Cerca codice, titolo, ente, sede o titolare…" className="w-full rounded-lg border border-slate-200 py-2 pl-9 pr-3 text-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100" />
@@ -5657,6 +5742,9 @@ const ReiterationAnalysisView = ({
           <select value={occupancyFilter} onChange={event => setOccupancyFilter(event.target.value as 'tutte' | 'vacanti' | 'con-titolare')} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
             <option value="tutte">Tutte le posizioni</option><option value="vacanti">Solo vacanti</option><option value="con-titolare">Con titolare</option>
           </select>
+          <MultiSelect label="Ente" options={entityOptions} selected={entityFilter} onChange={setEntityFilter} placeholder="Tutti gli enti" />
+          <MultiSelect label="Livello" options={levelOptions} selected={levelFilter} onChange={setLevelFilter} placeholder="Tutti i livelli" />
+          <MultiSelect label="Ruolo" options={roleOptions} selected={roleFilter} onChange={setRoleFilter} placeholder="Tutti i ruoli" />
         </div>
 
         <div className="space-y-4">
