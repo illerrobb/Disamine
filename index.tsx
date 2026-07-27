@@ -127,6 +127,12 @@ interface AppData {
   cycle: Cycle;
 }
 
+interface ResearchStore {
+  schemaVersion: number;
+  researches: AppData[];
+  activeResearchId: string;
+}
+
 type PositionStatus = 'todo' | 'inprogress' | 'completed';
 type AppView = 'upload' | 'dashboard' | 'favorites' | 'position_detail' | 'candidates_list' | 'candidate_detail' | 'overlap_kanban' | 'reiteration_analysis';
 type NavigationState = {
@@ -5593,23 +5599,85 @@ const ReiterationAnalysisView = ({
 // --- Main App ---
 
 const RecruitmentApp = () => {
-  const backupVersion = 1;
+  const backupVersion = 2;
+  const researchStoreSchemaVersion = 2;
   const createDefaultCycle = (): Cycle => ({
     name: "Ciclo disamine 2026/2027",
     startedAt: Date.now(),
     id: typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : String(Date.now())
   });
 
-  const [appData, setAppData] = useState<AppData>(() => ({
+  const createEmptyResearch = (cycle: Cycle = createDefaultCycle()): AppData => ({
     candidates: [],
     positions: [],
     evaluations: {},
     favoritePositionIds: [],
     lastUpdated: 0,
-    cycle: createDefaultCycle()
-  }));
+    cycle
+  });
 
-  const [currentView, setCurrentView] = useState<AppView>('upload');
+  const normalizeResearch = (research: AppData): AppData => ({
+    ...research,
+    candidates: (research.candidates ?? []).map(candidate => ({
+      ...candidate,
+      commanderOpinion: candidate.commanderOpinion ?? "",
+      specificAssignments: candidate.specificAssignments ?? "",
+      ofcnSuitability: candidate.ofcnSuitability ?? "",
+      globalNotes: candidate.globalNotes ?? ""
+    })),
+    positions: research.positions ?? [],
+    favoritePositionIds: research.favoritePositionIds ?? [],
+    evaluations: Object.entries(research.evaluations ?? {}).reduce<Record<string, Evaluation>>((acc, [key, value]) => {
+      acc[key] = normalizeEvaluation(value);
+      return acc;
+    }, {}),
+    lastUpdated: research.lastUpdated ?? 0,
+    cycle: research.cycle ?? createDefaultCycle()
+  });
+
+  const migrateStoredData = (value: unknown): ResearchStore | null => {
+    if (!value || typeof value !== "object") return null;
+    const parsed = value as any;
+    if (Array.isArray(parsed.researches)) {
+      const researches = parsed.researches.map((research: AppData) => normalizeResearch(research));
+      if (!researches.length) return null;
+      const activeResearchId = researches.some(research => research.cycle.id === parsed.activeResearchId)
+        ? parsed.activeResearchId
+        : researches[0].cycle.id;
+      return { schemaVersion: researchStoreSchemaVersion, researches, activeResearchId };
+    }
+    // Automatic migration from the original single-research localStorage shape.
+    if (Array.isArray(parsed.candidates) && Array.isArray(parsed.positions) && parsed.cycle) {
+      const research = normalizeResearch(parsed as AppData);
+      return { schemaVersion: researchStoreSchemaVersion, researches: [research], activeResearchId: research.cycle.id };
+    }
+    return null;
+  };
+
+  const [researchStore, setResearchStore] = useState<ResearchStore>(() => {
+    try {
+      const saved = localStorage.getItem('recruitment_db');
+      const migrated = saved ? migrateStoredData(JSON.parse(saved)) : null;
+      if (migrated) return migrated;
+    } catch (error) {
+      console.error("Failed to load DB", error);
+    }
+    const initial = createEmptyResearch();
+    return { schemaVersion: researchStoreSchemaVersion, researches: [initial], activeResearchId: initial.cycle.id };
+  });
+  const appData = researchStore.researches.find(research => research.cycle.id === researchStore.activeResearchId)
+    ?? researchStore.researches[0];
+  const setAppData: React.Dispatch<React.SetStateAction<AppData>> = useCallback((action) => {
+    setResearchStore(store => ({
+      ...store,
+      researches: store.researches.map(research => {
+        if (research.cycle.id !== store.activeResearchId) return research;
+        return typeof action === "function" ? action(research) : action;
+      })
+    }));
+  }, []);
+
+  const [currentView, setCurrentView] = useState<AppView>(appData.candidates.length && appData.positions.length ? 'dashboard' : 'upload');
   const [selectedPositionId, setSelectedPositionId] = useState<string | null>(null);
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
   const [overlapPositionIds, setOverlapPositionIds] = useState<string[]>([]);
@@ -5682,54 +5750,28 @@ const RecruitmentApp = () => {
     return () => window.removeEventListener('popstate', onPopState);
   }, [restoreNavigation]);
 
-  // Load from LocalStorage
-  useEffect(() => {
-    const saved = localStorage.getItem('recruitment_db');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (parsed.candidates && parsed.positions) {
-          setAppData({
-            ...parsed,
-            candidates: (parsed.candidates as Candidate[]).map(candidate => ({
-              ...candidate,
-              commanderOpinion: candidate.commanderOpinion ?? "",
-              specificAssignments: candidate.specificAssignments ?? "",
-              ofcnSuitability: candidate.ofcnSuitability ?? "",
-              globalNotes: candidate.globalNotes ?? ""
-            })),
-            cycle: parsed.cycle ?? createDefaultCycle(),
-            favoritePositionIds: parsed.favoritePositionIds ?? [],
-            evaluations: Object.entries(parsed.evaluations ?? {}).reduce<Record<string, Evaluation>>((acc, [key, value]) => {
-              acc[key] = normalizeEvaluation(value as Evaluation);
-              return acc;
-            }, {})
-          });
-          setCurrentView('dashboard');
-        }
-      } catch (e) { console.error("Failed to load DB", e); }
-    }
-  }, []);
-
   // Keep every browser tab aligned with edits made in the others.
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
       if (event.key !== 'recruitment_db' || !event.newValue) return;
       try {
-        const incoming = JSON.parse(event.newValue) as AppData;
-        if (incoming.lastUpdated >= appData.lastUpdated) setAppData(incoming);
+        const incoming = migrateStoredData(JSON.parse(event.newValue));
+        if (!incoming) return;
+        const incomingUpdated = Math.max(...incoming.researches.map(research => research.lastUpdated));
+        const currentUpdated = Math.max(...researchStore.researches.map(research => research.lastUpdated));
+        if (incomingUpdated >= currentUpdated) setResearchStore(incoming);
       } catch (error) {
         console.error('Failed to synchronize tab', error);
       }
     };
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
-  }, [appData.lastUpdated]);
+  }, [researchStore]);
 
   // Save to LocalStorage
   useEffect(() => {
-    localStorage.setItem('recruitment_db', JSON.stringify(appData));
-  }, [appData]);
+    localStorage.setItem('recruitment_db', JSON.stringify(researchStore));
+  }, [researchStore]);
 
   const handleDataLoaded = (candidates: Candidate[], positions: Position[], stats: ImportStats) => {
     // Initialize empty evaluations for all matches
@@ -6026,7 +6068,7 @@ const RecruitmentApp = () => {
     const payload = {
       version: backupVersion,
       exportedAt: Date.now(),
-      appData
+      researchStore
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -6041,31 +6083,28 @@ const RecruitmentApp = () => {
     setBackupSuccess("Backup scaricato correttamente.");
   };
 
-  const validateBackupPayload = (payload: any): AppData => {
+  const validateBackupPayload = (payload: any): ResearchStore => {
     const isObject = (value: any) => typeof value === "object" && value !== null && !Array.isArray(value);
     if (!isObject(payload)) {
       throw new Error("Formato backup non valido.");
     }
-    if (payload.version !== backupVersion) {
+    if (payload.version !== 1 && payload.version !== backupVersion) {
       throw new Error("Versione backup incompatibile.");
     }
-    if (!isObject(payload.appData)) {
-      throw new Error("Formato backup non valido.");
-    }
-    const { candidates, positions, evaluations, lastUpdated, cycle, favoritePositionIds } = payload.appData as AppData;
-    if (!Array.isArray(candidates) || !Array.isArray(positions) || !isObject(evaluations)) {
-      throw new Error("Formato backup non valido.");
-    }
-    if (!isObject(cycle) || typeof cycle.name !== "string" || typeof cycle.startedAt !== "number" || typeof cycle.id !== "string") {
-      throw new Error("Formato backup non valido.");
-    }
-    if (typeof lastUpdated !== "number") {
-      throw new Error("Formato backup non valido.");
-    }
-    if (favoritePositionIds !== undefined && !Array.isArray(favoritePositionIds)) {
-      throw new Error("Formato backup non valido.");
-    }
-    return payload.appData as AppData;
+    const candidateStore = payload.version === 1
+      ? migrateStoredData(payload.appData)
+      : migrateStoredData(payload.researchStore);
+    if (!candidateStore) throw new Error("Formato backup non valido.");
+    candidateStore.researches.forEach(research => {
+      const { candidates, positions, evaluations, lastUpdated, cycle, favoritePositionIds } = research;
+      if (!Array.isArray(candidates) || !Array.isArray(positions) || !isObject(evaluations)
+        || !isObject(cycle) || typeof cycle.name !== "string" || typeof cycle.startedAt !== "number"
+        || typeof cycle.id !== "string" || typeof lastUpdated !== "number"
+        || (favoritePositionIds !== undefined && !Array.isArray(favoritePositionIds))) {
+        throw new Error("Formato backup non valido.");
+      }
+    });
+    return candidateStore;
   };
 
   const importBackup = (file: File) => {
@@ -6076,18 +6115,10 @@ const RecruitmentApp = () => {
       try {
         const text = String(reader.result || "");
         const parsed = JSON.parse(text);
-        const nextAppData = validateBackupPayload(parsed);
-        setAppData({
-          candidates: nextAppData.candidates,
-          positions: nextAppData.positions,
-          evaluations: Object.entries(nextAppData.evaluations).reduce<Record<string, Evaluation>>((acc, [key, value]) => {
-            acc[key] = normalizeEvaluation(value);
-            return acc;
-          }, {}),
-          favoritePositionIds: nextAppData.favoritePositionIds ?? [],
-          lastUpdated: nextAppData.lastUpdated,
-          cycle: nextAppData.cycle
-        });
+        const nextStore = validateBackupPayload(parsed);
+        const nextAppData = nextStore.researches.find(research => research.cycle.id === nextStore.activeResearchId)
+          ?? nextStore.researches[0];
+        setResearchStore(nextStore);
         setSelectedCandidateId(null);
         setSelectedPositionId(null);
         setOverlapPositionIds([]);
@@ -6432,7 +6463,7 @@ const RecruitmentApp = () => {
   };
 
   const startNewSearch = () => {
-    const confirmed = confirm("Vuoi avviare una nuova ricerca di personale? I dati attuali verranno svuotati.");
+    const confirmed = confirm("Vuoi avviare una nuova ricerca di personale? La ricerca attuale resterà archiviata.");
     if (!confirmed) return;
     setNewCycleName("");
     setIsNewCycleModalOpen(true);
@@ -6445,14 +6476,19 @@ const RecruitmentApp = () => {
       ...createDefaultCycle(),
       name: trimmedName
     };
-    setAppData({
+    const nextResearch: AppData = {
       candidates: [],
       positions: [],
       evaluations: {},
       favoritePositionIds: [],
       lastUpdated: Date.now(),
       cycle: nextCycle
-    });
+    };
+    setResearchStore(store => ({
+      ...store,
+      researches: [...store.researches, nextResearch],
+      activeResearchId: nextCycle.id
+    }));
     setCurrentView('upload');
     setSelectedCandidateId(null);
     setSelectedPositionId(null);
