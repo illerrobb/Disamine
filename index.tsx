@@ -258,9 +258,9 @@ const formatExcelDate = (value: unknown) => {
   return String(value).trim();
 };
 
-/** The planned profile is supplied by the position file as rank and role. */
+/** The planned profile is supplied by the position file as GRADO and CAT./SPEC./QUAL. */
 export const getPlannedProfile = (position: Position) =>
-  [position.rankReq, position.role].map(value => value?.trim()).filter(Boolean).join(' • ') || 'N.D.';
+  [position.rankReq, position.catSpecQualReq].map(value => value?.trim()).filter(Boolean).join(' • ') || 'N.D.';
 
 const getSortableDate = (value: string) => {
   const match = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
