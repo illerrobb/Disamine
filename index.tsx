@@ -99,6 +99,9 @@ export interface Position {
   ofcn: string;
   poInterest: string;
   incumbent: string; // TITOLARE
+  role: string; // RUOLO della posizione
+  plannedPersonnel: string; // PERSONALE PREVISTO
+  turnoverDate: string; // DATA AVVICENDAMENTO
   administrativeStatus?: PositionAdministrativeStatus;
 
   originalData: any;
@@ -152,6 +155,7 @@ type NavigationState = {
   filterStatus: PositionStatus | 'all';
   filterLevel: string[];
   filterRole: RoleFilterValue[];
+  scrollPosition?: number;
 };
 type WorkspaceTab = {
   id: string;
@@ -372,7 +376,10 @@ const positionFieldDefinitions: FieldDescriptor<Position>[] = [
   { label: "Categoria/Specialità", getValue: (position) => position.catSpecQualReq },
   { label: "OFCN", getValue: (position) => position.ofcn },
   { label: "Interesse p.o.", getValue: (position) => position.poInterest },
-  { label: "Titolare", getValue: (position) => position.incumbent }
+  { label: "Titolare", getValue: (position) => position.incumbent },
+  { label: "Ruolo", getValue: (position) => position.role },
+  { label: "Personale previsto", getValue: (position) => position.plannedPersonnel },
+  { label: "Data avvicendamento", getValue: (position) => position.turnoverDate }
 ];
 
 const buildFieldDiffs = <T,>(existing: T, incoming: T, fields: FieldDescriptor<T>[]): FieldDiff[] =>
@@ -461,6 +468,9 @@ export const mergePositionForImport = (existing: Position, incoming: Position): 
   ofcn: incoming.ofcn,
   poInterest: incoming.poInterest,
   incumbent: incoming.incumbent,
+  role: incoming.role,
+  plannedPersonnel: incoming.plannedPersonnel,
+  turnoverDate: incoming.turnoverDate,
   originalData: incoming.originalData
 });
 
@@ -622,6 +632,9 @@ const parsePositions = (data: any[]): DedupResult<Position> => {
     const ofcnKey = findKey(keys, "OFCN");
     const interesseKey = findKey(keys, "INTERESSE", "INTEREST");
     const titolareKey = findKey(keys, "TITOLARE", "INCUMBENT");
+    const ruoloKey = findKey(keys, "RUOLO", "ROLE");
+    const personalePrevistoKey = findKey(keys, "PERSONALE PREVISTO", "PREVISTO", "AUTHORIZED STRENGTH", "PLANNED PERSONNEL");
+    const avvicendamentoKey = findKey(keys, "DATA AVVICENDAMENTO", "AVVICENDAMENTO", "TURNOVER DATE", "HANDOVER DATE");
 
     if (!codeKey || !row[codeKey]) return;
 
@@ -694,6 +707,9 @@ const parsePositions = (data: any[]): DedupResult<Position> => {
       ofcn: String(row[ofcnKey] || "").trim(),
       poInterest: String(row[interesseKey] || "").trim(),
       incumbent: String(row[titolareKey] || "").trim(),
+      role: String(row[ruoloKey] || "").trim(),
+      plannedPersonnel: String(row[personalePrevistoKey] || "").trim(),
+      turnoverDate: formatExcelDate(row[avvicendamentoKey]),
 
       originalData: row,
     };
@@ -735,6 +751,9 @@ const parsePositions = (data: any[]): DedupResult<Position> => {
     if (isBlank(existing.incumbent) && !isBlank(position.incumbent)) {
       existing.incumbent = position.incumbent;
     }
+    if (isBlank(existing.role) && !isBlank(position.role)) existing.role = position.role;
+    if (isBlank(existing.plannedPersonnel) && !isBlank(position.plannedPersonnel)) existing.plannedPersonnel = position.plannedPersonnel;
+    if (isBlank(existing.turnoverDate) && !isBlank(position.turnoverDate)) existing.turnoverDate = position.turnoverDate;
 
     const requirementSet = new Set(
       existing.requirements.map((req) => req.text.trim().toLowerCase())
@@ -3138,14 +3157,14 @@ const getPositionRoleFilters = (position: Position) => {
   return roles;
 };
 
-// In the reiteration report the role identifies the organisation responsible
-// for the position, rather than every profile that the individual position can
-// accept. Keeping the entity as the only source prevents mixed requirements
-// (for example "G.A./CCrs/ARMI") from placing the same row in several roles.
-const getReiterationEntityRoleFilters = (position: Position) => {
+// In the reiteration report RUOLO is a property of the position itself. Fall
+// back to the profile fields only for researches imported before this field
+// was introduced.
+const getReiterationPositionRoleFilters = (position: Position) => {
   const roles = new Set<RoleFilterValue>();
 
-  splitRoleOptions(position.entity || "")
+  const source = position.role || position.catSpecQualReq || "";
+  splitRoleOptions(source)
     .map(option => {
       const normalized = normalizeProfileCode(option);
       if (normalized.includes("GENIO")) return "GENIO";
@@ -3161,8 +3180,8 @@ const getReiterationEntityRoleFilters = (position: Position) => {
   return roles;
 };
 
-const matchesReiterationEntityRoleFilter = (position: Position, filter: RoleFilterValue) =>
-  filter === "ALL" || getReiterationEntityRoleFilters(position).has(filter);
+export const matchesReiterationPositionRoleFilter = (position: Position, filter: RoleFilterValue) =>
+  filter === "ALL" || getReiterationPositionRoleFilters(position).has(filter);
 
 const matchesPositionRoleFilter = (position: Position, filter: RoleFilterValue) => {
   if (filter === "ALL") return true;
@@ -5247,7 +5266,8 @@ const PositionDetailView = ({
   onUpdatePosition,
   onExport,
   isFavorite,
-  onToggleFavorite
+  onToggleFavorite,
+  onSetAdministrativeStatus
 }: {
   position: Position;
   allCandidates: Candidate[];
@@ -5264,6 +5284,7 @@ const PositionDetailView = ({
   onExport: (p: Position, c: Candidate[], e: Record<string, Evaluation>, pos: Position[]) => void;
   isFavorite: boolean;
   onToggleFavorite: (positionCode: string) => void;
+  onSetAdministrativeStatus: (positionCode: string, status?: PositionAdministrativeStatus) => void;
 }) => {
   const [viewMode, setViewMode] = useState<'list' | 'matrix'>('list');
   const [filter, setFilter] = useState('all'); // all, selected, pending...
@@ -5272,6 +5293,7 @@ const PositionDetailView = ({
   const [isPoolDrawerOpen, setIsPoolDrawerOpen] = useState(false);
   const [poolRemovalCandidateId, setPoolRemovalCandidateId] = useState<string | null>(null);
   const [isSortOpen, setIsSortOpen] = useState(false);
+  const [isActionsOpen, setIsActionsOpen] = useState(false);
   const [sortCriteria, setSortCriteria] = useState<CandidateSortCriterion[]>([
     { id: 'mandates', field: 'mandates', direction: 'asc' },
     { id: 'requirements', field: 'requirements', direction: 'desc' }
@@ -5430,16 +5452,16 @@ const PositionDetailView = ({
   return (
     <div className="flex h-full min-h-0 flex-col bg-slate-50">
       <header className="bg-white border-b border-slate-200 shadow-sm z-20">
-        <div className="px-6 py-4">
-          <div className="flex items-center gap-4 mb-4">
+        <div className="px-6 py-3">
+          <div className="flex items-start gap-4 mb-3">
             <Button variant="secondary" onClick={onBack}>
                <ChevronRight className="w-4 h-4 rotate-180 mr-1" /> Back
             </Button>
-            <div className="flex-1">
-               <div className="flex items-center gap-2 mb-1">
+            <div className="min-w-0 flex-1">
+               <div className="flex min-w-0 items-center gap-2 mb-1">
                  <span className="font-mono text-sm font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">{position.code}</span>
                  <PositionLevelBadge level={positionLevel} />
-                 <h1 className="text-xl font-bold text-slate-900 truncate">{position.title}</h1>
+                 <h1 className="min-w-0 text-lg font-bold leading-snug text-slate-900" title={position.title}>{position.title}</h1>
                </div>
                <div className="text-sm text-slate-500 flex gap-4">
                  <span className="flex items-center gap-1"><Building className="w-3 h-3" /> {position.entity}</span>
@@ -5448,37 +5470,33 @@ const PositionDetailView = ({
                  <span className="uppercase text-slate-400">Profilo previsto</span>
                  <span className="font-semibold text-slate-600">{profileSummary}</span>
                </div>
-               <div className={`mt-2 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${position.incumbent ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
+               <div className={`mt-2 inline-flex flex-wrap items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${position.incumbent ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
                  <User className="w-3.5 h-3.5" />
                  {position.incumbent ? `Titolare: ${position.incumbent}` : 'Posizione vacante'}
+                 <span className="opacity-50">•</span>
+                 <span>Avvicendamento: {position.turnoverDate || 'N.D.'}</span>
                </div>
             </div>
-            <div className="flex items-center gap-2">
-               <div className="text-right mr-4 text-xs text-slate-500">
+            <div className="flex shrink-0 items-start gap-3">
+               <div className="hidden text-right text-xs text-slate-500 lg:block">
                   <div className="font-bold text-slate-700">{stats.total} Candidates</div>
                   <div>{stats.selected} Selected • {stats.pending} Pending • {stats.pool} a bacino</div>
                </div>
-               <Button
-                 variant={positionCandidates.length < 5 ? "primary" : "secondary"}
-                 onClick={() => setIsPoolDrawerOpen(true)}
-               >
-                  Ricerca a bacino
-                  {positionCandidates.length < 5 && <Badge color="amber">Consigliato</Badge>}
-               </Button>
-               <Button variant="secondary" onClick={() => setIsPositionEditOpen(true)}>
-                  <Pencil className="w-4 h-4 mr-2" /> Modifica posizione
-               </Button>
-               <Button
-                 variant="secondary"
-                 onClick={() => onToggleFavorite(position.code)}
-                 className={isFavorite ? "border-amber-200 text-amber-700 bg-amber-50 hover:bg-amber-100" : ""}
-               >
-                  <Star className="w-4 h-4 mr-2" fill={isFavorite ? "currentColor" : "none"} />
-                  {isFavorite ? "In shortlist" : "Salva in shortlist"}
-               </Button>
-               <Button variant="secondary" onClick={() => onExport(position, candidates, evaluations, allPositions)}>
-                  <Download className="w-4 h-4 mr-2" /> Export Excel
-               </Button>
+               <div className="relative">
+                 <Button variant="secondary" onClick={() => setIsActionsOpen(open => !open)} aria-haspopup="menu" aria-expanded={isActionsOpen}>
+                   <MoreVertical className="w-4 h-4 mr-1" /> Azioni
+                 </Button>
+                 {isActionsOpen && <div role="menu" className="absolute right-0 z-50 mt-2 w-72 rounded-lg border border-slate-200 bg-white p-1.5 text-left shadow-xl">
+                   <button onClick={() => { setIsPoolDrawerOpen(true); setIsActionsOpen(false); }} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-slate-100"><FolderSearch className="w-4 h-4" />Ricerca a bacino</button>
+                   <button onClick={() => { setIsPositionEditOpen(true); setIsActionsOpen(false); }} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-slate-100"><Pencil className="w-4 h-4" />Modifica posizione</button>
+                   <button onClick={() => { onToggleFavorite(position.code); setIsActionsOpen(false); }} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-slate-100"><Star className="w-4 h-4" fill={isFavorite ? "currentColor" : "none"} />{isFavorite ? 'Rimuovi dalla shortlist' : 'Salva in shortlist'}</button>
+                   <button onClick={() => { onExport(position, candidates, evaluations, allPositions); setIsActionsOpen(false); }} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-slate-100"><Download className="w-4 h-4" />Export Excel</button>
+                   <div className="my-1 border-t border-slate-100" />
+                   <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">Stato manuale</div>
+                   {([['non-alimentazione', 'Non alimentazione'], ['estensione-mandato-titolare', 'Estensione mandato titolare'], ['reiterazione', 'Reiterazione']] as const).map(([value, label]) => <button key={value} onClick={() => { onSetAdministrativeStatus(position.code, value); setIsActionsOpen(false); }} className="flex w-full items-center justify-between rounded-md px-3 py-2 text-sm hover:bg-slate-100">{label}{position.administrativeStatus === value && <Check className="w-4 h-4 text-blue-600" />}</button>)}
+                   {position.administrativeStatus && <button onClick={() => { onSetAdministrativeStatus(position.code); setIsActionsOpen(false); }} className="w-full rounded-md px-3 py-2 text-left text-sm text-slate-500 hover:bg-slate-100">Rimuovi stato manuale</button>}
+                 </div>}
+               </div>
             </div>
           </div>
           {positionCandidates.length < 5 && (
@@ -5892,7 +5910,7 @@ const getReiterationReportRows = (suggestions: ReiterationSuggestion[]) =>
       codice: suggestion.position.code,
       posizione: suggestion.position.title || 'Posizione senza titolo',
       livello: getPositionLevel(suggestion.position).code,
-      ruolo: Array.from(getReiterationEntityRoleFilters(suggestion.position)).map(role => ROLE_FILTER_OPTIONS.find(option => option.value === role)?.label.split(' (')[0] ?? role).join(', ') || 'N.D.',
+      ruolo: Array.from(getReiterationPositionRoleFilters(suggestion.position)).map(role => ROLE_FILTER_OPTIONS.find(option => option.value === role)?.label.split(' (')[0] ?? role).join(', ') || 'N.D.',
       priorita: suggestion.priority,
       punteggio: suggestion.score,
       segnalati: suggestion.nativeCandidates,
@@ -5981,7 +5999,7 @@ const ReiterationAnalysisView = ({
     const matchesPriority = priorityFilter === 'tutte' || suggestion.priority === priorityFilter;
     const matchesEntity = entityFilter.length === 0 || entityFilter.includes(suggestion.position.entity || 'Ente non indicato');
     const matchesLevel = levelFilter.length === 0 || levelFilter.includes(getPositionLevel(suggestion.position).code);
-    const matchesRole = roleFilter.length === 0 || roleFilter.some(role => matchesReiterationEntityRoleFilter(suggestion.position, role as RoleFilterValue));
+    const matchesRole = roleFilter.length === 0 || roleFilter.some(role => matchesReiterationPositionRoleFilter(suggestion.position, role as RoleFilterValue));
     return matchesSearch && matchesPriority && matchesEntity && matchesLevel && matchesRole;
   });
   const highPriority = recommended.filter(suggestion => suggestion.priority === 'alta').length;
@@ -6045,6 +6063,12 @@ const ReiterationAnalysisView = ({
                     <div className="flex flex-wrap items-center gap-2"><span className={`px-2 py-0.5 rounded-full border text-[11px] uppercase font-bold ${priorityStyle}`}>Priorità {suggestion.priority}</span><span className="text-xs text-slate-400">{suggestion.position.code}</span></div>
                     <h2 className="font-bold text-slate-900 mt-2">{suggestion.position.title || 'Posizione senza titolo'}</h2>
                     <p className="text-sm text-slate-500">{suggestion.position.entity}</p>
+                    <dl className="mt-3 grid grid-cols-2 gap-x-5 gap-y-2 rounded-lg border border-slate-100 bg-slate-50 p-3 text-xs sm:grid-cols-4">
+                      <div><dt className="font-semibold uppercase text-slate-400">N. candidati</dt><dd className="mt-0.5 font-bold text-slate-800">{suggestion.nativeCandidates}</dd></div>
+                      <div><dt className="font-semibold uppercase text-slate-400">Personale previsto</dt><dd className="mt-0.5 font-bold text-slate-800">{suggestion.position.plannedPersonnel || 'N.D.'}</dd></div>
+                      <div><dt className="font-semibold uppercase text-slate-400">Attuale titolare</dt><dd className="mt-0.5 font-bold text-slate-800">{suggestion.position.incumbent || 'Vacante'}</dd></div>
+                      <div><dt className="font-semibold uppercase text-slate-400">Data avvicendamento</dt><dd className="mt-0.5 font-bold text-slate-800">{suggestion.position.turnoverDate || 'N.D.'}</dd></div>
+                    </dl>
                     <ul className="mt-3 space-y-1">{suggestion.reasons.slice(0, expanded ? undefined : 2).map(reason => <li key={reason} className="text-sm text-slate-700 flex gap-2"><AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />{reason}</li>)}</ul>
                   </div>
                   <div className="flex flex-col gap-2 shrink-0"><button onClick={() => onOpenPosition(suggestion.position.code)} className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700">Apri posizione</button><button onClick={() => setExpandedCode(expanded ? null : suggestion.position.code)} className="px-3 py-2 rounded-lg border border-slate-200 text-slate-600 text-sm hover:bg-slate-50">{expanded ? 'Chiudi dettaglio' : 'Dettaglio analisi'}</button></div>
@@ -6094,6 +6118,9 @@ const RecruitmentApp = () => {
       return {
         ...position,
         entity: position.entity || legacyPosition.location || "Ente non indicato",
+        role: position.role ?? "",
+        plannedPersonnel: position.plannedPersonnel ?? "",
+        turnoverDate: position.turnoverDate ?? "",
         administrativeStatus: position.administrativeStatus
       };
     }),
@@ -6195,6 +6222,7 @@ const RecruitmentApp = () => {
   const [importConflicts, setImportConflicts] = useState<ImportConflict[]>([]);
   const [importConflictsTotal, setImportConflictsTotal] = useState(0);
   const navigationRef = useRef<NavigationState | null>(null);
+  const pendingScrollRestoreRef = useRef<number | null>(null);
   const newResearchInputRef = useRef<HTMLInputElement | null>(null);
   const renameResearchInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -6225,22 +6253,52 @@ const RecruitmentApp = () => {
     setFilterStatus(state.filterStatus ?? 'all');
     setFilterLevel(state.filterLevel ?? []);
     setFilterRole(state.filterRole ?? []);
+    pendingScrollRestoreRef.current = state.scrollPosition ?? 0;
   }, []);
 
+  const getPageScrollContainer = useCallback((): HTMLElement | null => {
+    const main = document.querySelector('main');
+    if (!main) return null;
+    const explicit = main.querySelector('[data-page-scroll]') as HTMLElement | null;
+    if (explicit) return explicit;
+    return Array.from(main.querySelectorAll<HTMLElement>('*')).find(element => {
+      const overflow = window.getComputedStyle(element).overflowY;
+      return (overflow === 'auto' || overflow === 'scroll') && element.scrollHeight > element.clientHeight;
+    }) ?? null;
+  }, []);
+
+  const readScrollPosition = useCallback(() => getPageScrollContainer()?.scrollTop ?? window.scrollY, [getPageScrollContainer]);
+
   const navigate = useCallback((view: AppView, overrides: Partial<NavigationState> = {}, replace = false) => {
-    const next = getNavigationState(view, overrides);
+    const current = { ...getNavigationState(), scrollPosition: readScrollPosition() };
+    window.history.replaceState(current, '', window.location.href);
+    const next = getNavigationState(view, { scrollPosition: 0, ...overrides });
     navigationRef.current = next;
     setWorkspaceTabs(tabs => tabs.map(tab => tab.id === activeWorkspaceTabId ? { ...tab, navigation: next } : tab));
     restoreNavigation(next);
     window.history[replace ? 'replaceState' : 'pushState'](next, '', window.location.href);
-  }, [activeWorkspaceTabId, getNavigationState, restoreNavigation]);
+  }, [activeWorkspaceTabId, getNavigationState, readScrollPosition, restoreNavigation]);
 
   useEffect(() => {
-    const state = getNavigationState();
+    const historyState = window.history.state as Partial<NavigationState> | null;
+    const state = getNavigationState(currentView, {
+      scrollPosition: historyState?.view === currentView ? historyState.scrollPosition : 0
+    });
     navigationRef.current = state;
     setWorkspaceTabs(tabs => tabs.map(tab => tab.id === activeWorkspaceTabId ? { ...tab, navigation: state } : tab));
     window.history.replaceState(state, '', window.location.href);
-  }, [activeWorkspaceTabId, getNavigationState]);
+  }, [activeWorkspaceTabId, currentView, getNavigationState]);
+
+  useLayoutEffect(() => {
+    if (pendingScrollRestoreRef.current === null) return;
+    const position = pendingScrollRestoreRef.current;
+    pendingScrollRestoreRef.current = null;
+    requestAnimationFrame(() => {
+      const container = getPageScrollContainer();
+      if (container) container.scrollTop = position;
+      else window.scrollTo(0, position);
+    });
+  }, [currentView, selectedPositionId, selectedCandidateId, getPageScrollContainer]);
 
   // Keep every browser tab aligned with edits made in the others.
   useEffect(() => {
@@ -7350,6 +7408,7 @@ const RecruitmentApp = () => {
             onExport={exportToExcel}
             isFavorite={appData.favoritePositionIds.includes(selectedPosition.code)}
             onToggleFavorite={toggleFavoritePosition}
+            onSetAdministrativeStatus={setPositionAdministrativeStatus}
           />
         )}
         {renderedView === 'candidate_detail' && selectedCandidate && (
