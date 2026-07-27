@@ -139,6 +139,7 @@ interface ResearchStore {
 type PositionStatus = 'todo' | 'inprogress' | 'completed';
 type AppView = 'upload' | 'researches' | 'dashboard' | 'favorites' | 'position_detail' | 'candidates_list' | 'candidate_detail' | 'overlap_kanban' | 'reiteration_analysis';
 type NavigationState = {
+  researchId: string;
   view: AppView;
   selectedPositionId: string | null;
   selectedCandidateId: string | null;
@@ -5712,6 +5713,7 @@ const RecruitmentApp = () => {
   const renameResearchInputRef = useRef<HTMLInputElement | null>(null);
 
   const getNavigationState = useCallback((view: AppView = currentView, overrides: Partial<NavigationState> = {}): NavigationState => ({
+    researchId: researchStore.activeResearchId,
     view,
     selectedPositionId,
     selectedCandidateId,
@@ -5723,20 +5725,20 @@ const RecruitmentApp = () => {
     filterLevel,
     filterRole,
     ...overrides
-  }), [currentView, selectedPositionId, selectedCandidateId, positionsReturnView, searchTerm, candidateSearch, filterEnte, filterStatus, filterLevel, filterRole]);
+  }), [researchStore.activeResearchId, currentView, selectedPositionId, selectedCandidateId, positionsReturnView, searchTerm, candidateSearch, filterEnte, filterStatus, filterLevel, filterRole]);
 
   const restoreNavigation = useCallback((state: NavigationState) => {
     navigationRef.current = state;
     setCurrentView(state.view);
     setSelectedPositionId(state.selectedPositionId);
     setSelectedCandidateId(state.selectedCandidateId);
-    setPositionsReturnView(state.positionsReturnView);
-    setSearchTerm(state.searchTerm);
+    setPositionsReturnView(state.positionsReturnView ?? 'dashboard');
+    setSearchTerm(state.searchTerm ?? "");
     setCandidateSearch(state.candidateSearch ?? "");
-    setFilterEnte(state.filterEnte);
-    setFilterStatus(state.filterStatus);
-    setFilterLevel(state.filterLevel);
-    setFilterRole(state.filterRole);
+    setFilterEnte(state.filterEnte ?? []);
+    setFilterStatus(state.filterStatus ?? 'all');
+    setFilterLevel(state.filterLevel ?? []);
+    setFilterRole(state.filterRole ?? []);
   }, []);
 
   const navigate = useCallback((view: AppView, overrides: Partial<NavigationState> = {}, replace = false) => {
@@ -5751,14 +5753,6 @@ const RecruitmentApp = () => {
     navigationRef.current = state;
     window.history.replaceState(state, '', window.location.href);
   }, [getNavigationState]);
-
-  useEffect(() => {
-    const onPopState = (event: PopStateEvent) => {
-      if (event.state?.view) restoreNavigation(event.state as NavigationState);
-    };
-    window.addEventListener('popstate', onPopState);
-    return () => window.removeEventListener('popstate', onPopState);
-  }, [restoreNavigation]);
 
   // Keep every browser tab aligned with edits made in the others.
   useEffect(() => {
@@ -6490,11 +6484,31 @@ const RecruitmentApp = () => {
     setIsNewCycleModalOpen(true);
   };
 
-  const openResearch = (researchId: string) => {
-    if (!researchStore.researches.some(research => research.cycle.id === researchId)) return;
-    setResearchStore(store => ({ ...store, activeResearchId: researchId }));
-    resetResearchNavigation();
-    navigate('dashboard', {
+  const openResearch = useCallback((
+    researchId: string,
+    requestedState?: NavigationState,
+    historyAction: 'push' | 'replace' | 'none' = 'push'
+  ) => {
+    const research = researchStore.researches.find(item => item.cycle.id === researchId);
+    if (!research) {
+      const fallback = getNavigationState('researches', {
+        researchId: researchStore.activeResearchId,
+        selectedPositionId: null,
+        selectedCandidateId: null,
+        searchTerm: '',
+        candidateSearch: '',
+        filterEnte: [],
+        filterStatus: 'all',
+        filterLevel: [],
+        filterRole: []
+      });
+      setOverlapPositionIds([]);
+      restoreNavigation(fallback);
+      return false;
+    }
+
+    const baseState = requestedState ?? getNavigationState('dashboard', {
+      researchId,
       selectedPositionId: null,
       selectedCandidateId: null,
       positionsReturnView: 'dashboard',
@@ -6505,7 +6519,57 @@ const RecruitmentApp = () => {
       filterLevel: [],
       filterRole: []
     });
-  };
+    const positionExists = baseState.selectedPositionId
+      ? research.positions.some(position => position.code === baseState.selectedPositionId)
+      : false;
+    const candidateExists = baseState.selectedCandidateId
+      ? research.candidates.some(candidate => candidate.id === baseState.selectedCandidateId)
+      : false;
+    const invalidDetail =
+      (baseState.view === 'position_detail' && !positionExists) ||
+      (baseState.view === 'candidate_detail' && !candidateExists);
+    const keepsPositionSelection = baseState.view === 'position_detail' && positionExists;
+    const keepsCandidateSelection = baseState.view === 'candidate_detail' && candidateExists;
+    const usesPositionFilters = baseState.view === 'dashboard' || baseState.view === 'favorites';
+    const validEntities = new Set(research.positions.map(position => position.entity));
+    const validLevels = new Set(getDistinctPositionLevels(research.positions).map(level => level.code));
+    const validRoles = (baseState.filterRole ?? []).filter(role =>
+      research.positions.some(position => matchesPositionRoleFilter(position, role))
+    );
+    const next: NavigationState = {
+      ...baseState,
+      researchId,
+      view: invalidDetail ? 'dashboard' : baseState.view,
+      selectedPositionId: keepsPositionSelection ? baseState.selectedPositionId : null,
+      selectedCandidateId: keepsCandidateSelection ? baseState.selectedCandidateId : null,
+      searchTerm: !invalidDetail && usesPositionFilters ? (baseState.searchTerm ?? '') : '',
+      candidateSearch: !invalidDetail && baseState.view === 'candidates_list' ? (baseState.candidateSearch ?? '') : '',
+      filterEnte: !invalidDetail && usesPositionFilters ? (baseState.filterEnte ?? []).filter(entity => validEntities.has(entity)) : [],
+      filterStatus: !invalidDetail && usesPositionFilters ? (baseState.filterStatus ?? 'all') : 'all',
+      filterLevel: !invalidDetail && usesPositionFilters ? (baseState.filterLevel ?? []).filter(level => validLevels.has(level)) : [],
+      filterRole: !invalidDetail && usesPositionFilters ? validRoles : []
+    };
+
+    // Activate the research before restoring entity-dependent navigation state.
+    setResearchStore(store => ({ ...store, activeResearchId: researchId }));
+    setOverlapPositionIds([]);
+    restoreNavigation(next);
+    if (historyAction !== 'none') {
+      window.history[historyAction === 'replace' ? 'replaceState' : 'pushState'](next, '', window.location.href);
+    }
+    return true;
+  }, [getNavigationState, researchStore.activeResearchId, researchStore.researches, restoreNavigation]);
+
+  useEffect(() => {
+    const onPopState = (event: PopStateEvent) => {
+      const state = event.state as Partial<NavigationState> | null;
+      if (!state?.view) return;
+      const researchId = state.researchId ?? researchStore.activeResearchId;
+      openResearch(researchId, { ...getNavigationState(state.view), ...state, researchId }, 'none');
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [getNavigationState, openResearch, researchStore.activeResearchId]);
 
   const beginRenameResearch = (research: AppData) => {
     setResearchMenuId(null);
@@ -6671,12 +6735,22 @@ const RecruitmentApp = () => {
     return <FileUploadView onDataLoaded={handleDataLoaded} />;
   }
 
-  if (currentView === 'position_detail' && selectedPositionId) {
-    const position = appData.positions.find(p => p.code === selectedPositionId)!;
-    
+  const selectedPosition = selectedPositionId
+    ? appData.positions.find(position => position.code === selectedPositionId)
+    : undefined;
+  const selectedCandidate = selectedCandidateId
+    ? appData.candidates.find(candidate => candidate.id === selectedCandidateId)
+    : undefined;
+  const renderedView: AppView =
+    (currentView === 'position_detail' && !selectedPosition) ||
+    (currentView === 'candidate_detail' && !selectedCandidate)
+      ? 'dashboard'
+      : currentView;
+
+  if (renderedView === 'position_detail' && selectedPosition) {
     return (
        <PositionDetailView 
-          position={position}
+          position={selectedPosition}
           allCandidates={appData.candidates}
           evaluations={appData.evaluations}
           allPositions={appData.positions}
@@ -6689,17 +6763,16 @@ const RecruitmentApp = () => {
           onToggleReqVisibility={toggleRequirementVisibility}
           onUpdatePosition={updatePositionData}
           onExport={exportToExcel}
-          isFavorite={appData.favoritePositionIds.includes(position.code)}
+          isFavorite={appData.favoritePositionIds.includes(selectedPosition.code)}
           onToggleFavorite={toggleFavoritePosition}
        />
     );
   }
 
-  if (currentView === 'candidate_detail' && selectedCandidateId) {
-    const candidate = appData.candidates.find(c => c.id === selectedCandidateId)!;
+  if (renderedView === 'candidate_detail' && selectedCandidate) {
     return (
       <CandidateDetailView 
-         candidate={candidate}
+         candidate={selectedCandidate}
          allPositions={appData.positions}
          evaluations={appData.evaluations}
          onUpdate={updateEvaluation}
@@ -6726,7 +6799,7 @@ const RecruitmentApp = () => {
         <nav className="flex-1 p-4 space-y-2">
           <button
             onClick={() => navigate('researches')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400 ${currentView === 'researches' ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 text-slate-300'}`}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400 ${renderedView === 'researches' ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 text-slate-300'}`}
           >
             <FolderSearch className="w-5 h-5" />
             Ricerche
@@ -6734,14 +6807,14 @@ const RecruitmentApp = () => {
           </button>
           <button 
              onClick={() => navigate('dashboard')}
-             className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${currentView === 'dashboard' ? 'bg-slate-800 text-white' : 'hover:bg-slate-800 text-slate-400'}`}
+             className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${renderedView === 'dashboard' ? 'bg-slate-800 text-white' : 'hover:bg-slate-800 text-slate-400'}`}
           >
             <Briefcase className="w-5 h-5" />
             Positions
           </button>
           <button
             onClick={() => navigate('favorites')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${currentView === 'favorites' ? 'bg-slate-800 text-white' : 'hover:bg-slate-800 text-slate-400'}`}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${renderedView === 'favorites' ? 'bg-slate-800 text-white' : 'hover:bg-slate-800 text-slate-400'}`}
           >
             <Star className="w-5 h-5" />
             Posizioni salvate
@@ -6751,21 +6824,21 @@ const RecruitmentApp = () => {
           </button>
           <button 
              onClick={() => navigate('candidates_list')}
-             className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${currentView === 'candidates_list' || currentView === 'candidate_detail' ? 'bg-slate-800 text-white' : 'hover:bg-slate-800 text-slate-400'}`}
+             className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${renderedView === 'candidates_list' || renderedView === 'candidate_detail' ? 'bg-slate-800 text-white' : 'hover:bg-slate-800 text-slate-400'}`}
           >
             <Users className="w-5 h-5" />
             Candidates <span className="text-xs ml-auto bg-slate-700 px-2 py-0.5 rounded">{appData.candidates.length}</span>
           </button>
           <button 
              onClick={() => navigate('overlap_kanban')}
-             className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${currentView === 'overlap_kanban' ? 'bg-slate-800 text-white' : 'hover:bg-slate-800 text-slate-400'}`}
+             className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${renderedView === 'overlap_kanban' ? 'bg-slate-800 text-white' : 'hover:bg-slate-800 text-slate-400'}`}
           >
             <TableIcon className="w-5 h-5" />
             Overlap Kanban
           </button>
           <button
             onClick={() => navigate('reiteration_analysis')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${currentView === 'reiteration_analysis' ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 text-slate-400'}`}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${renderedView === 'reiteration_analysis' ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 text-slate-400'}`}
           >
             <RefreshCw className="w-5 h-5" />
             Reiterazioni
@@ -6791,7 +6864,7 @@ const RecruitmentApp = () => {
 
       {/* Main Content Area */}
       <main className="flex-1 overflow-hidden flex flex-col">
-        {currentView === 'researches' && (
+        {renderedView === 'researches' && (
           <>
             <header className="bg-white border-b border-slate-200 px-5 sm:px-8 py-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
@@ -6841,15 +6914,15 @@ const RecruitmentApp = () => {
             </div>
           </>
         )}
-        {(currentView === 'dashboard' || currentView === 'favorites') && (
+        {(renderedView === 'dashboard' || renderedView === 'favorites') && (
           <>
             <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between">
               <div>
                 <h1 className="text-2xl font-bold text-slate-800">
-                  {currentView === 'favorites' ? "Posizioni salvate" : "Dashboard Ricerca di personale"}
+                  {renderedView === 'favorites' ? "Posizioni salvate" : "Dashboard Ricerca di personale"}
                 </h1>
                 <p className="text-sm text-slate-500">
-                  {currentView === 'favorites'
+                  {renderedView === 'favorites'
                     ? "Le posizioni in shortlist del ciclo corrente."
                     : `Ciclo di disamina: ${appData.cycle.name}`}
                 </p>
@@ -6928,7 +7001,7 @@ const RecruitmentApp = () => {
 
               {/* Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                {(currentView === 'favorites' ? filteredFavoritePositions : filteredPositions).map(pos => {
+                {(renderedView === 'favorites' ? filteredFavoritePositions : filteredPositions).map(pos => {
                   // Count candidates for this pos
                   const relevantCands = appData.candidates.filter(c => 
                      !!appData.evaluations[`${pos.code}_${c.id}`]
@@ -6957,14 +7030,14 @@ const RecruitmentApp = () => {
                       onClick={() => {
                         navigate('position_detail', {
                           selectedPositionId: pos.code,
-                          positionsReturnView: currentView === 'favorites' ? 'favorites' : 'dashboard'
+                          positionsReturnView: renderedView === 'favorites' ? 'favorites' : 'dashboard'
                         });
                       }} 
                     />
                   );
                 })}
               </div>
-              {currentView === 'favorites' && filteredFavoritePositions.length === 0 && (
+              {renderedView === 'favorites' && filteredFavoritePositions.length === 0 && (
                 <div className="mt-8 text-center text-sm text-slate-500">
                   Nessuna posizione in shortlist. Aggiungile dalla dashboard per ritrovarle qui.
                 </div>
@@ -6973,7 +7046,7 @@ const RecruitmentApp = () => {
           </>
         )}
 
-        {currentView === 'candidates_list' && (
+        {renderedView === 'candidates_list' && (
            <CandidatesListView 
               candidates={appData.candidates} 
               positions={appData.positions}
@@ -6989,7 +7062,7 @@ const RecruitmentApp = () => {
            />
         )}
 
-        {currentView === 'overlap_kanban' && (
+        {renderedView === 'overlap_kanban' && (
           <OverlapKanbanView
             candidates={appData.candidates}
             positions={appData.positions}
@@ -7000,7 +7073,7 @@ const RecruitmentApp = () => {
           />
         )}
 
-        {currentView === 'reiteration_analysis' && (
+        {renderedView === 'reiteration_analysis' && (
           <ReiterationAnalysisView
             candidates={appData.candidates}
             positions={appData.positions}
