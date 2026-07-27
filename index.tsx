@@ -3024,6 +3024,32 @@ const getPositionRoleFilters = (position: Position) => {
   return roles;
 };
 
+// In the reiteration report the role identifies the organisation responsible
+// for the position, rather than every profile that the individual position can
+// accept. Keeping the entity as the only source prevents mixed requirements
+// (for example "G.A./CCrs/ARMI") from placing the same row in several roles.
+const getReiterationEntityRoleFilters = (position: Position) => {
+  const roles = new Set<RoleFilterValue>();
+
+  splitRoleOptions(position.entity || "")
+    .map(option => {
+      const normalized = normalizeProfileCode(option);
+      if (normalized.includes("GENIO")) return "GENIO";
+      if (normalized.includes("COMMISSAR")) return "COMMISSARI";
+      if (normalized.includes("SANITAR")) return "SANITARI";
+      if (normalized.includes("NAVIGANT")) return "NAVIGANTI";
+      if (normalized === "ARMI" || normalized.includes("RUOLOARMI")) return "ARMI";
+      return getRoleFilterValueFromCode(option);
+    })
+    .filter((role): role is RoleFilterValue => role !== null)
+    .forEach(role => roles.add(role));
+
+  return roles;
+};
+
+const matchesReiterationEntityRoleFilter = (position: Position, filter: RoleFilterValue) =>
+  filter === "ALL" || getReiterationEntityRoleFilters(position).has(filter);
+
 const matchesPositionRoleFilter = (position: Position, filter: RoleFilterValue) => {
   if (filter === "ALL") return true;
   const roles = getPositionRoleFilters(position);
@@ -4982,7 +5008,7 @@ const PoolSearchDrawer = ({
                     <div className="flex-1 min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-semibold text-sm text-slate-800">{candidate.nominativo}</span>
-                        {row.origins.map(origin => <Badge key={origin} color={origin === "pool" ? "purple" : "blue"}>{origin === "pool" ? "Da bacino" : "Nativo"}</Badge>)}
+                        {row.origins.includes("pool") && <Badge color="purple">Da bacino</Badge>}
                         {row.selectedElsewhere && <Badge color="green">Selezionato su {row.selectedElsewhere.positionId}</Badge>}
                       </div>
                       <div className="text-xs text-slate-500">{candidate.id} • {candidate.rank} {candidate.role}</div>
@@ -5006,7 +5032,7 @@ const PoolSearchDrawer = ({
                       const evaluation = row.candidateEvaluations.find(item => item.positionId === position.code);
                       return <div key={position.code} className="flex items-start justify-between gap-3 text-xs">
                         <div><span className="font-mono text-blue-700">{position.code}</span> <span className="font-medium text-slate-700">{position.title}</span><div className="text-slate-500">{position.entity} • {position.location}</div></div>
-                        <span className="shrink-0 font-medium text-slate-600">{evaluation ? statusLabel(evaluation.status) : "Candidatura"} · {(evaluation?.source ?? "native") === "pool" ? "Da bacino" : "Nativa"}</span>
+                        <span className="shrink-0 font-medium text-slate-600">{evaluation ? statusLabel(evaluation.status) : "Candidatura"}{evaluation?.source === "pool" ? " · Da bacino" : ""}</span>
                       </div>;
                     })}
                   </div>}
@@ -5600,7 +5626,7 @@ const getReiterationReportRows = (suggestions: ReiterationSuggestion[]) =>
       posizione: suggestion.position.title || 'Posizione senza titolo',
       sede: suggestion.position.location || '-',
       livello: getPositionLevel(suggestion.position).code,
-      ruolo: Array.from(getPositionRoleFilters(suggestion.position)).map(role => ROLE_FILTER_OPTIONS.find(option => option.value === role)?.label.split(' (')[0] ?? role).join(', ') || 'N.D.',
+      ruolo: Array.from(getReiterationEntityRoleFilters(suggestion.position)).map(role => ROLE_FILTER_OPTIONS.find(option => option.value === role)?.label.split(' (')[0] ?? role).join(', ') || 'N.D.',
       priorita: suggestion.priority,
       punteggio: suggestion.score,
       segnalati: suggestion.nativeCandidates,
@@ -5669,7 +5695,6 @@ const ReiterationAnalysisView = ({
   const [expandedCode, setExpandedCode] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [priorityFilter, setPriorityFilter] = useState<ReiterationPriority | 'tutte'>('tutte');
-  const [occupancyFilter, setOccupancyFilter] = useState<'tutte' | 'vacanti' | 'con-titolare'>('tutte');
   const [entityFilter, setEntityFilter] = useState<string[]>([]);
   const [levelFilter, setLevelFilter] = useState<string[]>([]);
   const [roleFilter, setRoleFilter] = useState<string[]>([]);
@@ -5688,12 +5713,10 @@ const ReiterationAnalysisView = ({
       .filter(Boolean).join(' ').toLocaleLowerCase('it');
     const matchesSearch = !normalizedSearch || searchable.includes(normalizedSearch);
     const matchesPriority = priorityFilter === 'tutte' || suggestion.priority === priorityFilter;
-    const matchesOccupancy = occupancyFilter === 'tutte'
-      || (occupancyFilter === 'vacanti' ? !suggestion.position.incumbent : Boolean(suggestion.position.incumbent));
     const matchesEntity = entityFilter.length === 0 || entityFilter.includes(suggestion.position.entity || 'Ente non indicato');
     const matchesLevel = levelFilter.length === 0 || levelFilter.includes(getPositionLevel(suggestion.position).code);
-    const matchesRole = roleFilter.length === 0 || roleFilter.some(role => matchesPositionRoleFilter(suggestion.position, role as RoleFilterValue));
-    return matchesSearch && matchesPriority && matchesOccupancy && matchesEntity && matchesLevel && matchesRole;
+    const matchesRole = roleFilter.length === 0 || roleFilter.some(role => matchesReiterationEntityRoleFilter(suggestion.position, role as RoleFilterValue));
+    return matchesSearch && matchesPriority && matchesEntity && matchesLevel && matchesRole;
   });
   const highPriority = recommended.filter(suggestion => suggestion.priority === 'alta').length;
 
@@ -5738,9 +5761,6 @@ const ReiterationAnalysisView = ({
           </label>
           <select value={priorityFilter} onChange={event => setPriorityFilter(event.target.value as ReiterationPriority | 'tutte')} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
             <option value="tutte">Tutte le priorità</option><option value="alta">Priorità alta</option><option value="media">Priorità media</option><option value="osservazione">Osservazione</option>
-          </select>
-          <select value={occupancyFilter} onChange={event => setOccupancyFilter(event.target.value as 'tutte' | 'vacanti' | 'con-titolare')} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
-            <option value="tutte">Tutte le posizioni</option><option value="vacanti">Solo vacanti</option><option value="con-titolare">Con titolare</option>
           </select>
           <MultiSelect label="Ente" options={entityOptions} selected={entityFilter} onChange={setEntityFilter} placeholder="Tutti gli enti" />
           <MultiSelect label="Livello" options={levelOptions} selected={levelFilter} onChange={setLevelFilter} placeholder="Tutti i livelli" />
