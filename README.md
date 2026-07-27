@@ -18,3 +18,18 @@ View your app in AI Studio: https://ai.studio/apps/drive/1Yj4LallIgYLB6jICIAf7sB
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+
+## Windows executable
+
+The GitHub Actions workflow `Build Windows executable` builds the Electron app on
+Windows and publishes the NSIS installer as a workflow artifact. Run it manually
+from the **Actions** tab, or push a tag whose name starts with `v`.
+
+To build the installer locally on Windows:
+
+```bash
+npm ci
+npm run build:win
+```
+
+The generated `.exe` is written to the `release` directory.
