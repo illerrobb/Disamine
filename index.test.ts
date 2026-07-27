@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getImportDiffs,
+  getPlannedProfile,
   integrateImportedEntity,
   matchesReiterationPositionRoleFilter,
   mergeCandidateForImport,
@@ -29,6 +30,11 @@ const state = (candidates: Candidate[], positions: Position[]): AppData => ({
 });
 
 describe("conservative import/update", () => {
+  it("builds the planned profile from the position rank and role", () => {
+    expect(getPlannedProfile(position({ rankReq: "Col.", role: "Armi", catSpecQualReq: "Pilota" }))).toBe("Col. • Armi");
+    expect(getPlannedProfile(position())).toBe("N.D.");
+  });
+
   it("filters reiteration rows using the position role rather than its entity", () => {
     const armiPosition = position({ entity: "Ente privo di ruolo", role: "Ruolo Armi" });
     expect(matchesReiterationPositionRoleFilter(armiPosition, "ARMI")).toBe(true);
