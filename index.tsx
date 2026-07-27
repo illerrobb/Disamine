@@ -33,7 +33,10 @@ import {
   User,
   Star,
   Pencil,
-  Link2
+  Link2,
+  RefreshCw,
+  BarChart3,
+  Target
 } from "lucide-react";
 
 // --- Types ---
@@ -124,6 +127,21 @@ interface AppData {
 }
 
 type PositionStatus = 'todo' | 'inprogress' | 'completed';
+
+type ReiterationPriority = 'alta' | 'media' | 'osservazione';
+
+interface ReiterationSuggestion {
+  position: Position;
+  score: number;
+  priority: ReiterationPriority;
+  nativeCandidates: number;
+  viableCandidates: number;
+  sharedCandidates: number;
+  poolCandidates: number;
+  selected: boolean;
+  reasons: string[];
+  metrics: { label: string; value: string; detail: string }[];
+}
 type ImportConflict =
   | { type: 'candidate'; existing: Candidate; incoming: Candidate }
   | { type: 'position'; existing: Position; incoming: Position };
@@ -689,6 +707,84 @@ const getPositionStatus = (position: Position, evaluations: Record<string, Evalu
   }
 
   return 'todo';
+};
+
+const buildReiterationSuggestions = (
+  positions: Position[],
+  candidates: Candidate[],
+  evaluations: Record<string, Evaluation>
+): ReiterationSuggestion[] => {
+  const candidateById = new Map(candidates.map(candidate => [candidate.id, candidate]));
+  const nativeCounts = positions.map(position => candidates.filter(candidate =>
+    candidate.appliedPositionCodes.includes(position.code)
+  ).length).sort((a, b) => a - b);
+  const medianNative = nativeCounts.length
+    ? nativeCounts[Math.floor(nativeCounts.length / 2)]
+    : 0;
+
+  return positions.map(position => {
+    const positionEvaluations = Object.values(evaluations)
+      .filter(evaluation => evaluation.positionId === position.code)
+      .map(normalizeEvaluation);
+    const nativeEvaluations = positionEvaluations.filter(evaluation => evaluation.source !== 'pool');
+    const poolEvaluations = positionEvaluations.filter(evaluation => evaluation.source === 'pool');
+    const viableStatuses = new Set<Evaluation['status']>(['pending', 'reserve', 'selected']);
+    const viable = positionEvaluations.filter(evaluation => viableStatuses.has(evaluation.status));
+    const viableNative = nativeEvaluations.filter(evaluation => viableStatuses.has(evaluation.status));
+    const selected = positionEvaluations.some(evaluation => evaluation.status === 'selected');
+    const nativeCandidates = nativeEvaluations.length;
+    const viableCandidates = viable.length;
+    const sharedCandidates = viableNative.filter(evaluation =>
+      (candidateById.get(evaluation.candidateId)?.appliedPositionCodes.length ?? 0) > 1
+    ).length;
+    const sharedRatio = viableNative.length ? sharedCandidates / viableNative.length : 0;
+    const rejectedCount = nativeEvaluations.filter(evaluation =>
+      ['rejected', 'non-compatible', 'excluded'].includes(evaluation.status)
+    ).length;
+    const rejectionRatio = nativeCandidates ? rejectedCount / nativeCandidates : 0;
+    const poolRatio = viableCandidates ? poolEvaluations.filter(evaluation => viableStatuses.has(evaluation.status)).length / viableCandidates : 0;
+    const incompleteRatio = viable.length ? viable.filter(evaluation => {
+      const visibleRequirements = position.requirements.filter(requirement => !requirement.hidden);
+      return visibleRequirements.length > 0 && visibleRequirements.some(requirement =>
+        !evaluation.reqEvaluations[requirement.id] || evaluation.reqEvaluations[requirement.id] === 'pending'
+      );
+    }).length / viable.length : 0;
+
+    const supplyRisk = viableCandidates === 0 ? 35 : viableCandidates === 1 ? 30 : viableCandidates === 2 ? 24 : viableCandidates === 3 ? 16 : viableCandidates === 4 ? 8 : 0;
+    const competitionRisk = Math.round(sharedRatio * 20);
+    const rejectionRisk = Math.round(rejectionRatio * 15);
+    const poolRisk = Math.round(poolRatio * 10);
+    const relativeRisk = medianNative > 0 && nativeCandidates < medianNative
+      ? Math.round((1 - nativeCandidates / medianNative) * 10)
+      : 0;
+    const uncertaintyRisk = Math.round(incompleteRatio * 10);
+    const score = Math.max(0, Math.min(100,
+      supplyRisk + competitionRisk + rejectionRisk + poolRisk + relativeRisk + uncertaintyRisk - (selected ? 45 : 0)
+    ));
+    const priority: ReiterationPriority = score >= 60 ? 'alta' : score >= 40 ? 'media' : 'osservazione';
+    const reasons: string[] = [];
+    if (viableCandidates === 0) reasons.push('Nessun candidato attualmente utilizzabile.');
+    else if (viableCandidates <= 2) reasons.push(`Bacino utilizzabile insufficiente: ${viableCandidates} candidat${viableCandidates === 1 ? 'o' : 'i'}.`);
+    if (sharedRatio >= .5) reasons.push(`${Math.round(sharedRatio * 100)}% dei candidati utili concorre anche per altre posizioni.`);
+    if (rejectionRatio >= .34) reasons.push(`${rejectedCount} candidature su ${nativeCandidates} risultano escluse o non idonee.`);
+    if (poolRatio >= .34) reasons.push(`La copertura dipende per il ${Math.round(poolRatio * 100)}% dal bacino di altre posizioni.`);
+    if (relativeRisk >= 5) reasons.push(`Domanda inferiore alla mediana del ciclo (${medianNative} candidature).`);
+    if (selected) reasons.push('È già presente un candidato selezionato: reiterazione normalmente non necessaria.');
+    if (!reasons.length) reasons.push('Il bacino presenta una copertura adeguata e diversificata.');
+
+    return {
+      position, score, priority, nativeCandidates, viableCandidates, sharedCandidates,
+      poolCandidates: poolEvaluations.length, selected, reasons,
+      metrics: [
+        { label: 'Candidature', value: String(nativeCandidates), detail: `mediana ciclo ${medianNative}` },
+        { label: 'Utilizzabili', value: String(viableCandidates), detail: 'pending, riserva o selezionati' },
+        { label: 'Multi-posizione', value: `${Math.round(sharedRatio * 100)}%`, detail: `${sharedCandidates} candidati contendibili` },
+        { label: 'Non idonei', value: `${Math.round(rejectionRatio * 100)}%`, detail: `${rejectedCount} candidature` },
+        { label: 'Dal bacino', value: String(poolEvaluations.length), detail: `${Math.round(poolRatio * 100)}% degli utilizzabili` },
+        { label: 'Da verificare', value: `${Math.round(incompleteRatio * 100)}%`, detail: 'requisiti ancora incompleti' }
+      ]
+    };
+  }).sort((a, b) => b.score - a.score || a.position.code.localeCompare(b.position.code));
 };
 
 interface OverlapResult {
@@ -5402,6 +5498,81 @@ const MultiSelect = ({
   );
 };
 
+const ReiterationAnalysisView = ({
+  positions,
+  candidates,
+  evaluations,
+  onOpenPosition
+}: {
+  positions: Position[];
+  candidates: Candidate[];
+  evaluations: Record<string, Evaluation>;
+  onOpenPosition: (positionCode: string) => void;
+}) => {
+  const [showAll, setShowAll] = useState(false);
+  const [expandedCode, setExpandedCode] = useState<string | null>(null);
+  const suggestions = useMemo(
+    () => buildReiterationSuggestions(positions, candidates, evaluations),
+    [positions, candidates, evaluations]
+  );
+  const recommended = suggestions.filter(suggestion => suggestion.score >= 40 && !suggestion.selected);
+  const visible = showAll ? suggestions : recommended;
+  const highPriority = recommended.filter(suggestion => suggestion.priority === 'alta').length;
+
+  return (
+    <div className="flex-1 overflow-y-auto">
+      <header className="bg-white border-b border-slate-200 px-8 py-5">
+        <div className="flex items-start justify-between gap-6">
+          <div>
+            <div className="flex items-center gap-2 text-blue-600 text-sm font-semibold"><Target className="w-4 h-4" /> Analisi decisionale</div>
+            <h1 className="text-2xl font-bold text-slate-900 mt-1">Posizioni da reiterare</h1>
+            <p className="text-sm text-slate-500 mt-1 max-w-2xl">Priorità calcolata sull'intero ciclo considerando disponibilità reale, candidature multiple, esiti, dipendenza dal bacino e completezza della valutazione.</p>
+          </div>
+          <button onClick={() => setShowAll(value => !value)} className="px-4 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-700 hover:bg-slate-50">
+            {showAll ? 'Solo suggerite' : 'Mostra tutte le posizioni'}
+          </button>
+        </div>
+      </header>
+
+      <div className="p-8">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-7">
+          <div className="rounded-xl bg-slate-900 text-white p-5"><div className="text-sm text-slate-300">Reiterazioni suggerite</div><div className="text-3xl font-bold mt-1">{recommended.length}</div><div className="text-xs text-slate-400 mt-2">su {positions.length} posizioni analizzate</div></div>
+          <div className="rounded-xl border border-red-200 bg-red-50 p-5"><div className="text-sm text-red-700">Priorità alta</div><div className="text-3xl font-bold text-red-800 mt-1">{highPriority}</div><div className="text-xs text-red-600 mt-2">punteggio di rischio ≥ 60</div></div>
+          <div className="rounded-xl border border-slate-200 bg-white p-5"><div className="text-sm text-slate-500">Candidati analizzati</div><div className="text-3xl font-bold text-slate-800 mt-1">{candidates.length}</div><div className="text-xs text-slate-400 mt-2">incluse tutte le candidature collegate</div></div>
+        </div>
+
+        <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 mb-5 flex items-start gap-3 text-sm text-blue-900">
+          <BarChart3 className="w-5 h-5 shrink-0 mt-0.5" />
+          <p><strong>Come leggere il risultato:</strong> il punteggio 0–100 è un indicatore di necessità, non una decisione automatica. Da 60 la priorità è alta, da 40 è media. Apri “Dettaglio analisi” per verificare dati e motivazioni prima di reiterare.</p>
+        </div>
+
+        <div className="space-y-4">
+          {visible.map(suggestion => {
+            const expanded = expandedCode === suggestion.position.code;
+            const priorityStyle = suggestion.priority === 'alta' ? 'bg-red-100 text-red-700 border-red-200' : suggestion.priority === 'media' ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-slate-100 text-slate-600 border-slate-200';
+            return (
+              <article key={suggestion.position.code} className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                <div className="p-5 flex items-start gap-5">
+                  <div className={`w-16 h-16 shrink-0 rounded-xl border flex flex-col items-center justify-center ${priorityStyle}`}><span className="text-2xl font-bold leading-none">{suggestion.score}</span><span className="text-[10px] uppercase mt-1">rischio</span></div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2"><span className={`px-2 py-0.5 rounded-full border text-[11px] uppercase font-bold ${priorityStyle}`}>Priorità {suggestion.priority}</span><span className="text-xs text-slate-400">{suggestion.position.code}</span></div>
+                    <h2 className="font-bold text-slate-900 mt-2">{suggestion.position.title || 'Posizione senza titolo'}</h2>
+                    <p className="text-sm text-slate-500">{suggestion.position.entity}{suggestion.position.location ? ` · ${suggestion.position.location}` : ''}</p>
+                    <ul className="mt-3 space-y-1">{suggestion.reasons.slice(0, expanded ? undefined : 2).map(reason => <li key={reason} className="text-sm text-slate-700 flex gap-2"><AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />{reason}</li>)}</ul>
+                  </div>
+                  <div className="flex flex-col gap-2 shrink-0"><button onClick={() => onOpenPosition(suggestion.position.code)} className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700">Apri posizione</button><button onClick={() => setExpandedCode(expanded ? null : suggestion.position.code)} className="px-3 py-2 rounded-lg border border-slate-200 text-slate-600 text-sm hover:bg-slate-50">{expanded ? 'Chiudi dettaglio' : 'Dettaglio analisi'}</button></div>
+                </div>
+                {expanded && <div className="border-t border-slate-100 bg-slate-50 p-5 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">{suggestion.metrics.map(metric => <div key={metric.label} className="rounded-lg bg-white border border-slate-200 p-3"><div className="text-[11px] uppercase text-slate-400 font-semibold">{metric.label}</div><div className="text-xl font-bold text-slate-800 mt-1">{metric.value}</div><div className="text-[11px] text-slate-500 mt-1">{metric.detail}</div></div>)}</div>}
+              </article>
+            );
+          })}
+          {!visible.length && <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-10 text-center"><Check className="w-10 h-10 text-emerald-600 mx-auto" /><h2 className="font-bold text-emerald-900 mt-3">Nessuna reiterazione suggerita</h2><p className="text-sm text-emerald-700 mt-1">Le posizioni dispongono al momento di una copertura sufficiente secondo i parametri analizzati.</p></div>}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // --- Main App ---
 
 const RecruitmentApp = () => {
@@ -5421,7 +5592,7 @@ const RecruitmentApp = () => {
     cycle: createDefaultCycle()
   }));
 
-  const [currentView, setCurrentView] = useState<'upload' | 'dashboard' | 'favorites' | 'position_detail' | 'candidates_list' | 'candidate_detail' | 'overlap_kanban'>('upload');
+  const [currentView, setCurrentView] = useState<'upload' | 'dashboard' | 'favorites' | 'position_detail' | 'candidates_list' | 'candidate_detail' | 'overlap_kanban' | 'reiteration_analysis'>('upload');
   const [selectedPositionId, setSelectedPositionId] = useState<string | null>(null);
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
   const [overlapPositionIds, setOverlapPositionIds] = useState<string[]>([]);
@@ -6375,6 +6546,13 @@ const RecruitmentApp = () => {
             <TableIcon className="w-5 h-5" />
             Overlap Kanban
           </button>
+          <button
+            onClick={() => setCurrentView('reiteration_analysis')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${currentView === 'reiteration_analysis' ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 text-slate-400'}`}
+          >
+            <RefreshCw className="w-5 h-5" />
+            Reiterazioni
+          </button>
         </nav>
         <div className="p-4 border-t border-slate-800">
           <button onClick={startNewSearch} className="flex items-center gap-2 text-slate-200 hover:text-white text-sm mb-3">
@@ -6546,6 +6724,19 @@ const RecruitmentApp = () => {
             selectedPositionIds={overlapPositionIds}
             onSelectedPositionsChange={setOverlapPositionIds}
             onUpdate={updateEvaluation}
+          />
+        )}
+
+        {currentView === 'reiteration_analysis' && (
+          <ReiterationAnalysisView
+            candidates={appData.candidates}
+            positions={appData.positions}
+            evaluations={appData.evaluations}
+            onOpenPosition={(positionCode) => {
+              setSelectedPositionId(positionCode);
+              setPositionsReturnView('dashboard');
+              setCurrentView('position_detail');
+            }}
           />
         )}
       </main>
