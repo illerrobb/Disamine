@@ -108,7 +108,7 @@ interface Evaluation {
   positionId: string;
   reqEvaluations: Record<string, 'yes' | 'no' | 'partial' | 'pending'>; // Key is requirement text/id
   notes: string;
-  status: 'pending' | 'selected' | 'rejected' | 'reserve' | 'non-compatible' | 'excluded';
+  status: 'pending' | 'selected' | 'rejected' | 'reserve' | 'non-compatible' | 'excluded' | 'withdrawn';
   source?: 'native' | 'pool';
   sourcePosition?: string;
   manualOrder?: number;
@@ -771,7 +771,7 @@ const buildReiterationSuggestions = (
     ).length;
     const sharedRatio = viableNative.length ? sharedCandidates / viableNative.length : 0;
     const rejectedCount = nativeEvaluations.filter(evaluation =>
-      ['rejected', 'non-compatible', 'excluded'].includes(evaluation.status)
+      ['rejected', 'non-compatible', 'excluded', 'withdrawn'].includes(evaluation.status)
     ).length;
     const rejectionRatio = nativeCandidates ? rejectedCount / nativeCandidates : 0;
     const poolRatio = viableCandidates ? poolEvaluations.filter(evaluation => viableStatuses.has(evaluation.status)).length / viableCandidates : 0;
@@ -840,7 +840,7 @@ const computeOverlaps = (positions: Position[], evaluations: Record<string, Eval
   });
 
   Object.values(evaluations).forEach(ev => {
-    if (ev.status === "excluded") return;
+    if (ev.status === "excluded" || ev.status === "withdrawn") return;
     const candidateSet = candidateIdsByPosition.get(ev.positionId);
     if (!candidateSet) return;
     candidateSet.add(ev.candidateId);
@@ -1349,7 +1349,7 @@ const CandidateMatchDrawer = ({
 
   const renderRequirementRow = (req: Requirement) => {
     const status = evaluation.reqEvaluations[req.id] || "pending";
-    const isDisabled = evaluation.status === "non-compatible" || evaluation.status === "excluded";
+    const isDisabled = evaluation.status === "non-compatible" || evaluation.status === "excluded" || evaluation.status === "withdrawn";
     return (
       <button
         key={req.id}
@@ -1621,6 +1621,8 @@ const StatusPicker = ({
         return "bg-gray-200 text-gray-800 border-gray-300";
       case "excluded":
         return "bg-red-200 text-red-900 border-red-300";
+      case "withdrawn":
+        return "bg-violet-100 text-violet-800 border-violet-200";
       default:
         return "bg-white text-slate-600 border-slate-200";
     }
@@ -1661,6 +1663,8 @@ const StatusPicker = ({
           ? "REJECTED"
           : status === "excluded"
           ? "ESCLUSO"
+          : status === "withdrawn"
+          ? "RINUNCIATO"
           : "NON COMPATIBILE"}
       </button>
       {isOpen && (
@@ -1707,6 +1711,13 @@ const StatusPicker = ({
           >
             ESCLUSO
           </button>
+          <button
+            type="button"
+            onClick={() => handleSelect("withdrawn")}
+            className="w-full text-left text-xs px-2 py-1 rounded hover:bg-violet-50 text-violet-700"
+          >
+            RINUNCIATO
+          </button>
         </div>
       )}
     </div>
@@ -1739,7 +1750,7 @@ const CandidateDetailView = ({
   }, [allPositions, evaluations, candidate.id]);
 
   const handleReqToggle = (ev: Evaluation, reqId: string) => {
-    if (ev.status === "non-compatible" || ev.status === "excluded") return;
+    if (ev.status === "non-compatible" || ev.status === "excluded" || ev.status === "withdrawn") return;
     const current = ev.reqEvaluations[reqId] || 'pending';
     const next = current === 'pending' ? 'yes' : current === 'yes' ? 'no' : current === 'no' ? 'partial' : 'pending';
     
@@ -1862,7 +1873,8 @@ const CandidateDetailView = ({
                const ev = evaluations[`${pos.code}_${candidate.id}`];
                const isNonCompatible = ev.status === "non-compatible";
                const isExcluded = ev.status === "excluded";
-               const isLocked = isNonCompatible || isExcluded;
+               const isWithdrawn = ev.status === "withdrawn";
+               const isLocked = isNonCompatible || isExcluded || isWithdrawn;
                const activeReqs = pos.requirements.filter(r => !r.hidden);
                const otherSelection = getOtherSelectionInfo(candidate.id, pos.code, evaluations, allPositions);
                const profileSummary = formatPositionProfile(pos);
@@ -1893,6 +1905,11 @@ const CandidateDetailView = ({
                            {otherSelection && (
                               <div className="mt-2 text-xs bg-amber-50 text-amber-700 px-2 py-1 rounded border border-amber-200 inline-flex items-center gap-1">
                                  <AlertTriangle className="w-3 h-3" /> Warning: Selected for {otherSelection.code}
+                              </div>
+                           )}
+                           {isWithdrawn && (
+                              <div className="mt-2 text-xs bg-violet-100 text-violet-800 px-2 py-1 rounded border border-violet-200 inline-flex items-center gap-1 font-semibold">
+                                 <Ban className="w-3 h-3" /> RINUNCIATO ALLA CANDIDATURA ALL’ESTERO
                               </div>
                            )}
                            {isExcluded && (
@@ -2012,12 +2029,13 @@ const CandidatesMatrixView = ({
       case 'reserve': return 'bg-amber-100 text-amber-800 border-amber-200';
       case 'non-compatible': return 'bg-gray-200 text-gray-800 border-gray-300';
       case 'excluded': return 'bg-red-200 text-red-900 border-red-300';
+      case 'withdrawn': return 'bg-violet-100 text-violet-800 border-violet-200';
       default: return 'bg-white text-slate-600 border-slate-200';
     }
   };
 
   const handleReqToggle = (evaluation: Evaluation, reqId: string) => {
-    if (evaluation.status === "non-compatible" || evaluation.status === "excluded") return; // Read-only if blocked
+    if (evaluation.status === "non-compatible" || evaluation.status === "excluded" || evaluation.status === "withdrawn") return; // Read-only if blocked
     const current = evaluation.reqEvaluations[reqId] || 'pending';
     const next = current === 'pending' ? 'yes' : current === 'yes' ? 'no' : current === 'no' ? 'partial' : 'pending';
     
@@ -2057,7 +2075,8 @@ const CandidatesMatrixView = ({
             if (!ev) return null;
             const isNonCompatible = ev.status === "non-compatible";
             const isExcluded = ev.status === "excluded";
-            const isLocked = isNonCompatible || isExcluded;
+            const isWithdrawn = ev.status === "withdrawn";
+            const isLocked = isNonCompatible || isExcluded || isWithdrawn;
             const otherSelection = getOtherSelectionInfo(c.id, position.code, evaluations, positions);
 
             return (
@@ -2076,6 +2095,7 @@ const CandidatesMatrixView = ({
                   </div>
                   {isNonCompatible && <div className="text-[10px] text-red-600 font-bold mt-1">PROFILO NON COMPATIBILE</div>}
                   {isExcluded && <div className="text-[10px] text-red-700 font-bold mt-1">CANDIDATO ESCLUSO</div>}
+                  {isWithdrawn && <div className="text-[10px] text-violet-700 font-bold mt-1">RINUNCIATO ALLA CANDIDATURA ALL’ESTERO</div>}
                 </td>
                 <td className={`border border-slate-200 p-2 w-[140px] sticky left-80 shadow-md ${isNonCompatible ? 'bg-gray-100' : isExcluded ? 'bg-red-50' : 'bg-white'}`}>
                    <select 
@@ -2089,6 +2109,7 @@ const CandidatesMatrixView = ({
                        <option value="rejected">REJECTED</option>
                        <option value="non-compatible">NON COMPATIBILE</option>
                        <option value="excluded">ESCLUSO</option>
+                       <option value="withdrawn">RINUNCIATO</option>
                      </select>
                 </td>
                 {activeReqs.map(req => {
@@ -2161,7 +2182,8 @@ const WorksheetRow: React.FC<{
   const [expanded, setExpanded] = useState(false);
   const isNonCompatible = evaluation.status === "non-compatible";
   const isExcluded = evaluation.status === "excluded";
-  const isLocked = isNonCompatible || isExcluded;
+  const isWithdrawn = evaluation.status === "withdrawn";
+  const isLocked = isNonCompatible || isExcluded || isWithdrawn;
   const isPool = (evaluation.source ?? "native") === "pool";
   const isRemovalPending = poolRemovalCandidateId === candidate.id;
 
@@ -2197,6 +2219,7 @@ const WorksheetRow: React.FC<{
       case 'reserve': return 'bg-amber-100 text-amber-800 border-amber-200';
       case 'non-compatible': return 'bg-gray-200 text-gray-800 border-gray-300';
       case 'excluded': return 'bg-red-200 text-red-900 border-red-300';
+      case 'withdrawn': return 'bg-violet-100 text-violet-800 border-violet-200';
       default: return 'bg-slate-100 text-slate-600 border-slate-200';
     }
   };
@@ -2288,6 +2311,7 @@ const WorksheetRow: React.FC<{
              <option value="rejected">REJECTED</option>
              <option value="non-compatible">NON COMPATIBILE</option>
              <option value="excluded">ESCLUSO</option>
+                       <option value="withdrawn">RINUNCIATO</option>
            </select>
         </div>
         {isPool && (
@@ -2317,7 +2341,7 @@ const WorksheetRow: React.FC<{
             </h4>
             {isLocked ? (
                <div className="p-4 bg-gray-100 rounded border border-gray-200 text-center text-gray-500 text-sm">
-                  Evaluation disabled for non-compatible or excluded profiles.
+                  Valutazione disabilitata per profili non compatibili, esclusi o rinunciatari.
                </div>
             ) : (
               <div className="space-y-2">
@@ -2956,6 +2980,13 @@ const normalizeEvaluation = (evaluation: Evaluation): Evaluation => ({
   source: evaluation.source === "pool" ? "pool" : "native",
   sourcePosition: evaluation.source === "pool" ? evaluation.sourcePosition : undefined
 });
+
+const hasCandidateWithdrawn = (
+  candidateId: string,
+  evaluations: Record<string, Evaluation>
+) => Object.values(evaluations).some(
+  evaluation => evaluation.candidateId === candidateId && evaluation.status === "withdrawn"
+);
 
 const exportToExcel = (position: Position, candidates: Candidate[], evaluations: Record<string, Evaluation>, positions: Position[]) => {
   const XLSX = getStyledXlsx();
@@ -3730,6 +3761,8 @@ const CandidatesListView = ({
             return "bg-gray-200 text-gray-700 border-gray-300";
          case "excluded":
             return "bg-red-200 text-red-900 border-red-300";
+         case "withdrawn":
+            return "bg-violet-100 text-violet-800 border-violet-200";
          case "pending":
          default:
             return "bg-slate-100 text-slate-600 border-slate-200 hover:border-slate-300";
@@ -3902,7 +3935,7 @@ const OverlapKanbanView = ({
     const map = new Map<string, Set<string>>();
     positions.forEach(position => map.set(position.code, new Set()));
     Object.values(evaluations).forEach(ev => {
-      if (ev.status === "excluded") return;
+      if (ev.status === "excluded" || ev.status === "withdrawn") return;
       const candidateSet = map.get(ev.positionId);
       if (candidateSet) {
         candidateSet.add(ev.candidateId);
@@ -3997,7 +4030,7 @@ const OverlapKanbanView = ({
   };
 
   const matchesPossible = (status: Evaluation["status"]) =>
-    status !== "rejected" && status !== "non-compatible" && status !== "excluded";
+    status !== "rejected" && status !== "non-compatible" && status !== "excluded" && status !== "withdrawn";
 
   const getStatusBadge = (status: Evaluation["status"]) => {
     switch (status) {
@@ -4011,6 +4044,8 @@ const OverlapKanbanView = ({
         return { label: "Non compatibile", color: "slate" };
       case "excluded":
         return { label: "Escluso", color: "red" };
+      case "withdrawn":
+        return { label: "Rinunciato", color: "purple" };
       default:
         return { label: "Pending", color: "blue" };
     }
@@ -4022,7 +4057,8 @@ const OverlapKanbanView = ({
     { value: "reserve", label: "Possibile match" },
     { value: "rejected", label: "Rejected" },
     { value: "non-compatible", label: "Non compatibile" },
-    { value: "excluded", label: "Escluso" }
+    { value: "excluded", label: "Escluso" },
+    { value: "withdrawn", label: "Rinunciato" }
   ];
 
   const handleDragStart = useCallback(
@@ -4423,7 +4459,7 @@ const OverlapKanbanView = ({
                     candidate,
                     evaluation: evaluations[`${position.code}_${candidate.id}`]
                   }))
-                  .filter(entry => entry.evaluation && entry.evaluation.status !== "excluded");
+                  .filter(entry => entry.evaluation && entry.evaluation.status !== "excluded" && entry.evaluation.status !== "withdrawn");
 
                 const filteredCandidates = positionCandidates.filter(({ candidate, evaluation }) => {
                   const matchesStatus = onlyPossibleMatch ? matchesPossible(evaluation!.status) : true;
@@ -4770,6 +4806,11 @@ const PoolSearchDrawer = ({
   const currentRoleSet = getPositionRoleFilters(currentPosition);
   const existingEvaluations = Object.values(evaluations).filter(ev => ev.positionId === currentPosition.code);
   const existingByCandidate = new Map(existingEvaluations.map(ev => [ev.candidateId, normalizeEvaluation(ev)]));
+  const withdrawnCandidateIds = new Set(
+    Object.values(evaluations)
+      .filter(ev => ev.status === "withdrawn")
+      .map(ev => ev.candidateId)
+  );
 
   const sourcePositions = positions.filter(position => position.code !== currentPosition.code);
   const entities = Array.from(new Set(sourcePositions.map(position => position.entity).filter(Boolean))).sort();
@@ -4795,7 +4836,8 @@ const PoolSearchDrawer = ({
         const normalized = normalizeEvaluation(ev);
         const existing = existingByCandidate.get(candidate.id);
         const importedFromOther = existing?.source === "pool" && existing.sourcePosition !== sourceCode;
-        const blockedByDuplicate = !!existing && existing.sourcePosition !== sourceCode;
+        const blockedByWithdrawal = withdrawnCandidateIds.has(candidate.id);
+        const blockedByDuplicate = blockedByWithdrawal || (!!existing && existing.sourcePosition !== sourceCode);
         const alreadyFromSameSource = existing?.source === "pool" && existing.sourcePosition === sourceCode;
         return {
           candidate,
@@ -4803,7 +4845,9 @@ const PoolSearchDrawer = ({
           blockedByDuplicate,
           importedFromOther,
           alreadyFromSameSource,
-          blockedReason: importedFromOther
+          blockedReason: blockedByWithdrawal
+            ? "Ha rinunciato alla candidatura all’estero"
+            : importedFromOther
             ? `Già presente in disamina (importato da ${existing?.sourcePosition})`
             : existing
             ? "Già presente in disamina"
@@ -4856,7 +4900,9 @@ const PoolSearchDrawer = ({
   );
   const stepOneCandidateEstimate = selectedSources.reduce((acc, sourceCode) => {
     const sourceEvals = Object.values(evaluations).filter(ev => ev.positionId === sourceCode);
-    const eligible = sourceEvals.filter(ev => !existingByCandidate.has(ev.candidateId)).length;
+    const eligible = sourceEvals.filter(ev =>
+      !existingByCandidate.has(ev.candidateId) && !withdrawnCandidateIds.has(ev.candidateId)
+    ).length;
     return acc + eligible;
   }, 0);
 
@@ -5251,6 +5297,7 @@ const PositionDetailView = ({
                    <option value="reserve">Solo Possibile match</option>
                    <option value="rejected">Rejected Only</option>
                    <option value="excluded">Solo Esclusi</option>
+                   <option value="withdrawn">Solo Rinunciati</option>
                 </select>
              </div>
           </div>
@@ -5913,15 +5960,16 @@ const RecruitmentApp = () => {
         existingEv => existingEv.candidateId === ev.candidateId
       );
       const candidateIsExcluded = candidateEvaluations.some(existingEv => existingEv.status === "excluded");
+      const candidateHasWithdrawn = candidateEvaluations.some(existingEv => existingEv.status === "withdrawn");
 
-      if (ev.status === "excluded") {
+      if (ev.status === "excluded" || ev.status === "withdrawn") {
         candidateEvaluations.forEach(existingEv => {
           newEvaluations[`${existingEv.positionId}_${existingEv.candidateId}`] = {
             ...existingEv,
-            status: "excluded"
+            status: ev.status
           };
         });
-      } else if (candidateIsExcluded) {
+      } else if (candidateIsExcluded || candidateHasWithdrawn) {
         candidateEvaluations.forEach(existingEv => {
           newEvaluations[`${existingEv.positionId}_${existingEv.candidateId}`] = {
             ...existingEv,
@@ -6027,7 +6075,7 @@ const RecruitmentApp = () => {
               positionId,
               reqEvaluations: {},
               notes: "",
-              status: "pending",
+              status: hasCandidateWithdrawn(candidateId, nextEvaluations) ? "withdrawn" : "pending",
               source: "pool",
               sourcePosition: sourceCode
             };
@@ -6249,7 +6297,7 @@ const RecruitmentApp = () => {
             positionId: pos.code,
             reqEvaluations: {},
             notes: "",
-            status: "pending",
+            status: hasCandidateWithdrawn(candidateWithApplications.id, nextEvaluations) ? "withdrawn" : "pending",
             source: "native"
           };
         }
@@ -6311,7 +6359,7 @@ const RecruitmentApp = () => {
               positionId: position.code,
               reqEvaluations: {},
               notes: "",
-              status: "pending",
+              status: hasCandidateWithdrawn(candidate.id, nextEvaluations) ? "withdrawn" : "pending",
               source: "native"
             };
           }
