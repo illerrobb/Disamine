@@ -1777,7 +1777,7 @@ const CandidateDetailView = ({
   }, []);
 
   return (
-    <div className="flex flex-col h-screen bg-slate-50">
+    <div className="flex h-full min-h-0 flex-col bg-slate-50">
       {/* Header */}
       <header className="bg-white border-b border-slate-200 px-6 py-4 shadow-sm z-10 sticky top-0">
          <div className="flex items-center gap-4 mb-4">
@@ -3537,7 +3537,7 @@ const FileUploadView = ({ onDataLoaded }: { onDataLoaded: (c: Candidate[], p: Po
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
+    <div className="flex h-full min-h-0 flex-col items-center justify-center overflow-y-auto bg-slate-50 p-4">
       <div className="bg-white p-8 rounded-xl shadow-lg max-w-md w-full border border-slate-200">
         <div className="flex justify-center mb-6">
            <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center text-blue-600">
@@ -5219,7 +5219,7 @@ const PositionDetailView = ({
   }, [dragOverlayCandidate, evaluations, position.code]);
 
   return (
-    <div className="flex flex-col h-screen bg-slate-50">
+    <div className="flex h-full min-h-0 flex-col bg-slate-50">
       <header className="bg-white border-b border-slate-200 shadow-sm z-20">
         <div className="px-6 py-4">
           <div className="flex items-center gap-4 mb-4">
@@ -6813,6 +6813,35 @@ const RecruitmentApp = () => {
     window.history.pushState(navigation, '', window.location.href);
   };
 
+  const closeWorkspaceTab = (tabId: string) => {
+    const tabIndex = workspaceTabs.findIndex(tab => tab.id === tabId);
+    if (tabIndex === -1) return;
+
+    const remainingTabs = workspaceTabs.filter(tab => tab.id !== tabId);
+    if (remainingTabs.length === 0) {
+      const id = `tab-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const navigation = getNavigationState('dashboard', {
+        selectedPositionId: null,
+        selectedCandidateId: null
+      });
+      setWorkspaceTabs([{ id, navigation }]);
+      setActiveWorkspaceTabId(id);
+      restoreNavigation(navigation);
+      window.history.pushState(navigation, '', window.location.href);
+      return;
+    }
+
+    setWorkspaceTabs(remainingTabs);
+    if (tabId !== activeWorkspaceTabId) return;
+
+    const nextTab = remainingTabs[Math.min(tabIndex, remainingTabs.length - 1)];
+    setActiveWorkspaceTabId(nextTab.id);
+    setResearchStore(store => ({ ...store, activeResearchId: nextTab.navigation.researchId }));
+    setOverlapPositionIds([]);
+    restoreNavigation(nextTab.navigation);
+    window.history.pushState(nextTab.navigation, '', window.location.href);
+  };
+
   useEffect(() => {
     const onPopState = (event: PopStateEvent) => {
       const state = event.state as Partial<NavigationState> | null;
@@ -6984,10 +7013,6 @@ const RecruitmentApp = () => {
     : 'Mai';
 
   // Views Logic
-  if (currentView === 'upload') {
-    return <FileUploadView onDataLoaded={handleDataLoaded} />;
-  }
-
   const selectedPosition = selectedPositionId
     ? appData.positions.find(position => position.code === selectedPositionId)
     : undefined;
@@ -7000,44 +7025,77 @@ const RecruitmentApp = () => {
       ? 'dashboard'
       : currentView;
 
-  if (renderedView === 'position_detail' && selectedPosition) {
-    return (
-       <PositionDetailView 
-          position={selectedPosition}
-          allCandidates={appData.candidates}
-          evaluations={appData.evaluations}
-          allPositions={appData.positions}
-          onUpdate={updateEvaluation}
-          onUpdateCandidate={updateCandidate}
-          onApplyPoolSelection={applyPoolSelection}
-          onRemovePoolCandidate={removePoolCandidate}
-          onReorder={updateManualOrder}
-          onBack={() => window.history.back()}
-          onToggleReqVisibility={toggleRequirementVisibility}
-          onUpdatePosition={updatePositionData}
-          onExport={exportToExcel}
-          isFavorite={appData.favoritePositionIds.includes(selectedPosition.code)}
-          onToggleFavorite={toggleFavoritePosition}
-       />
-    );
-  }
-
-  if (renderedView === 'candidate_detail' && selectedCandidate) {
-    return (
-      <CandidateDetailView 
-         candidate={selectedCandidate}
-         allPositions={appData.positions}
-         evaluations={appData.evaluations}
-         onUpdate={updateEvaluation}
-         onUpdateCandidate={updateCandidate}
-         onBack={() => window.history.back()}
-      />
-    )
-  }
 
   // Dashboard View (Shared Layout)
   return (
-    <div className="flex h-screen bg-slate-50">
+    <div className="flex h-screen flex-col bg-slate-50">
+      <div className="flex h-11 flex-shrink-0 items-end gap-1 overflow-x-auto border-b border-slate-300 bg-slate-200 px-2 pt-2" role="tablist" aria-label="Schede aperte">
+          {workspaceTabs.map(tab => {
+            const research = researchStore.researches.find(item => item.cycle.id === tab.navigation.researchId);
+            if (!research) return null;
+            const isActive = tab.id === activeWorkspaceTabId;
+            const position = tab.navigation.selectedPositionId
+              ? research.positions.find(item => item.code === tab.navigation.selectedPositionId)
+              : undefined;
+            const candidate = tab.navigation.selectedCandidateId
+              ? research.candidates.find(item => item.id === tab.navigation.selectedCandidateId)
+              : undefined;
+            const viewLabel: Record<AppView, string> = {
+              upload: 'Importazione',
+              researches: 'Ricerche',
+              dashboard: 'Posizioni',
+              favorites: 'Posizioni salvate',
+              position_detail: position?.code ?? 'Posizione',
+              candidates_list: 'Persone',
+              candidate_detail: candidate?.nominativo ?? 'Persona',
+              overlap_kanban: 'Overlap Kanban',
+              reiteration_analysis: 'Reiterazioni'
+            };
+            const label = `${viewLabel[tab.navigation.view]} · ${research.cycle.name}`;
+            return (
+              <div
+                key={tab.id}
+                role="presentation"
+                className={`group flex h-9 max-w-64 flex-shrink-0 items-center rounded-t-xl border text-sm shadow-sm ${
+                  isActive
+                    ? 'border-slate-300 border-b-white bg-white font-semibold text-slate-900'
+                    : 'border-slate-300/70 bg-slate-300/70 text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                }`}
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  title={label}
+                  onClick={() => switchWorkspaceTab(tab)}
+                  className="flex min-w-0 flex-1 items-center gap-2 self-stretch pl-3 pr-2 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
+                >
+                  <span className={`h-2 w-2 flex-shrink-0 rounded-full ${isActive ? 'bg-blue-600' : 'bg-slate-400 group-hover:bg-slate-500'}`} />
+                  <span className="truncate">{label}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => closeWorkspaceTab(tab.id)}
+                  className="mr-1 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-slate-400 hover:bg-slate-200 hover:text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  title={`Chiudi ${label}`}
+                  aria-label={`Chiudi ${label}`}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            );
+          })}
+          <button
+            type="button"
+            onClick={addWorkspaceTab}
+            className="mb-1 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md text-slate-600 transition-colors hover:bg-slate-100 hover:text-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            title="Nuova scheda"
+            aria-label="Apri una nuova scheda"
+          >
+            <Plus className="h-5 w-5" />
+          </button>
+        </div>
+      <div className="flex min-h-0 flex-1">
       {/* Sidebar */}
       <aside className="w-64 bg-slate-900 text-slate-300 flex flex-col flex-shrink-0">
         <div className="p-6 border-b border-slate-800">
@@ -7108,59 +7166,40 @@ const RecruitmentApp = () => {
       </aside>
 
       {/* Main Content Area */}
-      <main className="flex-1 overflow-hidden flex flex-col">
-        <div className="flex h-11 flex-shrink-0 items-end gap-1 overflow-x-auto border-b border-slate-300 bg-slate-200 px-2 pt-2" role="tablist" aria-label="Schede aperte">
-          {workspaceTabs.map(tab => {
-            const research = researchStore.researches.find(item => item.cycle.id === tab.navigation.researchId);
-            if (!research) return null;
-            const isActive = tab.id === activeWorkspaceTabId;
-            const position = tab.navigation.selectedPositionId
-              ? research.positions.find(item => item.code === tab.navigation.selectedPositionId)
-              : undefined;
-            const candidate = tab.navigation.selectedCandidateId
-              ? research.candidates.find(item => item.id === tab.navigation.selectedCandidateId)
-              : undefined;
-            const viewLabel: Record<AppView, string> = {
-              upload: 'Importazione',
-              researches: 'Ricerche',
-              dashboard: 'Posizioni',
-              favorites: 'Posizioni salvate',
-              position_detail: position?.code ?? 'Posizione',
-              candidates_list: 'Persone',
-              candidate_detail: candidate?.nominativo ?? 'Persona',
-              overlap_kanban: 'Overlap Kanban',
-              reiteration_analysis: 'Reiterazioni'
-            };
-            const label = `${viewLabel[tab.navigation.view]} · ${research.cycle.name}`;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                role="tab"
-                aria-selected={isActive}
-                title={label}
-                onClick={() => switchWorkspaceTab(tab)}
-                className={`group flex h-9 max-w-56 flex-shrink-0 items-center gap-2 rounded-t-lg border px-4 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500 ${
-                  isActive
-                    ? 'border-slate-300 border-b-white bg-white font-semibold text-slate-900'
-                    : 'border-transparent bg-slate-300/70 text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                }`}
-              >
-                <span className={`h-2 w-2 flex-shrink-0 rounded-full ${isActive ? 'bg-blue-600' : 'bg-slate-400 group-hover:bg-slate-500'}`} />
-                <span className="truncate">{label}</span>
-              </button>
-            );
-          })}
-          <button
-            type="button"
-            onClick={addWorkspaceTab}
-            className="mb-1 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md text-slate-600 transition-colors hover:bg-slate-100 hover:text-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            title="Nuova scheda"
-            aria-label="Apri una nuova scheda"
-          >
-            <Plus className="h-5 w-5" />
-          </button>
-        </div>
+      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        {renderedView === 'upload' && (
+          <FileUploadView onDataLoaded={handleDataLoaded} />
+        )}
+        {renderedView === 'position_detail' && selectedPosition && (
+          <PositionDetailView
+            position={selectedPosition}
+            allCandidates={appData.candidates}
+            evaluations={appData.evaluations}
+            allPositions={appData.positions}
+            onUpdate={updateEvaluation}
+            onUpdateCandidate={updateCandidate}
+            onApplyPoolSelection={applyPoolSelection}
+            onRemovePoolCandidate={removePoolCandidate}
+            onReorder={updateManualOrder}
+            onBack={() => window.history.back()}
+            onToggleReqVisibility={toggleRequirementVisibility}
+            onUpdatePosition={updatePositionData}
+            onExport={exportToExcel}
+            isFavorite={appData.favoritePositionIds.includes(selectedPosition.code)}
+            onToggleFavorite={toggleFavoritePosition}
+          />
+        )}
+        {renderedView === 'candidate_detail' && selectedCandidate && (
+          <CandidateDetailView
+            candidate={selectedCandidate}
+            allPositions={appData.positions}
+            evaluations={appData.evaluations}
+            onUpdate={updateEvaluation}
+            onUpdateCandidate={updateCandidate}
+            onBack={() => window.history.back()}
+          />
+        )}
+
         {renderedView === 'researches' && (
           <>
             <header className="bg-white border-b border-slate-200 px-5 sm:px-8 py-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -7400,6 +7439,7 @@ const RecruitmentApp = () => {
           />
         )}
       </main>
+      </div>
 
       {isNewCycleModalOpen && (
         <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4" onMouseDown={event => { if (event.target === event.currentTarget) setIsNewCycleModalOpen(false); }} onKeyDown={event => { if (event.key === 'Escape') setIsNewCycleModalOpen(false); }}>
