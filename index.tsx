@@ -87,8 +87,7 @@ interface Requirement {
 
 interface Position {
   code: string;
-  entity: string; // Comes from SEDE now
-  location: string;
+  entity: string; // ENTE
   title: string; // JOB TITLE
   requirements: Requirement[];
   
@@ -139,7 +138,7 @@ interface ResearchStore {
 }
 
 type PositionStatus = 'todo' | 'inprogress' | 'completed';
-type PositionAdministrativeStatus = 'non-alimentazione' | 'estensione-mandato-titolare';
+type PositionAdministrativeStatus = 'non-alimentazione' | 'estensione-mandato-titolare' | 'reiterazione';
 type AppView = 'upload' | 'researches' | 'dashboard' | 'favorites' | 'position_detail' | 'candidates_list' | 'candidate_detail' | 'overlap_kanban' | 'reiteration_analysis';
 type NavigationState = {
   researchId: string;
@@ -363,7 +362,6 @@ const positionFieldDefinitions: FieldDescriptor<Position>[] = [
   { label: "Codice", getValue: (position) => position.code },
   { label: "Titolo", getValue: (position) => position.title },
   { label: "Ente", getValue: (position) => position.entity },
-  { label: "Sede", getValue: (position) => position.location },
   {
     label: "Requisiti",
     getValue: (position) => position.requirements,
@@ -458,7 +456,7 @@ const parseCandidates = (data: any[]): DedupResult<Candidate> => {
        return n === "CATEGORIA" || n === "CAT" || n.startsWith("CAT.") || n === "CATEGORY";
     });
     const specKey = findKey(keys, "SPECIALIT", "SPEC");
-    const enteServizioKey = findKey(keys, "ENTE DI SERVIZIO", "ENTE SERVIZIO", "REPARTO", "UNIT", "SEDE");
+    const enteServizioKey = findKey(keys, "ENTE DI SERVIZIO", "ENTE SERVIZIO", "ENTE", "REPARTO", "UNIT");
     
     // NOS Details
     const nosLivelloKey = findKey(keys, "LIVELLO NOS", "NOS LEVEL");
@@ -577,10 +575,11 @@ const parsePositions = (data: any[]): DedupResult<Position> => {
     const keys = Object.keys(row);
     
     const codeKey = findKey(keys, "CODICE", "POSIZIONE", "JOB ID", "REF");
-    // SEDE corresponds to Entity
-    const sedeKey = findKey(keys, "SEDE", "ENTE", "STRUTTURA", "COMANDO", "DIVISION", "AREA");
+    // Nel file delle posizioni la colonna si chiama SEDE, ma nel dominio applicativo è l'ENTE.
+    const enteKey = keys.find(key => normalizeHeader(key) === "SEDE")
+      ?? keys.find(key => normalizeHeader(key) === "ENTE")
+      ?? findKey(keys, "ENTE DI SERVIZIO", "ENTE SERVIZIO");
     const jobTitleKey = findKey(keys, "JOB TITLE", "TITOLO", "DENOMINAZIONE");
-    const locationKey = findKey(keys, "LUOGO", "LOCALITA", "NAZIONE", "LOCATION");
     const reqKey = findKey(keys, "REQUISITI", "CRITERIA", "COMPETENZE", "REQUIREMENTS");
 
     // Specific Fields
@@ -652,8 +651,7 @@ const parsePositions = (data: any[]): DedupResult<Position> => {
 
     const position: Position = {
       code: codeStr,
-      entity: String(row[sedeKey] || "Unknown Entity").trim(),
-      location: String(row[locationKey] || "").trim(),
+      entity: String(row[enteKey] || "Ente non indicato").trim(),
       title: titleStr === codeStr ? `Position ${codeStr}` : titleStr,
       requirements,
       
@@ -680,9 +678,6 @@ const parsePositions = (data: any[]): DedupResult<Position> => {
 
     if ((isBlank(existing.entity) || existing.entity === "Unknown Entity") && !isBlank(position.entity)) {
       existing.entity = position.entity;
-    }
-    if (isBlank(existing.location) && !isBlank(position.location)) {
-      existing.location = position.location;
     }
     if ((isBlank(existing.title) || isDefaultTitle(existing.title)) && !isBlank(position.title)) {
       existing.title = position.title;
@@ -746,6 +741,34 @@ const getPositionStatus = (position: Position, evaluations: Record<string, Evalu
   }
 
   return 'todo';
+};
+
+type UnifiedPositionStatus = PositionStatus | PositionAdministrativeStatus;
+
+const getUnifiedPositionStatus = (position: Position, evaluations: Record<string, Evaluation>): UnifiedPositionStatus => {
+  const examinationStatus = getPositionStatus(position, evaluations);
+  // Gli stati manuali coprono To Do/In Progress senza cancellare la disamina.
+  // Solo la selezione di un candidato rende la posizione completata e prevale sullo stato manuale.
+  if (examinationStatus === 'completed') return 'completed';
+  return position.administrativeStatus ?? examinationStatus;
+};
+
+const POSITION_STATUS_LABELS: Record<UnifiedPositionStatus, string> = {
+  todo: 'To Do',
+  inprogress: 'In Progress',
+  completed: 'Completato',
+  'non-alimentazione': 'Non alimentazione',
+  'estensione-mandato-titolare': 'Estensione mandato titolare',
+  reiterazione: 'Reiterazione'
+};
+
+const POSITION_STATUS_COLORS: Record<UnifiedPositionStatus, string> = {
+  todo: 'bg-slate-100 text-slate-600',
+  inprogress: 'bg-blue-100 text-blue-700',
+  completed: 'bg-green-100 text-green-700',
+  'non-alimentazione': 'bg-rose-50 text-rose-700',
+  'estensione-mandato-titolare': 'bg-amber-50 text-amber-700',
+  reiterazione: 'bg-violet-50 text-violet-700'
 };
 
 const buildReiterationSuggestions = (
@@ -1241,14 +1264,6 @@ const PositionEditDrawer = ({
               <input
                 value={draftPosition.entity}
                 onChange={handleFieldChange("entity")}
-                className="mt-2 w-full rounded border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none"
-              />
-            </label>
-            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
-              Sede
-              <input
-                value={draftPosition.location}
-                onChange={handleFieldChange("location")}
                 className="mt-2 w-full rounded border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none"
               />
             </label>
@@ -1984,8 +1999,6 @@ const CandidateDetailView = ({
                            </div>
                            <div className="text-sm text-slate-500 flex gap-2">
                               <span>{pos.entity}</span>
-                              <span>•</span>
-                              <span>{pos.location}</span>
                            </div>
                            <div className="mt-2 text-xs text-slate-500 flex items-center gap-2">
                               <span className="uppercase text-slate-400">Profilo previsto</span>
@@ -2700,7 +2713,7 @@ const PositionStatusMenu = ({ position, onChange }: { position: Position; onChan
     <button onClick={() => setOpen(value => !value)} className="rounded-lg border border-slate-200 p-2 text-slate-500 hover:bg-slate-100" aria-label={`Imposta stato per ${position.code}`} aria-haspopup="menu" aria-expanded={open}><MoreVertical className="w-4 h-4" /></button>
     {open && <div role="menu" className="absolute right-0 z-40 mt-2 w-60 rounded-lg border border-slate-200 bg-white p-1.5 text-left shadow-xl">
       <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-400">Stato posizione</div>
-      {([['non-alimentazione', 'Non alimentazione'], ['estensione-mandato-titolare', 'Estensione mandato titolare']] as const).map(([value, label]) => <button key={value} onClick={() => { onChange(position.code, value); setOpen(false); }} className="flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-slate-700 hover:bg-slate-100">{label}{position.administrativeStatus === value && <Check className="w-4 h-4 text-blue-600" />}</button>)}
+      {([['non-alimentazione', 'Non alimentazione'], ['estensione-mandato-titolare', 'Estensione mandato titolare'], ['reiterazione', 'Reiterazione']] as const).map(([value, label]) => <button key={value} onClick={() => { onChange(position.code, value); setOpen(false); }} className="flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-slate-700 hover:bg-slate-100">{label}{position.administrativeStatus === value && <Check className="w-4 h-4 text-blue-600" />}</button>)}
       {position.administrativeStatus && <button onClick={() => { onChange(position.code); setOpen(false); }} className="mt-1 w-full border-t border-slate-100 px-3 py-2 text-left text-sm text-slate-500 hover:bg-slate-100">Rimuovi stato</button>}
     </div>}
   </div>;
@@ -2730,17 +2743,9 @@ const PositionCard: React.FC<{
   onSetAdministrativeStatus
 }) => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const statusColors = {
-    todo: "bg-slate-100 text-slate-600",
-    inprogress: "bg-blue-100 text-blue-700",
-    completed: "bg-green-100 text-green-700"
-  };
-
-  const statusLabels = {
-    todo: "To Do",
-    inprogress: "In Progress",
-    completed: "Completed"
-  };
+  const unifiedStatus: UnifiedPositionStatus = status === 'completed'
+    ? 'completed'
+    : (position.administrativeStatus ?? status);
   const level = getPositionLevel(position);
 
   return (
@@ -2755,8 +2760,8 @@ const PositionCard: React.FC<{
             <PositionLevelBadge level={level} />
           </div>
           <div className="flex items-center gap-2">
-            <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full ${statusColors[status]}`}>
-              {statusLabels[status]}
+            <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full ${POSITION_STATUS_COLORS[unifiedStatus]}`}>
+              {POSITION_STATUS_LABELS[unifiedStatus]}
             </span>
             <button
               type="button"
@@ -2788,7 +2793,8 @@ const PositionCard: React.FC<{
                   <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-400">Stato posizione</div>
                   {([
                     ['non-alimentazione', 'Non alimentazione'],
-                    ['estensione-mandato-titolare', 'Estensione mandato titolare']
+                    ['estensione-mandato-titolare', 'Estensione mandato titolare'],
+                    ['reiterazione', 'Reiterazione']
                   ] as const).map(([value, label]) => (
                     <button key={value} role="menuitemradio" aria-checked={position.administrativeStatus === value} onClick={() => { onSetAdministrativeStatus(position.code, value); setIsMenuOpen(false); }} className="flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100">
                       {label}{position.administrativeStatus === value && <Check className="w-4 h-4 text-blue-600" />}
@@ -2800,11 +2806,6 @@ const PositionCard: React.FC<{
             </div>
           </div>
         </div>
-        {position.administrativeStatus && (
-          <div className="mb-3 inline-flex rounded-full bg-violet-50 px-2.5 py-1 text-[11px] font-semibold text-violet-700 border border-violet-100">
-            {position.administrativeStatus === 'non-alimentazione' ? 'Non alimentazione' : 'Estensione mandato titolare'}
-          </div>
-        )}
         <h3 className="font-bold text-slate-800 mb-1 line-clamp-2" title={position.title}>{position.title}</h3>
         <p className="text-sm text-slate-500 flex items-center gap-1 mb-4">
           <Building className="w-3 h-3" /> {position.entity}
@@ -3190,7 +3191,7 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
   // --- Build Header Rows ---
 
   // Row 1: Title
-  const titleText = `SCHEDA DISAMINA P.O. ${position.code} ${position.location} ${position.title} (${position.entity})`;
+  const titleText = `SCHEDA DISAMINA P.O. ${position.code} ${position.title} (${position.entity})`;
   const row1 = Array(totalCols).fill("");
   row1[0] = titleText;
 
@@ -4157,7 +4158,7 @@ const OverlapKanbanView = ({
   const filteredPositions = useMemo(() => {
     const term = positionSearch.trim().toLowerCase();
     return sortedPositions.filter(pos => {
-      const haystack = `${pos.code} ${pos.title} ${pos.entity} ${pos.location}`.toLowerCase();
+      const haystack = `${pos.code} ${pos.title} ${pos.entity}`.toLowerCase();
       const matchesSearch = !term || haystack.includes(term);
       const level = getPositionLevel(pos);
       const matchesLevel = positionLevelFilter === "ALL" || level?.code === positionLevelFilter;
@@ -4676,7 +4677,7 @@ const OverlapKanbanView = ({
                           {position.title}
                         </h3>
                         <div className="text-xs text-slate-500 mt-2">
-                          {position.entity} • {position.location}
+                          {position.entity}
                         </div>
                         <div className="mt-2 text-[10px] text-slate-500 space-y-1">
                           <div className="flex items-center justify-between gap-2">
@@ -5007,30 +5008,18 @@ const PoolSearchDrawer = ({
 
   if (!isOpen) return null;
 
-  const associationOptions: MultiSelectOption[] = [
-    ...positions.filter(position => position.code !== currentPosition.code).map(position => ({
-      value: `position:${position.code}`,
-      label: `${position.code} · ${position.title}`
-    })),
-    ...Array.from(new Set(positions.map(position => position.entity).filter(Boolean))).sort().map(entity => ({
-      value: `entity:${entity}`,
-      label: `Ente · ${entity}`
-    }))
-  ];
+  const associationOptions: MultiSelectOption[] = Array.from(
+    new Set(positions.filter(position => position.code !== currentPosition.code).map(position => position.entity).filter(Boolean))
+  ).sort().map(entity => ({ value: entity, label: entity }));
   const filteredRows = poolRows.filter(row => {
     const query = search.trim().toLowerCase();
     const haystack = [row.candidate.id, row.candidate.nominativo, row.candidate.rank, row.candidate.role,
       ...row.linkedPositions.flatMap(position => [position.code, position.title, position.entity])].join(" ").toLowerCase();
     const textMatch = !query || haystack.includes(query);
-    const roleMatch = roleFilter === "ALL" || row.sourcePositions.some(position => matchesPositionRoleFilter(position, roleFilter));
-    const associationMatch = associationFilters.length === 0 || associationFilters.some(filter => {
-      const separator = filter.indexOf(":");
-      const kind = filter.slice(0, separator);
-      const value = filter.slice(separator + 1);
-      return kind === "position"
-        ? row.sourcePositions.some(position => position.code === value)
-        : row.sourcePositions.some(position => position.entity === value);
-    });
+    const roleMatch = matchesRoleFilter(getRoleFilterValueFromCode(row.candidate.role || ""), roleFilter);
+    const associationMatch = associationFilters.length === 0 || associationFilters.some(entity =>
+      row.sourcePositions.some(position => position.entity === entity)
+    );
     return textMatch && roleMatch && associationMatch;
   });
   const statusLabel = (status: Evaluation["status"]) => ({
@@ -5070,7 +5059,7 @@ const PoolSearchDrawer = ({
               {ROLE_FILTER_OPTIONS.filter(option => option.value !== "ALL").map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
             <div className="md:col-span-2">
-              <MultiSelect label="Posizioni/enti di candidatura" options={associationOptions} selected={associationFilters} onChange={setAssociationFilters} placeholder="Tutte le posizioni e gli enti" />
+              <MultiSelect label="Ente di candidatura" options={associationOptions} selected={associationFilters} onChange={setAssociationFilters} placeholder="Tutti gli enti" />
             </div>
           </div>
           <div className="flex items-center justify-between text-xs text-slate-500 font-medium">
@@ -5108,11 +5097,11 @@ const PoolSearchDrawer = ({
                     </button>
                   </div>
                   {expanded && <div className="border-t border-slate-200 bg-white px-3 py-2 space-y-2">
-                    <div className="text-[11px] uppercase font-semibold text-slate-400">Posizioni/enti di candidatura</div>
+                    <div className="text-[11px] uppercase font-semibold text-slate-400">Enti di candidatura</div>
                     {row.linkedPositions.map(position => {
                       const evaluation = row.candidateEvaluations.find(item => item.positionId === position.code);
                       return <div key={position.code} className="flex items-start justify-between gap-3 text-xs">
-                        <div><span className="font-mono text-blue-700">{position.code}</span> <span className="font-medium text-slate-700">{position.title}</span><div className="text-slate-500">{position.entity} • {position.location}</div></div>
+                        <div><span className="font-mono text-blue-700">{position.code}</span> <span className="font-medium text-slate-700">{position.title}</span><div className="text-slate-500">{position.entity}</div></div>
                         <span className="shrink-0 font-medium text-slate-600">{evaluation ? statusLabel(evaluation.status) : "Candidatura"}{evaluation?.source === "pool" ? " · Da bacino" : ""}</span>
                       </div>;
                     })}
@@ -5351,7 +5340,6 @@ const PositionDetailView = ({
                </div>
                <div className="text-sm text-slate-500 flex gap-4">
                  <span className="flex items-center gap-1"><Building className="w-3 h-3" /> {position.entity}</span>
-                 <span className="flex items-center gap-1"><Globe className="w-3 h-3" /> {position.location}</span>
                </div>
                <div className="mt-2 text-xs text-slate-500 flex items-center gap-2">
                  <span className="uppercase text-slate-400">Profilo previsto</span>
@@ -5800,7 +5788,6 @@ const getReiterationReportRows = (suggestions: ReiterationSuggestion[]) =>
       ente: suggestion.position.entity || 'Ente non indicato',
       codice: suggestion.position.code,
       posizione: suggestion.position.title || 'Posizione senza titolo',
-      sede: suggestion.position.location || '-',
       livello: getPositionLevel(suggestion.position).code,
       ruolo: Array.from(getReiterationEntityRoleFilters(suggestion.position)).map(role => ROLE_FILTER_OPTIONS.find(option => option.value === role)?.label.split(' (')[0] ?? role).join(', ') || 'N.D.',
       priorita: suggestion.priority,
@@ -5813,7 +5800,7 @@ const getReiterationReportRows = (suggestions: ReiterationSuggestion[]) =>
 const exportReiterationExcel = (suggestions: ReiterationSuggestion[]) => {
   const rows = getReiterationReportRows(suggestions);
   const sheet = XLSX.utils.json_to_sheet(rows.map(row => ({
-    Ente: row.ente, Codice: row.codice, Posizione: row.posizione, Sede: row.sede,
+    Ente: row.ente, Codice: row.codice, Posizione: row.posizione,
     Livello: row.livello, Ruolo: row.ruolo, Priorità: row.priorita.toUpperCase(),
     Punteggio: row.punteggio, Segnalati: row.segnalati, Utilizzabili: row.utilizzabili,
     Motivazioni: row.motivazioni
@@ -5844,8 +5831,8 @@ const exportReiterationPdf = (suggestions: ReiterationSuggestion[]) => {
     document.text(entity, 14, startY);
     autoTable(document, {
       startY: startY + 4,
-      head: [['Codice', 'Posizione / sede', 'Livello', 'Ruolo', 'Priorità', 'Score', 'Segnalati', 'Utilizzabili', 'Motivazioni']],
-      body: rows.filter(row => row.ente === entity).map(row => [row.codice, `${row.posizione}\n${row.sede}`, row.livello, row.ruolo, row.priorita.toUpperCase(), row.punteggio, row.segnalati, row.utilizzabili, row.motivazioni]),
+      head: [['Codice', 'Posizione', 'Livello', 'Ruolo', 'Priorità', 'Score', 'Segnalati', 'Utilizzabili', 'Motivazioni']],
+      body: rows.filter(row => row.ente === entity).map(row => [row.codice, row.posizione, row.livello, row.ruolo, row.priorita.toUpperCase(), row.punteggio, row.segnalati, row.utilizzabili, row.motivazioni]),
       styles: { fontSize: 7, cellPadding: 2, overflow: 'linebreak' },
       headStyles: { fillColor: [30, 64, 175] },
       columnStyles: { 0: { cellWidth: 22 }, 1: { cellWidth: 45 }, 8: { cellWidth: 72 } },
@@ -5885,7 +5872,7 @@ const ReiterationAnalysisView = ({
   const levelOptions = useMemo(() => getDistinctPositionLevels(positions).map(level => ({ value: level.code, label: level.code, meta: level.description })), [positions]);
   const roleOptions = useMemo(() => ROLE_FILTER_OPTIONS.filter(option => option.value !== 'ALL').map(option => ({ value: option.value, label: option.label })), []);
   const visible = baseVisible.filter(suggestion => {
-    const searchable = [suggestion.position.code, suggestion.position.title, suggestion.position.entity, suggestion.position.location, suggestion.position.incumbent]
+    const searchable = [suggestion.position.code, suggestion.position.title, suggestion.position.entity, suggestion.position.incumbent]
       .filter(Boolean).join(' ').toLocaleLowerCase('it');
     const matchesSearch = !normalizedSearch || searchable.includes(normalizedSearch);
     const matchesPriority = priorityFilter === 'tutte' || suggestion.priority === priorityFilter;
@@ -5933,7 +5920,7 @@ const ReiterationAnalysisView = ({
         <div className="mb-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 rounded-xl border border-slate-200 bg-white p-4">
           <label className="relative">
             <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
-            <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Cerca codice, titolo, ente, sede o titolare…" className="w-full rounded-lg border border-slate-200 py-2 pl-9 pr-3 text-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100" />
+            <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Cerca codice, titolo, ente o titolare…" className="w-full rounded-lg border border-slate-200 py-2 pl-9 pr-3 text-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100" />
           </label>
           <select value={priorityFilter} onChange={event => setPriorityFilter(event.target.value as ReiterationPriority | 'tutte')} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
             <option value="tutte">Tutte le priorità</option><option value="alta">Priorità alta</option><option value="media">Priorità media</option><option value="osservazione">Osservazione</option>
@@ -5954,7 +5941,7 @@ const ReiterationAnalysisView = ({
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2"><span className={`px-2 py-0.5 rounded-full border text-[11px] uppercase font-bold ${priorityStyle}`}>Priorità {suggestion.priority}</span><span className="text-xs text-slate-400">{suggestion.position.code}</span></div>
                     <h2 className="font-bold text-slate-900 mt-2">{suggestion.position.title || 'Posizione senza titolo'}</h2>
-                    <p className="text-sm text-slate-500">{suggestion.position.entity}{suggestion.position.location ? ` · ${suggestion.position.location}` : ''}</p>
+                    <p className="text-sm text-slate-500">{suggestion.position.entity}</p>
                     <ul className="mt-3 space-y-1">{suggestion.reasons.slice(0, expanded ? undefined : 2).map(reason => <li key={reason} className="text-sm text-slate-700 flex gap-2"><AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />{reason}</li>)}</ul>
                   </div>
                   <div className="flex flex-col gap-2 shrink-0"><button onClick={() => onOpenPosition(suggestion.position.code)} className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700">Apri posizione</button><button onClick={() => setExpandedCode(expanded ? null : suggestion.position.code)} className="px-3 py-2 rounded-lg border border-slate-200 text-slate-600 text-sm hover:bg-slate-50">{expanded ? 'Chiudi dettaglio' : 'Dettaglio analisi'}</button></div>
@@ -5999,7 +5986,14 @@ const RecruitmentApp = () => {
       ofcnSuitability: candidate.ofcnSuitability ?? "",
       globalNotes: candidate.globalNotes ?? ""
     })),
-    positions: research.positions ?? [],
+    positions: (research.positions ?? []).map(position => {
+      const legacyPosition = position as Position & { location?: string; administrativeStatus?: string };
+      return {
+        ...position,
+        entity: position.entity || legacyPosition.location || "Ente non indicato",
+        administrativeStatus: position.administrativeStatus
+      };
+    }),
     favoritePositionIds: research.favoritePositionIds ?? [],
     evaluations: Object.entries(research.evaluations ?? {}).reduce<Record<string, Evaluation>>((acc, [key, value]) => {
       acc[key] = normalizeEvaluation(value);
@@ -6224,6 +6218,17 @@ const RecruitmentApp = () => {
   };
 
   const updateEvaluation = (ev: Evaluation) => {
+    const previousEvaluation = appData.evaluations[`${ev.positionId}_${ev.candidateId}`];
+    const position = appData.positions.find(item => item.code === ev.positionId);
+    const manualStatus = position?.administrativeStatus;
+    if (ev.status === "selected" && previousEvaluation?.status !== "selected" && manualStatus) {
+      const manualStatusLabel = POSITION_STATUS_LABELS[manualStatus];
+      const confirmed = window.confirm(
+        `La posizione è attualmente nello stato "${manualStatusLabel}". Se selezioni questo candidato, lo stato verrà rimosso. Confermi?`
+      );
+      if (!confirmed) return;
+    }
+
     setAppData(prev => {
       const newEvaluations = { ...prev.evaluations };
       const candidateEvaluations = Object.values(newEvaluations).filter(
@@ -6277,6 +6282,9 @@ const RecruitmentApp = () => {
 
       return {
         ...prev,
+        positions: ev.status === "selected" && manualStatus
+          ? prev.positions.map(item => item.code === ev.positionId ? { ...item, administrativeStatus: undefined } : item)
+          : prev.positions,
         evaluations: newEvaluations,
         lastUpdated: Date.now()
       };
@@ -7151,8 +7159,7 @@ const RecruitmentApp = () => {
       const matchesSearch =
         position.title.toLowerCase().includes(lowerSearch) ||
         position.code.toLowerCase().includes(lowerSearch) ||
-        position.entity.toLowerCase().includes(lowerSearch) ||
-        position.location.toLowerCase().includes(lowerSearch);
+        position.entity.toLowerCase().includes(lowerSearch);
 
       const matchesEnte = filterEnte.length === 0 || filterEnte.includes(position.entity);
 
@@ -7400,7 +7407,7 @@ const RecruitmentApp = () => {
                 </div>
               ) : (
                 <div className="overflow-visible rounded-xl border border-slate-200 bg-white shadow-sm">
-                  <div className="overflow-x-auto overflow-y-visible">
+                  <div className="overflow-visible">
                     <table className="w-full min-w-[860px] text-left text-sm">
                       <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                         <tr><th className="px-5 py-4 font-semibold">Nome</th><th className="px-4 py-4 font-semibold">Creazione</th><th className="px-4 py-4 font-semibold">Ultimo aggiornamento</th><th className="px-4 py-4 text-center font-semibold">Posizioni</th><th className="px-4 py-4 text-center font-semibold">Candidati</th><th className="px-4 py-4 font-semibold">Stato</th><th className="px-5 py-4 text-right font-semibold">Azioni</th></tr>
@@ -7470,11 +7477,11 @@ const RecruitmentApp = () => {
                   </div>
                   
                   <MultiSelect
-                    label="Entità"
+                    label="Ente"
                     options={entityOptions}
                     selected={filterEnte}
                     onChange={setFilterEnte}
-                    placeholder="Tutte le entità"
+                    placeholder="Tutti gli enti"
                   />
                   <MultiSelect
                     label="Livello"
@@ -7556,12 +7563,13 @@ const RecruitmentApp = () => {
               </div> : (
                 <div className="overflow-visible rounded-xl border border-slate-200 bg-white shadow-sm">
                   <table className="w-full border-collapse text-left text-sm">
-                    <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">Codice</th><th className="px-4 py-3">Posizione</th><th className="px-4 py-3">Ente / sede</th><th className="px-4 py-3">Titolare</th><th className="px-4 py-3">Stato</th><th className="px-4 py-3 text-center">Candidati</th><th className="px-4 py-3 text-right">Azioni</th></tr></thead>
+                    <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">Codice</th><th className="px-4 py-3">Posizione</th><th className="px-4 py-3">Ente</th><th className="px-4 py-3">Titolare</th><th className="px-4 py-3">Stato</th><th className="px-4 py-3 text-center">Candidati</th><th className="px-4 py-3 text-right">Azioni</th></tr></thead>
                     <tbody className="divide-y divide-slate-100">
                       {(renderedView === 'favorites' ? filteredFavoritePositions : filteredPositions).map(pos => {
                         const candidateCount = appData.candidates.filter(candidate => !!appData.evaluations[`${pos.code}_${candidate.id}`]).length;
+                        const unifiedStatus = getUnifiedPositionStatus(pos, appData.evaluations);
                         return <tr key={pos.code} onClick={() => navigate('position_detail', { selectedPositionId: pos.code, positionsReturnView: renderedView === 'favorites' ? 'favorites' : 'dashboard' })} className="cursor-pointer hover:bg-blue-50/40">
-                          <td className="px-4 py-3 font-mono text-xs font-semibold text-blue-700">{pos.code}</td><td className="px-4 py-3"><div className="max-w-xs font-semibold text-slate-800">{pos.title || '-'}</div><div className="mt-1"><PositionLevelBadge level={getPositionLevel(pos)} /></div></td><td className="px-4 py-3 text-slate-600"><div>{pos.entity || '-'}</div><div className="text-xs text-slate-400">{pos.location || '-'}</div></td><td className="px-4 py-3">{pos.incumbent ? <span className="text-slate-700">{pos.incumbent}</span> : <span className="font-semibold text-amber-700">Vacante</span>}</td><td className="px-4 py-3">{pos.administrativeStatus ? <span className="rounded-full border border-violet-100 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-700">{pos.administrativeStatus === 'non-alimentazione' ? 'Non alimentazione' : 'Estensione mandato titolare'}</span> : <span className="text-slate-400">-</span>}</td><td className="px-4 py-3 text-center font-semibold">{candidateCount}</td><td className="px-4 py-3 text-right"><PositionStatusMenu position={pos} onChange={setPositionAdministrativeStatus} /></td>
+                          <td className="px-4 py-3 font-mono text-xs font-semibold text-blue-700">{pos.code}</td><td className="px-4 py-3"><div className="max-w-xs font-semibold text-slate-800">{pos.title || '-'}</div><div className="mt-1"><PositionLevelBadge level={getPositionLevel(pos)} /></div></td><td className="px-4 py-3 text-slate-600">{pos.entity || '-'}</td><td className="px-4 py-3">{pos.incumbent ? <span className="text-slate-700">{pos.incumbent}</span> : <span className="font-semibold text-amber-700">Vacante</span>}</td><td className="px-4 py-3"><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${POSITION_STATUS_COLORS[unifiedStatus]}`}>{POSITION_STATUS_LABELS[unifiedStatus]}</span></td><td className="px-4 py-3 text-center font-semibold">{candidateCount}</td><td className="px-4 py-3 text-right"><PositionStatusMenu position={pos} onChange={setPositionAdministrativeStatus} /></td>
                         </tr>;
                       })}
                     </tbody>
