@@ -258,16 +258,9 @@ const formatExcelDate = (value: unknown) => {
   return String(value).trim();
 };
 
-/** The planned profile combines every profile field supplied by the position file. */
-export const getPlannedProfile = (position: Position) => {
-  const parts = [position.rankReq, position.role, position.catSpecQualReq]
-    .map(value => value?.trim())
-    .filter((value): value is string => Boolean(value));
-  const uniqueParts = parts.filter((value, index) =>
-    parts.findIndex(part => part.localeCompare(value, 'it', { sensitivity: 'base' }) === 0) === index
-  );
-  return uniqueParts.join(' • ') || 'N.D.';
-};
+/** The planned profile is supplied by the position file as rank and role. */
+export const getPlannedProfile = (position: Position) =>
+  [position.rankReq, position.role].map(value => value?.trim()).filter(Boolean).join(' • ') || 'N.D.';
 
 const getSortableDate = (value: string) => {
   const match = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
@@ -5325,7 +5318,7 @@ const PositionDetailView = ({
   const positionLevel = useMemo(() => getPositionLevel(position), [position]);
   const profileSummary = useMemo(() => {
     return getPlannedProfile(position);
-  }, [position.rankReq, position.role, position.catSpecQualReq]);
+  }, [position.rankReq, position.role]);
 
   const positionCandidates = useMemo(() => {
     return allCandidates.filter(c => !!evaluations[`${position.code}_${c.id}`]);

@@ -30,10 +30,8 @@ const state = (candidates: Candidate[], positions: Position[]): AppData => ({
 });
 
 describe("conservative import/update", () => {
-  it("builds the planned profile from rank, role and category/specialty", () => {
-    expect(getPlannedProfile(position({ rankReq: "Col.", role: "Armi", catSpecQualReq: "Pilota" }))).toBe("Col. • Armi • Pilota");
-    expect(getPlannedProfile(position({ rankReq: "Col.", catSpecQualReq: "Pilota" }))).toBe("Col. • Pilota");
-    expect(getPlannedProfile(position({ rankReq: "Col.", role: "Armi", catSpecQualReq: "armi" }))).toBe("Col. • Armi");
+  it("builds the planned profile from the position rank and role", () => {
+    expect(getPlannedProfile(position({ rankReq: "Col.", role: "Armi", catSpecQualReq: "Pilota" }))).toBe("Col. • Armi");
     expect(getPlannedProfile(position())).toBe("N.D.");
   });
 
