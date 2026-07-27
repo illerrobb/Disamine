@@ -183,6 +183,14 @@ type MultiSelectOption = {
   meta?: string;
 };
 
+type CandidateSortField = 'requirements' | 'essential' | 'desirable' | 'mandates' | 'name' | 'feoDate';
+type CandidateSortDirection = 'asc' | 'desc';
+type CandidateSortCriterion = {
+  id: string;
+  field: CandidateSortField;
+  direction: CandidateSortDirection;
+};
+
 // --- Helper: Excel Parsing Logic ---
 
 const normalizeHeader = (h: string) => h?.toString().trim().toUpperCase().replace(/\s+/g, ' ') || "";
@@ -896,6 +904,79 @@ const getOtherSelectionInfo = (candidateId: string, currentPositionId: string, e
   }
   return null;
 };
+
+const CANDIDATE_SORT_OPTIONS: Array<{
+  value: CandidateSortField;
+  label: string;
+  ascLabel: string;
+  descLabel: string;
+  defaultDirection: CandidateSortDirection;
+}> = [
+  { value: 'mandates', label: 'Mandati esteri precedenti', ascLabel: 'Meno prima', descLabel: 'Più prima', defaultDirection: 'asc' },
+  { value: 'requirements', label: 'Requisiti soddisfatti', ascLabel: 'Meno prima', descLabel: 'Più prima', defaultDirection: 'desc' },
+  { value: 'essential', label: 'Requisiti essenziali', ascLabel: 'Meno prima', descLabel: 'Più prima', defaultDirection: 'desc' },
+  { value: 'desirable', label: 'Requisiti desiderabili', ascLabel: 'Meno prima', descLabel: 'Più prima', defaultDirection: 'desc' },
+  { value: 'feoDate', label: 'Data ente di servizio', ascLabel: 'Meno recente prima', descLabel: 'Più recente prima', defaultDirection: 'asc' },
+  { value: 'name', label: 'Nominativo', ascLabel: 'A → Z', descLabel: 'Z → A', defaultDirection: 'asc' }
+];
+
+const parseMandateCount = (value: string) => {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized || ['-', 'nessuno', 'nessun mandato', 'no'].includes(normalized)) return 0;
+  const number = normalized.match(/\d+/);
+  return number ? Number(number[0]) : Number.POSITIVE_INFINITY;
+};
+
+const parseItalianDate = (value: string) => {
+  const match = value.trim().match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})$/);
+  if (!match) return Number.POSITIVE_INFINITY;
+  const year = Number(match[3].length === 2 ? `20${match[3]}` : match[3]);
+  return new Date(year, Number(match[2]) - 1, Number(match[1])).getTime();
+};
+
+const compareKnownNumbers = (valueA: number, valueB: number, direction: CandidateSortDirection) => {
+  const unknownA = !Number.isFinite(valueA);
+  const unknownB = !Number.isFinite(valueB);
+  if (unknownA || unknownB) {
+    if (unknownA && unknownB) return 0;
+    return unknownA ? 1 : -1;
+  }
+  const comparison = valueA - valueB;
+  return direction === 'asc' ? comparison : -comparison;
+};
+
+const sortCandidatesByCriteria = (
+  candidates: Candidate[],
+  criteria: CandidateSortCriterion[],
+  position: Position,
+  evaluations: Record<string, Evaluation>
+) => [...candidates].sort((candidateA, candidateB) => {
+  const evaluationA = evaluations[`${position.code}_${candidateA.id}`];
+  const evaluationB = evaluations[`${position.code}_${candidateB.id}`];
+  if (!evaluationA || !evaluationB) return 0;
+
+  for (const criterion of criteria) {
+    const scoresA = getRequirementScores(evaluationA, position);
+    const scoresB = getRequirementScores(evaluationB, position);
+    let comparison = 0;
+    if (criterion.field === 'requirements') comparison = (scoresA.essentialYes + scoresA.desirableYes) - (scoresB.essentialYes + scoresB.desirableYes);
+    if (criterion.field === 'essential') comparison = scoresA.essentialYes - scoresB.essentialYes;
+    if (criterion.field === 'desirable') comparison = scoresA.desirableYes - scoresB.desirableYes;
+    if (criterion.field === 'mandates') {
+      comparison = compareKnownNumbers(parseMandateCount(candidateA.internationalMandates), parseMandateCount(candidateB.internationalMandates), criterion.direction);
+      if (comparison !== 0) return comparison;
+      continue;
+    }
+    if (criterion.field === 'feoDate') {
+      comparison = compareKnownNumbers(parseItalianDate(candidateA.feoDate), parseItalianDate(candidateB.feoDate), criterion.direction);
+      if (comparison !== 0) return comparison;
+      continue;
+    }
+    if (criterion.field === 'name') comparison = candidateA.nominativo.localeCompare(candidateB.nominativo, 'it', { sensitivity: 'base' });
+    if (comparison !== 0) return criterion.direction === 'asc' ? comparison : -comparison;
+  }
+  return 0;
+});
 
 const FIT_WEIGHTS = {
   essential: 0.7,
@@ -5098,6 +5179,11 @@ const PositionDetailView = ({
   const [isPositionEditOpen, setIsPositionEditOpen] = useState(false);
   const [isPoolDrawerOpen, setIsPoolDrawerOpen] = useState(false);
   const [poolRemovalCandidateId, setPoolRemovalCandidateId] = useState<string | null>(null);
+  const [isSortOpen, setIsSortOpen] = useState(false);
+  const [sortCriteria, setSortCriteria] = useState<CandidateSortCriterion[]>([
+    { id: 'mandates', field: 'mandates', direction: 'asc' },
+    { id: 'requirements', field: 'requirements', direction: 'desc' }
+  ]);
   const baseOrderMap = useMemo(() => new Map(allCandidates.map((c, index) => [c.id, index])), [allCandidates]);
   const previousRowPositionsRef = useRef<Map<string, DOMRect>>(new Map());
   const positionLevel = useMemo(() => getPositionLevel(position), [position]);
@@ -5218,6 +5304,37 @@ const PositionDetailView = ({
     return evaluations[`${position.code}_${dragOverlayCandidate.id}`] ?? null;
   }, [dragOverlayCandidate, evaluations, position.code]);
 
+  const updateSortCriterion = (id: string, patch: Partial<CandidateSortCriterion>) => {
+    setSortCriteria(current => current.map(criterion => criterion.id === id ? { ...criterion, ...patch } : criterion));
+  };
+
+  const moveSortCriterion = (index: number, offset: number) => {
+    setSortCriteria(current => {
+      const target = index + offset;
+      if (target < 0 || target >= current.length) return current;
+      const next = [...current];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  };
+
+  const addSortCriterion = () => {
+    const available = CANDIDATE_SORT_OPTIONS.find(option => !sortCriteria.some(criterion => criterion.field === option.value));
+    if (!available) return;
+    setSortCriteria(current => [...current, {
+      id: `${available.value}-${Date.now()}`,
+      field: available.value,
+      direction: available.defaultDirection
+    }]);
+  };
+
+  const applyCandidateSort = () => {
+    if (sortCriteria.length === 0) return;
+    const sorted = sortCandidatesByCriteria(orderedCandidates, sortCriteria, position, evaluations);
+    onReorder(position.code, sorted.map(candidate => candidate.id));
+    setIsSortOpen(false);
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-slate-50">
       <header className="bg-white border-b border-slate-200 shadow-sm z-20">
@@ -5302,6 +5419,65 @@ const PositionDetailView = ({
              </div>
              
              <div className="flex items-center gap-2">
+                <div className="relative">
+                  <Button variant="secondary" onClick={() => setIsSortOpen(open => !open)}>
+                    <ArrowUpDown className="w-4 h-4 mr-2" /> Ordina persone
+                  </Button>
+                  {isSortOpen && (
+                    <div className="absolute right-0 top-full z-40 mt-2 w-[520px] rounded-xl border border-slate-200 bg-white p-4 text-left shadow-xl">
+                      <div className="mb-3">
+                        <h3 className="font-bold text-slate-800">Ordinamento a più livelli</h3>
+                        <p className="mt-1 text-xs text-slate-500">Il primo criterio ha la priorità; i successivi risolvono le parità. L'ordine viene salvato nella scheda.</p>
+                      </div>
+                      <div className="space-y-2">
+                        {sortCriteria.map((criterion, index) => {
+                          const option = CANDIDATE_SORT_OPTIONS.find(item => item.value === criterion.field)!;
+                          return (
+                            <div key={criterion.id} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2">
+                              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-bold text-blue-700">{index + 1}</span>
+                              <select
+                                aria-label={`Criterio ${index + 1}`}
+                                className="min-w-0 flex-1 rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm"
+                                value={criterion.field}
+                                onChange={event => {
+                                  const field = event.target.value as CandidateSortField;
+                                  const selectedOption = CANDIDATE_SORT_OPTIONS.find(item => item.value === field)!;
+                                  updateSortCriterion(criterion.id, { field, direction: selectedOption.defaultDirection });
+                                }}
+                              >
+                                {CANDIDATE_SORT_OPTIONS.map(item => (
+                                  <option key={item.value} value={item.value} disabled={sortCriteria.some(other => other.id !== criterion.id && other.field === item.value)}>{item.label}</option>
+                                ))}
+                              </select>
+                              <select
+                                aria-label={`Direzione criterio ${index + 1}`}
+                                className="w-36 rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm"
+                                value={criterion.direction}
+                                onChange={event => updateSortCriterion(criterion.id, { direction: event.target.value as CandidateSortDirection })}
+                              >
+                                <option value="asc">{option.ascLabel}</option>
+                                <option value="desc">{option.descLabel}</option>
+                              </select>
+                              <div className="flex">
+                                <button aria-label="Aumenta priorità" disabled={index === 0} className="p-1 text-slate-500 disabled:opacity-25" onClick={() => moveSortCriterion(index, -1)}><ChevronDown className="h-4 w-4 rotate-180" /></button>
+                                <button aria-label="Riduci priorità" disabled={index === sortCriteria.length - 1} className="p-1 text-slate-500 disabled:opacity-25" onClick={() => moveSortCriterion(index, 1)}><ChevronDown className="h-4 w-4" /></button>
+                                <button aria-label="Rimuovi criterio" className="p-1 text-slate-400 hover:text-red-600" onClick={() => setSortCriteria(current => current.filter(item => item.id !== criterion.id))}><Trash2 className="h-4 w-4" /></button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {sortCriteria.length === 0 && <div className="rounded-lg border border-dashed border-slate-300 p-4 text-center text-sm text-slate-500">Aggiungi almeno un criterio.</div>}
+                      <div className="mt-3 flex items-center justify-between">
+                        <button disabled={sortCriteria.length === CANDIDATE_SORT_OPTIONS.length} className="flex items-center gap-1 text-sm font-semibold text-blue-600 disabled:text-slate-300" onClick={addSortCriterion}><Plus className="h-4 w-4" /> Aggiungi criterio</button>
+                        <div className="flex gap-2">
+                          <Button variant="secondary" onClick={() => setIsSortOpen(false)}>Annulla</Button>
+                          <Button variant="primary" disabled={sortCriteria.length === 0} onClick={applyCandidateSort}>Applica ordinamento</Button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
                 <Filter className="w-4 h-4 text-slate-400" />
                 <select 
                   className="text-sm border-none bg-transparent focus:ring-0 font-medium text-slate-600 cursor-pointer"
