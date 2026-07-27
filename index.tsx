@@ -753,8 +753,13 @@ const buildReiterationSuggestions = (
     const nativeEvaluations = positionEvaluations.filter(evaluation => evaluation.source !== 'pool');
     const poolEvaluations = positionEvaluations.filter(evaluation => evaluation.source === 'pool');
     const viableStatuses = new Set<Evaluation['status']>(['pending', 'reserve', 'selected']);
-    const viable = positionEvaluations.filter(evaluation => viableStatuses.has(evaluation.status));
-    const viableNative = nativeEvaluations.filter(evaluation => viableStatuses.has(evaluation.status));
+    const selectedForOtherPositions = new Set(Object.values(evaluations)
+      .filter(evaluation => evaluation.positionId !== position.code && evaluation.status === 'selected')
+      .map(evaluation => evaluation.candidateId));
+    const isActuallyAvailable = (evaluation: Evaluation) =>
+      viableStatuses.has(evaluation.status) && !selectedForOtherPositions.has(evaluation.candidateId);
+    const viable = positionEvaluations.filter(isActuallyAvailable);
+    const viableNative = nativeEvaluations.filter(isActuallyAvailable);
     const selected = positionEvaluations.some(evaluation => evaluation.status === 'selected');
     const nativeCandidates = nativeEvaluations.length;
     const viableCandidates = viable.length;
@@ -774,7 +779,9 @@ const buildReiterationSuggestions = (
       );
     }).length / viable.length : 0;
 
-    const supplyRisk = viableCandidates === 0 ? 35 : viableCandidates === 1 ? 30 : viableCandidates === 2 ? 24 : viableCandidates === 3 ? 16 : viableCandidates === 4 ? 8 : 0;
+    // An empty candidate pool is the strongest signal that a position needs to be
+    // reiterated; it must never fall into the low-risk/observation band.
+    const supplyRisk = viableCandidates === 0 ? 70 : viableCandidates === 1 ? 45 : viableCandidates === 2 ? 30 : viableCandidates === 3 ? 20 : viableCandidates === 4 ? 10 : 0;
     const competitionRisk = Math.round(sharedRatio * 20);
     const rejectionRisk = Math.round(rejectionRatio * 15);
     const poolRisk = Math.round(poolRatio * 10);
@@ -794,6 +801,10 @@ const buildReiterationSuggestions = (
     if (poolRatio >= .34) reasons.push(`La copertura dipende per il ${Math.round(poolRatio * 100)}% dal bacino di altre posizioni.`);
     if (relativeRisk >= 5) reasons.push(`Domanda inferiore alla mediana del ciclo (${medianNative} candidature).`);
     if (selected) reasons.push('È già presente un candidato selezionato: reiterazione normalmente non necessaria.');
+    const assignedElsewhereCount = positionEvaluations.filter(evaluation =>
+      selectedForOtherPositions.has(evaluation.candidateId)
+    ).length;
+    if (assignedElsewhereCount > 0) reasons.push(`${assignedElsewhereCount} candidat${assignedElsewhereCount === 1 ? 'o è già stato selezionato' : 'i sono già stati selezionati'} per altre posizioni.`);
     if (!reasons.length) reasons.push('Il bacino presenta una copertura adeguata e diversificata.');
 
     return {
@@ -801,7 +812,7 @@ const buildReiterationSuggestions = (
       poolCandidates: poolEvaluations.length, selected, reasons,
       metrics: [
         { label: 'Candidature', value: String(nativeCandidates), detail: `mediana ciclo ${medianNative}` },
-        { label: 'Utilizzabili', value: String(viableCandidates), detail: 'pending, riserva o selezionati' },
+        { label: 'Utilizzabili', value: String(viableCandidates), detail: 'esclusi i selezionati altrove' },
         { label: 'Multi-posizione', value: `${Math.round(sharedRatio * 100)}%`, detail: `${sharedCandidates} candidati contendibili` },
         { label: 'Non idonei', value: `${Math.round(rejectionRatio * 100)}%`, detail: `${rejectedCount} candidature` },
         { label: 'Dal bacino', value: String(poolEvaluations.length), detail: `${Math.round(poolRatio * 100)}% degli utilizzabili` },
@@ -2967,18 +2978,18 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
 
   const baseHeaders = [
     "Nominativo",
-    "Profilo richiesto",
+    `Profilo richiesto\n${[position.rankReq, position.catSpecQualReq].filter(Boolean).join(" ") || "N/D"}`,
     "Attribuzioni specifiche/Corsi obbligatori",
     ...(includeOfcn ? ["Idoneità OFCN"] : []),
     `NOS\n${position.nosReq}`,
-    `Livello inglese\n${position.englishReq}`
+    `Livello inglese\n${position.englishReq}\n(Data accertamento)`
   ];
 
   // Total columns calculation
   // Fixed Left: baseHeaders
   // Requirements: totalReqsCount
-  // Fixed Right: Corso, Data FEO, Ente, Mandati Estero, Parere, Origine, Note (7 cols)
-  const totalCols = baseHeaders.length + totalReqsCount + 7;
+  // Fixed Right: Corso, Data FEO, Ente, Mandati Estero, Parere, Note (6 cols)
+  const totalCols = baseHeaders.length + totalReqsCount + 6;
 
   // --- Build Header Rows ---
 
@@ -2987,12 +2998,19 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
   const row1 = Array(totalCols).fill("");
   row1[0] = titleText;
 
-  // Row 2: Dedalus Index
-  const dedalusText = `Indice di funzionalità Dedalus: ${position.poInterest || 'N/A'}`;
+  // Row 2: Daedalus Index
+  const dedalusText = `Indice di funzionalità Daedalus: ${position.poInterest || 'N/A'}`;
   const row2 = Array(totalCols).fill("");
   row2[0] = dedalusText;
 
-  // Row 3: Legend
+  // Row 3: current incumbent/vacancy
+  const incumbentText = position.incumbent
+    ? `Attuale titolare ${position.incumbent}`
+    : "Posizione vacante";
+  const incumbentRow = Array(totalCols).fill("");
+  incumbentRow[0] = incumbentText;
+
+  // Row 4: Legend
   const legendText = "in ROSSO la mancanza (o parziale possesso) di quanto previsto per essere eleggibile per la posizione in titolo\nin VERDE l'attinenza dei requisiti degli Ufficiali segnalati a quanto previsto dalla Job description";
   const row3 = Array(totalCols).fill("");
   row3[0] = legendText;
@@ -3042,7 +3060,6 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
      "Ente FEO",
      "Nr. mandati estero / data ultimo rientro",
      "Parere Com.te",
-     "Origine",
      "Note"
   ];
 
@@ -3088,11 +3105,9 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
 
     const englishLanguage = c.languages.find(l => l.language === "INGLESE");
     const englishLevelRaw = englishLanguage?.level ?? "";
-    const englishLevelDigits = englishLevelRaw.replace(/\D/g, "");
-    const englishLevel = englishLevelDigits.length >= 4 ? englishLevelDigits.slice(0, 4) : englishLevelDigits;
     const englishExpiry = englishLanguage?.expiry || "";
     const englishCell = englishLanguage
-      ? `INGLESE\n${englishLevel || englishLevelRaw}${englishExpiry ? `\n${englishExpiry}` : ""}`
+      ? `INGLESE\n${englishLevelRaw}${englishExpiry ? `\n${englishExpiry}` : ""}`
       : "";
 
     const nominativoLabel = `${[c.rank, c.role, c.category, c.specialty].filter(Boolean).join(" ")}\n${c.nominativo}`.trim();
@@ -3111,14 +3126,13 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
     return {
       values: [
        ...baseValues,
-       ...essentialReqs.map(r => ev.reqEvaluations[r.id] === 'yes' ? 'SI' : ev.reqEvaluations[r.id] === 'no' ? 'NO' : '-'),
-       ...desirableReqs.map(r => ev.reqEvaluations[r.id] === 'yes' ? 'SI' : ev.reqEvaluations[r.id] === 'no' ? 'NO' : '-'),
+       ...essentialReqs.map(r => ev.reqEvaluations[r.id] === 'yes' ? 'SI' : ev.reqEvaluations[r.id] === 'no' ? 'NO' : ev.reqEvaluations[r.id] === 'partial' ? 'PARZIALE' : '-'),
+       ...desirableReqs.map(r => ev.reqEvaluations[r.id] === 'yes' ? 'SI' : ev.reqEvaluations[r.id] === 'no' ? 'NO' : ev.reqEvaluations[r.id] === 'partial' ? 'PARZIALE' : '-'),
        corsoGraduat, // Corso/Graduat.
        c.feoDate, // Data FEO
        c.serviceEntity, // Ente FEO
        mandatesDetail, // Mandati Estero / data ultimo rientro
        c.commanderOpinion || mapStatusToText(ev.status), // Parere
-       normalizeEvaluation(ev).source === "pool" ? `Bacino (da ${normalizeEvaluation(ev).sourcePosition || "-"})` : "Nativo",
        noteText // Note
       ],
       isSelected
@@ -3131,24 +3145,26 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
     { s: { r: 0, c: 0 }, e: { r: 0, c: totalCols - 1 } },
     // Row 2 Dedalus
     { s: { r: 1, c: 0 }, e: { r: 1, c: totalCols - 1 } },
-    // Row 3 Legend
+    // Row 3 incumbent/vacancy
     { s: { r: 2, c: 0 }, e: { r: 2, c: totalCols - 1 } },
+    // Row 4 Legend
+    { s: { r: 3, c: 0 }, e: { r: 3, c: totalCols - 1 } },
 
     // Row 5 Group Headers
     // Nominativi (Rowspan 3: A5-A7)
-    { s: { r: 3, c: 0 }, e: { r: 5, c: 0 } },
+    { s: { r: 4, c: 0 }, e: { r: 6, c: 0 } },
     // Basici (Colspan base headers excluding nominativo, spanning 2 rows)
-    { s: { r: 3, c: 1 }, e: { r: 4, c: baseHeaders.length - 1 } },
+    { s: { r: 4, c: 1 }, e: { r: 5, c: baseHeaders.length - 1 } },
     // Job Description (Colspan Total Reqs)
-    (totalReqsCount > 0 ? { s: { r: 3, c: requisitiStartCol }, e: { r: 3, c: requisitiStartCol + totalReqsCount - 1 } } : null),
+    (totalReqsCount > 0 ? { s: { r: 4, c: requisitiStartCol }, e: { r: 4, c: requisitiStartCol + totalReqsCount - 1 } } : null),
     // Elementi d'Impiego (Colspan 6, spanning 2 rows)
-    { s: { r: 3, c: requisitiStartCol + totalReqsCount }, e: { r: 4, c: totalCols - 1 } },
+    { s: { r: 4, c: requisitiStartCol + totalReqsCount }, e: { r: 5, c: totalCols - 1 } },
 
     // Row 6 Sub-headers
     // Essential
-    (essentialCount > 0 ? { s: { r: 4, c: requisitiStartCol }, e: { r: 4, c: requisitiStartCol + essentialCount - 1 } } : null),
+    (essentialCount > 0 ? { s: { r: 5, c: requisitiStartCol }, e: { r: 5, c: requisitiStartCol + essentialCount - 1 } } : null),
     // Desirable
-    (desirableCount > 0 ? { s: { r: 4, c: requisitiStartCol + essentialCount }, e: { r: 4, c: requisitiStartCol + totalReqsCount - 1 } } : null)
+    (desirableCount > 0 ? { s: { r: 5, c: requisitiStartCol + essentialCount }, e: { r: 5, c: requisitiStartCol + totalReqsCount - 1 } } : null)
   ].filter(Boolean);
 
   const candidatesWithoutFeoDate = candidates.filter(candidate => !candidate.feoDate);
@@ -3159,6 +3175,7 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
   const wsData = [
     row1,
     row2,
+    incumbentRow,
     row3,
     row5,
     row6,
@@ -3167,9 +3184,9 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
   ];
 
   const worksheet = XLSX.utils.aoa_to_sheet(wsData);
-  if (worksheet["A3"]) {
-    worksheet["A3"].t = "s";
-    worksheet["A3"].v = legendText;
+  if (worksheet["A4"]) {
+    worksheet["A4"].t = "s";
+    worksheet["A4"].v = legendText;
   }
   worksheet['!merges'] = merges;
 
@@ -3229,31 +3246,35 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
   for (let c = 0; c < totalCols; c += 1) {
     setCellStyle(XLSX.utils.encode_cell({ r: 1, c }), makeStyle({ bold: true, size: 10 }));
   }
+  // Incumbent row
+  for (let c = 0; c < totalCols; c += 1) {
+    setCellStyle(XLSX.utils.encode_cell({ r: 2, c }), makeStyle({ bold: true, size: 10 }));
+  }
   // Legend row
   for (let c = 0; c < totalCols; c += 1) {
-    setCellStyle(XLSX.utils.encode_cell({ r: 2, c }), makeStyle({ size: 9 }));
+    setCellStyle(XLSX.utils.encode_cell({ r: 3, c }), makeStyle({ size: 9 }));
   }
   // Group header row
   for (let c = 0; c < totalCols; c += 1) {
-    setCellStyle(XLSX.utils.encode_cell({ r: 3, c }), makeStyle({ bold: true, fill: headerFillBlue }));
+    setCellStyle(XLSX.utils.encode_cell({ r: 4, c }), makeStyle({ bold: true, fill: headerFillBlue }));
   }
   // Essential/Desirable row
   for (let c = 0; c < totalCols; c += 1) {
-    setCellStyle(XLSX.utils.encode_cell({ r: 4, c }), makeStyle({ bold: true, fill: headerFillBlue }));
+    setCellStyle(XLSX.utils.encode_cell({ r: 5, c }), makeStyle({ bold: true, fill: headerFillBlue }));
   }
   // Column headers row
   for (let c = 0; c < totalCols; c += 1) {
-    setCellStyle(XLSX.utils.encode_cell({ r: 5, c }), makeStyle({ bold: true, fill: headerFillBlue, size: 9, align: "center" }));
+    setCellStyle(XLSX.utils.encode_cell({ r: 6, c }), makeStyle({ bold: true, fill: headerFillBlue, size: 9, align: "center" }));
   }
 
   // Nominativo header cell (white background)
-  [3, 4, 5].forEach((r) => {
+  [4, 5, 6].forEach((r) => {
     setCellStyle(XLSX.utils.encode_cell({ r, c: 0 }), makeStyle({ bold: true, fill: white, size: 9 }));
   });
 
   // Data rows
   dataRows.forEach((row, idx) => {
-    const r = 6 + idx;
+    const r = 7 + idx;
     row.values.forEach((value, c) => {
       const cellAddr = XLSX.utils.encode_cell({ r, c });
       if (!worksheet[cellAddr]) return;
@@ -3261,6 +3282,7 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
       let bold = false;
       if (value === "SI") color = green;
       if (value === "NO") color = red;
+      if (value === "PARZIALE") color = red;
       const fill = c === 0 ? nominativoFill : white;
       if (row.isSelected && c === totalCols - 1) {
         color = green;
@@ -3324,6 +3346,7 @@ const exportToExcel = (position: Position, candidates: Candidate[], evaluations:
 
   worksheet["!rows"] = [
     { hpt: 20 },
+    { hpt: 18 },
     { hpt: 18 },
     { hpt: 30 },
     { hpt: 22 },
@@ -5540,12 +5563,25 @@ const ReiterationAnalysisView = ({
 }) => {
   const [showAll, setShowAll] = useState(false);
   const [expandedCode, setExpandedCode] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [priorityFilter, setPriorityFilter] = useState<ReiterationPriority | 'tutte'>('tutte');
+  const [occupancyFilter, setOccupancyFilter] = useState<'tutte' | 'vacanti' | 'con-titolare'>('tutte');
   const suggestions = useMemo(
     () => buildReiterationSuggestions(positions, candidates, evaluations),
     [positions, candidates, evaluations]
   );
   const recommended = suggestions.filter(suggestion => suggestion.score >= 40 && !suggestion.selected);
-  const visible = showAll ? suggestions : recommended;
+  const baseVisible = showAll ? suggestions : recommended;
+  const normalizedSearch = search.trim().toLocaleLowerCase('it');
+  const visible = baseVisible.filter(suggestion => {
+    const searchable = [suggestion.position.code, suggestion.position.title, suggestion.position.entity, suggestion.position.location, suggestion.position.incumbent]
+      .filter(Boolean).join(' ').toLocaleLowerCase('it');
+    const matchesSearch = !normalizedSearch || searchable.includes(normalizedSearch);
+    const matchesPriority = priorityFilter === 'tutte' || suggestion.priority === priorityFilter;
+    const matchesOccupancy = occupancyFilter === 'tutte'
+      || (occupancyFilter === 'vacanti' ? !suggestion.position.incumbent : Boolean(suggestion.position.incumbent));
+    return matchesSearch && matchesPriority && matchesOccupancy;
+  });
   const highPriority = recommended.filter(suggestion => suggestion.priority === 'alta').length;
 
   return (
@@ -5573,6 +5609,19 @@ const ReiterationAnalysisView = ({
         <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 mb-5 flex items-start gap-3 text-sm text-blue-900">
           <BarChart3 className="w-5 h-5 shrink-0 mt-0.5" />
           <p><strong>Come leggere il risultato:</strong> il punteggio 0–100 è un indicatore di necessità, non una decisione automatica. Da 60 la priorità è alta, da 40 è media. Apri “Dettaglio analisi” per verificare dati e motivazioni prima di reiterare.</p>
+        </div>
+
+        <div className="mb-5 grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-3 rounded-xl border border-slate-200 bg-white p-4">
+          <label className="relative">
+            <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+            <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Cerca codice, titolo, ente, sede o titolare…" className="w-full rounded-lg border border-slate-200 py-2 pl-9 pr-3 text-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100" />
+          </label>
+          <select value={priorityFilter} onChange={event => setPriorityFilter(event.target.value as ReiterationPriority | 'tutte')} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+            <option value="tutte">Tutte le priorità</option><option value="alta">Priorità alta</option><option value="media">Priorità media</option><option value="osservazione">Osservazione</option>
+          </select>
+          <select value={occupancyFilter} onChange={event => setOccupancyFilter(event.target.value as 'tutte' | 'vacanti' | 'con-titolare')} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+            <option value="tutte">Tutte le posizioni</option><option value="vacanti">Solo vacanti</option><option value="con-titolare">Con titolare</option>
+          </select>
         </div>
 
         <div className="space-y-4">
