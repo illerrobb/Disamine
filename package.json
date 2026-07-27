@@ -9,7 +9,8 @@
     "dev": "vite",
     "build": "vite build",
     "build:win": "npm run build && electron-builder --win nsis",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run"
   },
   "dependencies": {
     "jspdf": "^4.2.1",
@@ -25,7 +26,8 @@
     "electron": "^41.7.1",
     "electron-builder": "^26.15.3",
     "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "vite": "^6.2.0",
+    "vitest": "^3.2.7"
   },
   "build": {
     "appId": "it.disamine.app",
