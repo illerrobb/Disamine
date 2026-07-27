@@ -46,13 +46,13 @@ import {
 
 // --- Types ---
 
-interface Language {
+export interface Language {
   language: string;
   level: string;
   expiry: string;
 }
 
-interface Candidate {
+export interface Candidate {
   id: string; // Matricola
   nominativo: string; // Full Name from "NOMINATIVO" or constructed
   firstName: string;
@@ -78,14 +78,14 @@ interface Candidate {
   originalData: any;
 }
 
-interface Requirement {
+export interface Requirement {
   id: string;
   text: string;
   type: 'essential' | 'desirable';
   hidden: boolean;
 }
 
-interface Position {
+export interface Position {
   code: string;
   entity: string; // ENTE
   title: string; // JOB TITLE
@@ -105,7 +105,7 @@ interface Position {
   jobDescriptionFileName?: string;
 }
 
-interface Evaluation {
+export interface Evaluation {
   candidateId: string;
   positionId: string;
   reqEvaluations: Record<string, 'yes' | 'no' | 'partial' | 'pending'>; // Key is requirement text/id
@@ -122,7 +122,7 @@ interface Cycle {
   id: string;
 }
 
-interface AppData {
+export interface AppData {
   candidates: Candidate[];
   positions: Position[];
   evaluations: Record<string, Evaluation>; // Key: `${positionId}_${candidateId}`
@@ -298,7 +298,7 @@ const formatRequirements = (requirements: Requirement[]) => {
 const normalizeRequirements = (requirements: Requirement[]) => {
   if (!requirements || requirements.length === 0) return "";
   return requirements
-    .map((req) => safeTrim(req?.text).toLowerCase())
+    .map((req) => `${req?.type ?? ""}|${normalizeText(req?.text).toLowerCase()}`)
     .filter(Boolean)
     .sort()
     .join("|");
@@ -334,6 +334,8 @@ const normalizeLanguages = (languages: Language[]) => {
 const candidateFieldDefinitions: FieldDescriptor<Candidate>[] = [
   { label: "Matricola", getValue: (candidate) => candidate.id },
   { label: "Nominativo", getValue: (candidate) => candidate.nominativo },
+  { label: "Nome", getValue: (candidate) => candidate.firstName },
+  { label: "Cognome", getValue: (candidate) => candidate.lastName },
   { label: "Grado", getValue: (candidate) => candidate.rank },
   { label: "Ruolo", getValue: (candidate) => candidate.role },
   { label: "Categoria", getValue: (candidate) => candidate.category },
@@ -351,11 +353,7 @@ const candidateFieldDefinitions: FieldDescriptor<Candidate>[] = [
     format: (value) => formatLanguages(value as Language[]),
     normalize: (value) => normalizeLanguages(value as Language[])
   },
-  { label: "Posizioni segnalate", getValue: (candidate) => candidate.rawAppliedString },
-  { label: "Parere comandante", getValue: (candidate) => candidate.commanderOpinion },
-  { label: "Attribuzioni specifiche", getValue: (candidate) => candidate.specificAssignments },
-  { label: "Idoneità OFCN", getValue: (candidate) => candidate.ofcnSuitability },
-  { label: "Note generali", getValue: (candidate) => candidate.globalNotes }
+  { label: "Posizioni segnalate", getValue: (candidate) => candidate.rawAppliedString }
 ];
 
 const positionFieldDefinitions: FieldDescriptor<Position>[] = [
@@ -402,34 +400,68 @@ const buildFieldDiffs = <T,>(existing: T, incoming: T, fields: FieldDescriptor<T
 
 const hasDifferences = (diffs: FieldDiff[]) => diffs.some((diff) => diff.changed);
 
-const hasOriginalDataDifferences = (existing: Record<string, unknown> | null, incoming: Record<string, unknown> | null) => {
-  if (!existing || !incoming) return false;
-  const keys = new Set([...Object.keys(existing), ...Object.keys(incoming)]);
-  for (const key of keys) {
-    if (normalizeValue(existing[key]) !== normalizeValue(incoming[key])) {
-      return true;
-    }
-  }
-  return false;
+export const getImportDiffs = (existing: Candidate | Position, incoming: Candidate | Position) =>
+  "id" in existing
+    ? buildFieldDiffs(existing, incoming as Candidate, candidateFieldDefinitions)
+    : buildFieldDiffs(existing, incoming as Position, positionFieldDefinitions);
+
+const languageKey = (language: Language) =>
+  [language.language, language.level, language.expiry].map(value => normalizeText(value).toLowerCase()).join("|");
+
+const mergeLanguages = (existing: Language[], incoming: Language[]) => {
+  const merged = new Map<string, Language>();
+  [...existing, ...incoming].forEach(language => merged.set(languageKey(language), language));
+  return [...merged.values()];
 };
 
-const mergeRawAppliedStrings = (existingRaw: string, incomingRaw: string) => {
-  const existing = existingRaw.trim();
-  const incoming = incomingRaw.trim();
-  if (!existing) return incoming;
-  if (!incoming) return existing;
+/** Merge only source-owned fields; everything else on the application object survives. */
+export const mergeCandidateForImport = (existing: Candidate, incoming: Candidate): Candidate => ({
+  ...existing,
+  id: incoming.id,
+  nominativo: incoming.nominativo,
+  firstName: incoming.firstName,
+  lastName: incoming.lastName,
+  rank: incoming.rank,
+  role: incoming.role,
+  category: incoming.category,
+  specialty: incoming.specialty,
+  serviceEntity: incoming.serviceEntity,
+  nosLevel: incoming.nosLevel,
+  nosQual: incoming.nosQual,
+  nosExpiry: incoming.nosExpiry,
+  internationalMandates: incoming.internationalMandates,
+  feoDate: incoming.feoDate,
+  mixDescription: incoming.mixDescription,
+  languages: mergeLanguages(existing.languages ?? [], incoming.languages ?? []),
+  rawAppliedString: incoming.rawAppliedString,
+  originalData: incoming.originalData
+});
 
-  const existingUpper = existing.toUpperCase();
-  const incomingUpper = incoming.toUpperCase();
-  if (existingUpper === incomingUpper) return existing;
-  if (existingUpper.includes(incomingUpper)) return existing;
-  if (incomingUpper.includes(existingUpper)) return incoming;
-  return `${existing} | ${incoming}`;
+const requirementKey = (requirement: Requirement) =>
+  `${requirement.type}|${normalizeText(requirement.text).toLowerCase()}`;
+
+export const reconcileRequirements = (existing: Requirement[], incoming: Requirement[]) => {
+  const existingByKey = new Map(existing.map(requirement => [requirementKey(requirement), requirement]));
+  return incoming.map(requirement => {
+    const matched = existingByKey.get(requirementKey(requirement));
+    return matched ? { ...requirement, id: matched.id, hidden: matched.hidden } : requirement;
+  });
 };
 
-const mergeCandidateForImport = (existing: Candidate, incoming: Candidate): Candidate => ({
-  ...incoming,
-  rawAppliedString: mergeRawAppliedStrings(existing.rawAppliedString, incoming.rawAppliedString)
+export const mergePositionForImport = (existing: Position, incoming: Position): Position => ({
+  ...existing,
+  code: incoming.code,
+  entity: incoming.entity,
+  title: incoming.title,
+  requirements: reconcileRequirements(existing.requirements ?? [], incoming.requirements ?? []),
+  englishReq: incoming.englishReq,
+  nosReq: incoming.nosReq,
+  rankReq: incoming.rankReq,
+  catSpecQualReq: incoming.catSpecQualReq,
+  ofcn: incoming.ofcn,
+  poInterest: incoming.poInterest,
+  incumbent: incoming.incumbent,
+  originalData: incoming.originalData
 });
 
 const parseCandidates = (data: any[]): DedupResult<Candidate> => {
@@ -3150,6 +3182,77 @@ const hasCandidateWithdrawn = (
 ) => Object.values(evaluations).some(
   evaluation => evaluation.candidateId === candidateId && evaluation.status === "withdrawn"
 );
+
+type ImportedEntity =
+  | { type: "candidate"; value: Candidate }
+  | { type: "position"; value: Position };
+
+/** Single conservative path for both new imports and accepted conflict updates. */
+export const integrateImportedEntity = (state: AppData, imported: ImportedEntity): AppData => {
+  let candidates = state.candidates;
+  let positions = state.positions;
+  const evaluations = { ...state.evaluations };
+
+  if (imported.type === "candidate") {
+    const index = candidates.findIndex(candidate => candidate.id === imported.value.id);
+    const candidate = index < 0
+      ? imported.value
+      : mergeCandidateForImport(candidates[index], imported.value);
+    const appliedPositionCodes = positions
+      .filter(position => position.code.trim().length >= 2
+        && candidate.rawAppliedString.toUpperCase().includes(position.code.trim().toUpperCase()))
+      .map(position => position.code);
+    const prepared = { ...candidate, appliedPositionCodes };
+
+    candidates = index < 0
+      ? [...candidates, prepared]
+      : candidates.map((current, currentIndex) => currentIndex === index ? prepared : current);
+
+    appliedPositionCodes.forEach(positionId => {
+      const key = `${positionId}_${prepared.id}`;
+      if (!evaluations[key]) {
+        evaluations[key] = {
+          candidateId: prepared.id, positionId, reqEvaluations: {}, notes: "",
+          status: hasCandidateWithdrawn(prepared.id, evaluations) ? "withdrawn" : "pending", source: "native"
+        };
+      }
+    });
+  } else {
+    const index = positions.findIndex(position => position.code === imported.value.code);
+    const position = index < 0
+      ? imported.value
+      : mergePositionForImport(positions[index], imported.value);
+    positions = index < 0
+      ? [...positions, position]
+      : positions.map((current, currentIndex) => currentIndex === index ? position : current);
+
+    candidates = candidates.map(candidate => {
+      const matches = position.code.trim().length >= 2
+        && candidate.rawAppliedString.toUpperCase().includes(position.code.trim().toUpperCase());
+      if (!matches) return candidate;
+      const appliedPositionCodes = candidate.appliedPositionCodes.includes(position.code)
+        ? candidate.appliedPositionCodes
+        : [...candidate.appliedPositionCodes, position.code];
+      const key = `${position.code}_${candidate.id}`;
+      if (!evaluations[key]) {
+        evaluations[key] = {
+          candidateId: candidate.id, positionId: position.code, reqEvaluations: {}, notes: "",
+          status: hasCandidateWithdrawn(candidate.id, evaluations) ? "withdrawn" : "pending", source: "native"
+        };
+      }
+      return { ...candidate, appliedPositionCodes };
+    });
+  }
+
+  return {
+    ...state,
+    candidates,
+    positions,
+    evaluations,
+    favoritePositionIds: state.favoritePositionIds.filter(id => positions.some(position => position.code === id)),
+    lastUpdated: Date.now()
+  };
+};
 
 const exportToExcel = (position: Position, candidates: Candidate[], evaluations: Record<string, Evaluation>, positions: Position[]) => {
   const XLSX = getStyledXlsx();
@@ -6033,7 +6136,7 @@ const RecruitmentApp = () => {
     return { schemaVersion: researchStoreSchemaVersion, researches: [initial], activeResearchId: initial.cycle.id };
   });
   const emptyResearch = useMemo(() => createEmptyResearch({ name: "Nessuna ricerca selezionata", startedAt: 0, id: "" }), []);
-  const appData = researchStore.researches.find(research => research.cycle.id === researchStore.activeResearchId)
+  const appData: AppData = researchStore.researches.find(research => research.cycle.id === researchStore.activeResearchId)
     ?? researchStore.researches[0]
     ?? emptyResearch;
   const setAppData: React.Dispatch<React.SetStateAction<AppData>> = useCallback((action) => {
@@ -6231,7 +6334,7 @@ const RecruitmentApp = () => {
 
     setAppData(prev => {
       const newEvaluations = { ...prev.evaluations };
-      const candidateEvaluations = Object.values(newEvaluations).filter(
+      const candidateEvaluations = Object.values(newEvaluations as Record<string, Evaluation>).filter(
         existingEv => existingEv.candidateId === ev.candidateId
       );
       const candidateIsExcluded = candidateEvaluations.some(existingEv => existingEv.status === "excluded");
@@ -6332,7 +6435,7 @@ const RecruitmentApp = () => {
       const selectedSourceCodes = new Set(selectionEntries.map(([sourceCode]) => sourceCode));
       const desiredBySource = new Map(selectionEntries.map(([sourceCode, candidateIds]) => [sourceCode, new Set(candidateIds)]));
 
-      Object.entries(prev.evaluations).forEach(([key, rawEval]) => {
+      Object.entries(prev.evaluations as Record<string, Evaluation>).forEach(([key, rawEval]) => {
         const evaluation = normalizeEvaluation(rawEval);
         if (evaluation.positionId !== positionId || evaluation.source !== "pool" || !evaluation.sourcePosition) return;
         if (!selectedSourceCodes.has(evaluation.sourcePosition)) return;
@@ -6418,7 +6521,7 @@ const RecruitmentApp = () => {
       let favoritePositionIds = prev.favoritePositionIds;
 
       if (codeChanged) {
-        evaluations = Object.values(prev.evaluations).reduce<Record<string, Evaluation>>((acc, ev) => {
+        evaluations = Object.values(prev.evaluations as Record<string, Evaluation>).reduce<Record<string, Evaluation>>((acc, ev) => {
           const positionId = ev.positionId === originalCode ? normalizedCode : ev.positionId;
           const normalized = normalizeEvaluation(ev);
           const sourcePosition = normalized.sourcePosition === originalCode ? normalizedCode : normalized.sourcePosition;
@@ -6559,119 +6662,6 @@ const RecruitmentApp = () => {
     event.target.value = "";
   };
 
-  const prepareCandidateForInsert = (
-    candidate: Candidate,
-    positions: Position[],
-    evaluations: Record<string, Evaluation>
-  ) => {
-    const candidateWithApplications: Candidate = {
-      ...candidate,
-      appliedPositionCodes: []
-    };
-    const nextEvaluations: Record<string, Evaluation> = { ...evaluations };
-    const rawApp = candidateWithApplications.rawAppliedString.toUpperCase();
-
-    positions.forEach((pos) => {
-      const cleanPosCode = pos.code.trim().toUpperCase();
-      if (cleanPosCode.length < 2) return;
-      if (rawApp.includes(cleanPosCode)) {
-        candidateWithApplications.appliedPositionCodes.push(pos.code);
-        const key = `${pos.code}_${candidateWithApplications.id}`;
-        if (!nextEvaluations[key]) {
-          nextEvaluations[key] = {
-            candidateId: candidateWithApplications.id,
-            positionId: pos.code,
-            reqEvaluations: {},
-            notes: "",
-            status: hasCandidateWithdrawn(candidateWithApplications.id, nextEvaluations) ? "withdrawn" : "pending",
-            source: "native"
-          };
-        }
-      }
-    });
-
-    return { candidate: candidateWithApplications, evaluations: nextEvaluations };
-  };
-
-  const integrateCandidate = (
-    prev: AppData,
-    candidate: Candidate,
-    mode: "add" | "replace"
-  ) => {
-    const { candidate: prepared, evaluations } = prepareCandidateForInsert(
-      candidate,
-      prev.positions,
-      prev.evaluations
-    );
-
-    const candidates =
-      mode === "replace"
-        ? prev.candidates.map((existing) =>
-            existing.id === prepared.id ? prepared : existing
-          )
-        : [...prev.candidates, prepared];
-
-    return {
-      ...prev,
-      candidates,
-      evaluations,
-      lastUpdated: Date.now()
-    };
-  };
-
-  const integratePosition = (
-    prev: AppData,
-    position: Position,
-    mode: "add" | "replace"
-  ) => {
-    const nextEvaluations: Record<string, Evaluation> = { ...prev.evaluations };
-    const updatedCandidates = prev.candidates.map((candidate) => ({
-      ...candidate,
-      appliedPositionCodes: [...candidate.appliedPositionCodes]
-    }));
-
-    const cleanPosCode = position.code.trim().toUpperCase();
-    if (cleanPosCode.length >= 2) {
-      updatedCandidates.forEach((candidate) => {
-        const rawApp = candidate.rawAppliedString.toUpperCase();
-        if (rawApp.includes(cleanPosCode)) {
-          if (!candidate.appliedPositionCodes.includes(position.code)) {
-            candidate.appliedPositionCodes.push(position.code);
-          }
-          const key = `${position.code}_${candidate.id}`;
-          if (!nextEvaluations[key]) {
-            nextEvaluations[key] = {
-              candidateId: candidate.id,
-              positionId: position.code,
-              reqEvaluations: {},
-              notes: "",
-              status: hasCandidateWithdrawn(candidate.id, nextEvaluations) ? "withdrawn" : "pending",
-              source: "native"
-            };
-          }
-        }
-      });
-    }
-
-    const positions =
-      mode === "replace"
-        ? prev.positions.map((existing) =>
-            existing.code === position.code ? position : existing
-          )
-        : [...prev.positions, position];
-
-    return {
-      ...prev,
-      positions,
-      candidates: updatedCandidates,
-      evaluations: nextEvaluations,
-      favoritePositionIds: prev.favoritePositionIds.filter((id) =>
-        positions.some((pos) => pos.code === id)
-      ),
-      lastUpdated: Date.now()
-    };
-  };
-
   const resolveImportConflict = (action: "keep" | "replace") => {
     setImportConflicts((prev) => {
       if (prev.length === 0) return prev;
@@ -6679,11 +6669,7 @@ const RecruitmentApp = () => {
 
       if (action === "replace") {
         setAppData((state) => {
-          if (current.type === "candidate") {
-            const mergedCandidate = mergeCandidateForImport(current.existing, current.incoming);
-            return integrateCandidate(state, mergedCandidate, "replace");
-          }
-          return integratePosition(state, current.incoming, "replace");
+          return integrateImportedEntity(state, { type: current.type, value: current.incoming } as ImportedEntity);
         });
       }
 
@@ -6718,15 +6704,12 @@ const RecruitmentApp = () => {
         const existing = existingById.get(candidate.id);
         if (existing) {
           const diffs = buildFieldDiffs(existing, candidate, candidateFieldDefinitions);
-          if (
-            hasDifferences(diffs)
-            || hasOriginalDataDifferences(existing.originalData, candidate.originalData)
-          ) {
+          if (hasDifferences(diffs)) {
             conflicts.push({ type: "candidate", existing, incoming: candidate });
           }
           return;
         }
-        nextState = integrateCandidate(nextState, candidate, "add");
+        nextState = integrateImportedEntity(nextState, { type: "candidate", value: candidate });
         existingById.set(candidate.id, candidate);
         addedCount += 1;
       });
@@ -6785,15 +6768,12 @@ const RecruitmentApp = () => {
         const existing = positionsByCode.get(position.code);
         if (existing) {
           const diffs = buildFieldDiffs(existing, position, positionFieldDefinitions);
-          if (
-            hasDifferences(diffs)
-            || hasOriginalDataDifferences(existing.originalData, position.originalData)
-          ) {
+          if (hasDifferences(diffs)) {
             conflicts.push({ type: "position", existing, incoming: position });
           }
           return;
         }
-        nextState = integratePosition(nextState, position, "add");
+        nextState = integrateImportedEntity(nextState, { type: "position", value: position });
         positionsByCode.set(position.code, position);
         addedCount += 1;
       });
@@ -6831,14 +6811,14 @@ const RecruitmentApp = () => {
   };
 
   const handleSettingsCandidatesUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files ? Array.from(event.target.files) : [];
+    const files: File[] = event.target.files ? Array.from(event.target.files) : [];
     event.target.value = "";
     if (files.length === 0) return;
     await appendCandidatesFromFiles(files);
   };
 
   const handleSettingsPositionsUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files ? Array.from(event.target.files) : [];
+    const files: File[] = event.target.files ? Array.from(event.target.files) : [];
     event.target.value = "";
     if (files.length === 0) return;
     await appendPositionsFromFiles(files);
@@ -7712,7 +7692,7 @@ const RecruitmentApp = () => {
               <div className="border border-slate-200 rounded-lg p-4 bg-slate-50">
                 <div className="text-xs uppercase text-slate-400 font-semibold mb-3">Esistente</div>
                 <dl className="space-y-2">
-                  {conflictDiffs.map((diff) => (
+                  {conflictDiffs.filter((diff) => diff.changed).map((diff) => (
                     <div
                       key={`existing-${diff.label}`}
                       className={`rounded-md border px-2 py-1.5 ${
@@ -7731,7 +7711,7 @@ const RecruitmentApp = () => {
               <div className="border border-blue-200 rounded-lg p-4 bg-blue-50">
                 <div className="text-xs uppercase text-blue-500 font-semibold mb-3">Nuovo</div>
                 <dl className="space-y-2">
-                  {conflictDiffs.map((diff) => (
+                  {conflictDiffs.filter((diff) => diff.changed).map((diff) => (
                     <div
                       key={`incoming-${diff.label}`}
                       className={`rounded-md border px-2 py-1.5 ${
@@ -7788,5 +7768,7 @@ const RecruitmentApp = () => {
   );
 };
 
-const root = createRoot(document.getElementById("root")!);
-root.render(<RecruitmentApp />);
+if (typeof document !== "undefined") {
+  const rootElement = document.getElementById("root");
+  if (rootElement) createRoot(rootElement).render(<RecruitmentApp />);
+}
