@@ -194,6 +194,9 @@ type CandidateSortCriterion = {
   direction: CandidateSortDirection;
 };
 
+type PositionTableSortField = 'code' | 'title' | 'entity' | 'profile' | 'incumbent' | 'turnoverDate' | 'status' | 'candidates';
+type PositionTableSort = { field: PositionTableSortField; direction: 'asc' | 'desc' };
+
 // --- Helper: Excel Parsing Logic ---
 
 const normalizeHeader = (h: string) => h?.toString().trim().toUpperCase().replace(/\s+/g, ' ') || "";
@@ -253,6 +256,22 @@ const formatExcelDate = (value: unknown) => {
   }
 
   return String(value).trim();
+};
+
+/** The planned profile combines every profile field supplied by the position file. */
+export const getPlannedProfile = (position: Position) => {
+  const parts = [position.rankReq, position.role, position.catSpecQualReq]
+    .map(value => value?.trim())
+    .filter((value): value is string => Boolean(value));
+  const uniqueParts = parts.filter((value, index) =>
+    parts.findIndex(part => part.localeCompare(value, 'it', { sensitivity: 'base' }) === 0) === index
+  );
+  return uniqueParts.join(' • ') || 'N.D.';
+};
+
+const getSortableDate = (value: string) => {
+  const match = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  return match ? `${match[3]}-${match[2].padStart(2, '0')}-${match[1].padStart(2, '0')}` : value;
 };
 
 interface DedupResult<T> {
@@ -1919,8 +1938,7 @@ const CandidateDetailView = ({
   };
 
   const formatPositionProfile = useCallback((pos: Position) => {
-    const profileParts = [pos.rankReq, pos.catSpecQualReq].filter(Boolean);
-    return profileParts.length > 0 ? profileParts.join(" • ") : "-";
+    return getPlannedProfile(pos);
   }, []);
 
   return (
@@ -2054,6 +2072,10 @@ const CandidateDetailView = ({
                            <div className="mt-2 text-xs text-slate-500 flex items-center gap-2">
                               <span className="uppercase text-slate-400">Profilo previsto</span>
                               <span className="font-semibold text-slate-600">{profileSummary}</span>
+                           </div>
+                           <div className="mt-1 text-xs text-slate-500 flex items-center gap-2">
+                              <span className="uppercase text-slate-400">Avvicendamento</span>
+                              <span className="font-semibold text-slate-600">{pos.turnoverDate || 'N.D.'}</span>
                            </div>
                            {otherSelection && (
                               <div className="mt-2 text-xs bg-amber-50 text-amber-700 px-2 py-1 rounded border border-amber-200 inline-flex items-center gap-1">
@@ -2881,12 +2903,12 @@ const PositionCard: React.FC<{
              </div>
            </div>
            <div className="flex justify-between border-b border-slate-100 pb-1">
-             <span className="text-slate-400">Grade</span>
-             <span className="font-medium">{position.rankReq || '-'}</span>
+             <span className="text-slate-400">Profilo previsto</span>
+             <span className="font-medium text-right">{getPlannedProfile(position)}</span>
            </div>
            <div className="flex justify-between pb-1">
-             <span className="text-slate-400">Role</span>
-             <span className="font-medium truncate max-w-[120px]">{position.catSpecQualReq || '-'}</span>
+             <span className="text-slate-400">Avvicendamento</span>
+             <span className="font-medium">{position.turnoverDate || 'N.D.'}</span>
            </div>
         </div>
       </div>
@@ -5302,9 +5324,8 @@ const PositionDetailView = ({
   const previousRowPositionsRef = useRef<Map<string, DOMRect>>(new Map());
   const positionLevel = useMemo(() => getPositionLevel(position), [position]);
   const profileSummary = useMemo(() => {
-    const profileParts = [position.rankReq, position.catSpecQualReq, position.englishReq && `Inglese: ${position.englishReq}`].filter(Boolean);
-    return profileParts.length > 0 ? profileParts.join(" • ") : "-";
-  }, [position.rankReq, position.catSpecQualReq, position.englishReq]);
+    return getPlannedProfile(position);
+  }, [position.rankReq, position.role, position.catSpecQualReq]);
 
   const positionCandidates = useMemo(() => {
     return allCandidates.filter(c => !!evaluations[`${position.code}_${c.id}`]);
@@ -6002,7 +6023,11 @@ const ReiterationAnalysisView = ({
     const matchesRole = roleFilter.length === 0 || roleFilter.some(role => matchesReiterationPositionRoleFilter(suggestion.position, role as RoleFilterValue));
     return matchesSearch && matchesPriority && matchesEntity && matchesLevel && matchesRole;
   });
-  const highPriority = recommended.filter(suggestion => suggestion.priority === 'alta').length;
+  const highPriority = visible.filter(suggestion => suggestion.priority === 'alta').length;
+  const visibleCandidateCount = useMemo(() => {
+    const positionCodes = new Set(visible.map(suggestion => suggestion.position.code));
+    return candidates.filter(candidate => Array.from(positionCodes).some(code => !!evaluations[`${code}_${candidate.id}`])).length;
+  }, [candidates, evaluations, visible]);
 
   return (
     <div className="flex-1 overflow-y-auto">
@@ -6028,9 +6053,9 @@ const ReiterationAnalysisView = ({
 
       <div className="p-8">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-7">
-          <div className="rounded-xl bg-slate-900 text-white p-5"><div className="text-sm text-slate-300">Reiterazioni suggerite</div><div className="text-3xl font-bold mt-1">{recommended.length}</div><div className="text-xs text-slate-400 mt-2">su {positions.length} posizioni analizzate</div></div>
+          <div className="rounded-xl bg-slate-900 text-white p-5"><div className="text-sm text-slate-300">Posizioni visualizzate</div><div className="text-3xl font-bold mt-1">{visible.length}</div><div className="text-xs text-slate-400 mt-2">in base ai filtri correnti</div></div>
           <div className="rounded-xl border border-red-200 bg-red-50 p-5"><div className="text-sm text-red-700">Priorità alta</div><div className="text-3xl font-bold text-red-800 mt-1">{highPriority}</div><div className="text-xs text-red-600 mt-2">punteggio di rischio ≥ 60</div></div>
-          <div className="rounded-xl border border-slate-200 bg-white p-5"><div className="text-sm text-slate-500">Candidati analizzati</div><div className="text-3xl font-bold text-slate-800 mt-1">{candidates.length}</div><div className="text-xs text-slate-400 mt-2">incluse tutte le candidature collegate</div></div>
+          <div className="rounded-xl border border-slate-200 bg-white p-5"><div className="text-sm text-slate-500">Candidati analizzati</div><div className="text-3xl font-bold text-slate-800 mt-1">{visibleCandidateCount}</div><div className="text-xs text-slate-400 mt-2">collegati alle posizioni visualizzate</div></div>
         </div>
 
         <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 mb-5 flex items-start gap-3 text-sm text-blue-900">
@@ -6065,7 +6090,7 @@ const ReiterationAnalysisView = ({
                     <p className="text-sm text-slate-500">{suggestion.position.entity}</p>
                     <dl className="mt-3 grid grid-cols-2 gap-x-5 gap-y-2 rounded-lg border border-slate-100 bg-slate-50 p-3 text-xs sm:grid-cols-4">
                       <div><dt className="font-semibold uppercase text-slate-400">N. candidati</dt><dd className="mt-0.5 font-bold text-slate-800">{suggestion.nativeCandidates}</dd></div>
-                      <div><dt className="font-semibold uppercase text-slate-400">Personale previsto</dt><dd className="mt-0.5 font-bold text-slate-800">{suggestion.position.plannedPersonnel || 'N.D.'}</dd></div>
+                      <div><dt className="font-semibold uppercase text-slate-400">Profilo previsto</dt><dd className="mt-0.5 font-bold text-slate-800">{getPlannedProfile(suggestion.position)}</dd></div>
                       <div><dt className="font-semibold uppercase text-slate-400">Attuale titolare</dt><dd className="mt-0.5 font-bold text-slate-800">{suggestion.position.incumbent || 'Vacante'}</dd></div>
                       <div><dt className="font-semibold uppercase text-slate-400">Data avvicendamento</dt><dd className="mt-0.5 font-bold text-slate-800">{suggestion.position.turnoverDate || 'N.D.'}</dd></div>
                     </dl>
@@ -6188,6 +6213,7 @@ const RecruitmentApp = () => {
   const [filterLevel, setFilterLevel] = useState<string[]>([]);
   const [filterRole, setFilterRole] = useState<RoleFilterValue[]>([]);
   const [positionsViewMode, setPositionsViewMode] = useState<'cards' | 'table'>('cards');
+  const [positionTableSort, setPositionTableSort] = useState<PositionTableSort>({ field: 'code', direction: 'asc' });
   const initialWorkspaceTabId = useRef(`tab-${Date.now()}`).current;
   const [workspaceTabs, setWorkspaceTabs] = useState<WorkspaceTab[]>(() => [{
     id: initialWorkspaceTabId,
@@ -7225,6 +7251,33 @@ const RecruitmentApp = () => {
     [appData.positions, appData.favoritePositionIds, positionMatchesFilters]
   );
 
+  const sortTablePositions = useCallback((positions: Position[]) => [...positions].sort((a, b) => {
+    const candidateCount = (position: Position) => appData.candidates.filter(candidate => !!appData.evaluations[`${position.code}_${candidate.id}`]).length;
+    const value = (position: Position): string | number => {
+      switch (positionTableSort.field) {
+        case 'code': return position.code;
+        case 'title': return position.title;
+        case 'entity': return position.entity;
+        case 'profile': return getPlannedProfile(position);
+        case 'incumbent': return position.incumbent;
+        case 'turnoverDate': return getSortableDate(position.turnoverDate);
+        case 'status': return POSITION_STATUS_LABELS[getUnifiedPositionStatus(position, appData.evaluations)];
+        case 'candidates': return candidateCount(position);
+      }
+    };
+    const left = value(a);
+    const right = value(b);
+    const comparison = typeof left === 'number' && typeof right === 'number'
+      ? left - right
+      : String(left).localeCompare(String(right), 'it', { numeric: true, sensitivity: 'base' });
+    return (positionTableSort.direction === 'asc' ? comparison : -comparison) || a.code.localeCompare(b.code, 'it', { numeric: true });
+  }), [appData.candidates, appData.evaluations, positionTableSort]);
+
+  const togglePositionTableSort = (field: PositionTableSortField) => setPositionTableSort(current => ({
+    field,
+    direction: current.field === field && current.direction === 'asc' ? 'desc' : 'asc'
+  }));
+
   const sortedResearches = useMemo(
     () => [...researchStore.researches].sort((a, b) => b.lastUpdated - a.lastUpdated),
     [researchStore.researches]
@@ -7602,13 +7655,15 @@ const RecruitmentApp = () => {
               </div> : (
                 <div className="overflow-visible rounded-xl border border-slate-200 bg-white shadow-sm">
                   <table className="w-full border-collapse text-left text-sm">
-                    <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">Codice</th><th className="px-4 py-3">Posizione</th><th className="px-4 py-3">Ente</th><th className="px-4 py-3">Titolare</th><th className="px-4 py-3">Stato</th><th className="px-4 py-3 text-center">Candidati</th><th className="px-4 py-3 text-right">Azioni</th></tr></thead>
+                    <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr>{([
+                      ['code', 'Codice'], ['title', 'Posizione'], ['entity', 'Ente'], ['profile', 'Profilo previsto'], ['incumbent', 'Titolare'], ['turnoverDate', 'Avvicendamento'], ['status', 'Stato'], ['candidates', 'Candidati']
+                    ] as [PositionTableSortField, string][]).map(([field, label]) => <th key={field} className={`px-4 py-3 ${field === 'candidates' ? 'text-center' : ''}`}><button type="button" onClick={() => togglePositionTableSort(field)} className="inline-flex items-center gap-1 font-semibold hover:text-blue-700" aria-label={`Ordina per ${label}`}>{label}<ArrowUpDown className={`h-3.5 w-3.5 ${positionTableSort.field === field ? 'text-blue-600' : 'text-slate-300'}`} /></button></th>)}<th className="px-4 py-3 text-right">Azioni</th></tr></thead>
                     <tbody className="divide-y divide-slate-100">
-                      {(renderedView === 'favorites' ? filteredFavoritePositions : filteredPositions).map(pos => {
+                      {sortTablePositions(renderedView === 'favorites' ? filteredFavoritePositions : filteredPositions).map(pos => {
                         const candidateCount = appData.candidates.filter(candidate => !!appData.evaluations[`${pos.code}_${candidate.id}`]).length;
                         const unifiedStatus = getUnifiedPositionStatus(pos, appData.evaluations);
                         return <tr key={pos.code} onClick={() => navigate('position_detail', { selectedPositionId: pos.code, positionsReturnView: renderedView === 'favorites' ? 'favorites' : 'dashboard' })} className="cursor-pointer hover:bg-blue-50/40">
-                          <td className="px-4 py-3 font-mono text-xs font-semibold text-blue-700">{pos.code}</td><td className="px-4 py-3"><div className="max-w-xs font-semibold text-slate-800">{pos.title || '-'}</div><div className="mt-1"><PositionLevelBadge level={getPositionLevel(pos)} /></div></td><td className="px-4 py-3 text-slate-600">{pos.entity || '-'}</td><td className="px-4 py-3">{pos.incumbent ? <span className="text-slate-700">{pos.incumbent}</span> : <span className="font-semibold text-amber-700">Vacante</span>}</td><td className="px-4 py-3"><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${POSITION_STATUS_COLORS[unifiedStatus]}`}>{POSITION_STATUS_LABELS[unifiedStatus]}</span></td><td className="px-4 py-3 text-center font-semibold">{candidateCount}</td><td className="px-4 py-3 text-right"><PositionStatusMenu position={pos} onChange={setPositionAdministrativeStatus} /></td>
+                          <td className="px-4 py-3 font-mono text-xs font-semibold text-blue-700">{pos.code}</td><td className="px-4 py-3"><div className="max-w-xs font-semibold text-slate-800">{pos.title || '-'}</div><div className="mt-1"><PositionLevelBadge level={getPositionLevel(pos)} /></div></td><td className="px-4 py-3 text-slate-600">{pos.entity || '-'}</td><td className="px-4 py-3 font-medium text-slate-700">{getPlannedProfile(pos)}</td><td className="px-4 py-3">{pos.incumbent ? <span className="text-slate-700">{pos.incumbent}</span> : <span className="font-semibold text-amber-700">Vacante</span>}</td><td className="px-4 py-3 whitespace-nowrap text-slate-600">{pos.turnoverDate || 'N.D.'}</td><td className="px-4 py-3"><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${POSITION_STATUS_COLORS[unifiedStatus]}`}>{POSITION_STATUS_LABELS[unifiedStatus]}</span></td><td className="px-4 py-3 text-center font-semibold">{candidateCount}</td><td className="px-4 py-3 text-right"><PositionStatusMenu position={pos} onChange={setPositionAdministrativeStatus} /></td>
                         </tr>;
                       })}
                     </tbody>
