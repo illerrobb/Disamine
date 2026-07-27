@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   getImportDiffs,
   integrateImportedEntity,
+  matchesReiterationPositionRoleFilter,
   mergeCandidateForImport,
   type AppData,
   type Candidate,
@@ -19,6 +20,7 @@ const candidate = (overrides: Partial<Candidate> = {}): Candidate => ({
 const position = (overrides: Partial<Position> = {}): Position => ({
   code: "P1", entity: "Roma", title: "Titolo", requirements: [], englishReq: "B2", nosReq: "",
   rankReq: "", catSpecQualReq: "", ofcn: "", poInterest: "", incumbent: "",
+  role: "", plannedPersonnel: "", turnoverDate: "",
   originalData: { source: true }, ...overrides
 });
 const state = (candidates: Candidate[], positions: Position[]): AppData => ({
@@ -27,6 +29,12 @@ const state = (candidates: Candidate[], positions: Position[]): AppData => ({
 });
 
 describe("conservative import/update", () => {
+  it("filters reiteration rows using the position role rather than its entity", () => {
+    const armiPosition = position({ entity: "Ente privo di ruolo", role: "Ruolo Armi" });
+    expect(matchesReiterationPositionRoleFilter(armiPosition, "ARMI")).toBe(true);
+    expect(matchesReiterationPositionRoleFilter(armiPosition, "GENIO")).toBe(false);
+  });
+
   it("does not report a conflict for an identical reimport or changed originalData", () => {
     const existing = candidate();
     const incoming = candidate({ originalData: { differentlyFormatted: true } });
