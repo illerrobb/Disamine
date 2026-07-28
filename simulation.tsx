@@ -16,6 +16,7 @@ import {
   Search,
   Sparkles,
   Trash2,
+  SlidersHorizontal,
   UserRound,
   Users,
   X
@@ -41,7 +42,26 @@ interface SimulationScenario {
   kind: ScenarioKind;
   choices: SimulationChoice[];
   positionStatuses?: Record<string, ManualPositionStatus>;
+  config?: ScenarioConfig;
 }
+
+export interface ScenarioConfig {
+  preferNoForeignExperience: boolean;
+  prioritizeEntityLevel: boolean;
+  minimumEntityCoverage: number;
+  positionQuery: string;
+  entities: string[];
+  roles: string[];
+}
+
+const defaultScenarioConfig: ScenarioConfig = {
+  preferNoForeignExperience: true,
+  prioritizeEntityLevel: true,
+  minimumEntityCoverage: 70,
+  positionQuery: "",
+  entities: [],
+  roles: []
+};
 
 interface ScenarioMetrics {
   covered: number;
@@ -127,9 +147,12 @@ export const analyzeScenario = (
   evaluations: Record<string, Evaluation>,
   positionStatuses: Record<string, ManualPositionStatus> = {}
 ): ScenarioAnalysis => {
+  const evaluationList = Object.values(evaluations);
   const realSelections = new Map<string, string>();
-  Object.values(evaluations).forEach(evaluation => {
+  const realByPosition = new Map<string, string>();
+  evaluationList.forEach(evaluation => {
     if (evaluation.status === "selected") realSelections.set(evaluation.candidateId, evaluation.positionId);
+    if (evaluation.status === "selected") realByPosition.set(evaluation.positionId, evaluation.candidateId);
   });
   const simulatedByPosition = new Map(choices.map(choice => [choice.positionId, choice.candidateId]));
   const simulatedByCandidate = new Map(choices.map(choice => [choice.candidateId, choice.positionId]));
@@ -138,9 +161,7 @@ export const analyzeScenario = (
   positions.forEach(position => {
     const manualStatus = positionStatuses[position.code] ?? (position.administrativeStatus === "non-alimentazione" || position.administrativeStatus === "estensione-mandato-titolare" ? position.administrativeStatus : null);
     const isInactive = manualStatus === "non-alimentazione" || manualStatus === "estensione-mandato-titolare";
-    const realCandidateId = Object.values(evaluations).find(evaluation =>
-      evaluation.positionId === position.code && evaluation.status === "selected"
-    )?.candidateId ?? null;
+    const realCandidateId = realByPosition.get(position.code) ?? null;
     const simulatedCandidateId = isInactive || realCandidateId ? null : simulatedByPosition.get(position.code) ?? null;
     const baseAvailableCandidateIds = getBaseEligibleIds(position, candidates, evaluations, realSelections);
     const availableCandidateIds = baseAvailableCandidateIds.filter(candidateId => {
@@ -253,6 +274,60 @@ const buildPresetChoices = (
     if (!candidateId) continue;
     used.add(candidateId);
     entityCoverage.set(position.entity, (entityCoverage.get(position.entity) ?? 0) + 1);
+    choices.push({ id: choiceId(candidateId, position.code), candidateId, positionId: position.code });
+  }
+  return choices;
+};
+
+const entityLevel = (value: string) => {
+  const normalized = value.toLocaleLowerCase("it");
+  const tier = normalized.includes("elevatissimo") ? 300 : normalized.includes("elevato") ? 200 : normalized.includes("medio") ? 100 : 0;
+  const number = Number(normalized.match(/\d+/)?.[0] ?? 0);
+  return tier + number;
+};
+
+export const buildConfiguredChoices = (
+  config: ScenarioConfig,
+  candidates: Candidate[],
+  positions: Position[],
+  evaluations: Record<string, Evaluation>
+) => {
+  const query = config.positionQuery.trim().toLocaleLowerCase("it");
+  const scoped = positions.filter(position =>
+    (!config.entities.length || config.entities.includes(position.entity)) &&
+    (!config.roles.length || config.roles.includes(position.role)) &&
+    (!query || [position.code, position.title, position.entity, position.role, position.catSpecQualReq].join(" ").toLocaleLowerCase("it").includes(query))
+  );
+  const realSelections = new Map<string, string>();
+  Object.values(evaluations).forEach(evaluation => { if (evaluation.status === "selected") realSelections.set(evaluation.candidateId, evaluation.positionId); });
+  const used = new Set<string>();
+  const assignedByEntity = new Map<string, number>();
+  const totalsByEntity = new Map<string, number>();
+  scoped.forEach(position => totalsByEntity.set(position.entity, (totalsByEntity.get(position.entity) ?? 0) + 1));
+  const open = scoped.filter(position => position.administrativeStatus !== "non-alimentazione" && !Array.from(realSelections.values()).includes(position.code));
+  const choices: SimulationChoice[] = [];
+
+  while (open.length) {
+    open.sort((a, b) => {
+      const coverageA = (assignedByEntity.get(a.entity) ?? 0) / (totalsByEntity.get(a.entity) ?? 1) * 100;
+      const coverageB = (assignedByEntity.get(b.entity) ?? 0) / (totalsByEntity.get(b.entity) ?? 1) * 100;
+      const belowA = coverageA < config.minimumEntityCoverage ? 1 : 0;
+      const belowB = coverageB < config.minimumEntityCoverage ? 1 : 0;
+      const eligibleA = getBaseEligibleIds(a, candidates, evaluations, realSelections).filter(id => !used.has(id)).length;
+      const eligibleB = getBaseEligibleIds(b, candidates, evaluations, realSelections).filter(id => !used.has(id)).length;
+      return belowB - belowA || (config.prioritizeEntityLevel ? entityLevel(b.entity) - entityLevel(a.entity) : 0) || eligibleA - eligibleB || a.code.localeCompare(b.code, "it", { numeric: true });
+    });
+    const position = open.shift()!;
+    const candidateId = getBaseEligibleIds(position, candidates, evaluations, realSelections).filter(id => !used.has(id)).sort((a, b) => {
+      const candidateA = candidates.find(candidate => candidate.id === a)!;
+      const candidateB = candidates.find(candidate => candidate.id === b)!;
+      const foreignA = candidateA.internationalMandates.trim() ? 1 : 0;
+      const foreignB = candidateB.internationalMandates.trim() ? 1 : 0;
+      return (config.preferNoForeignExperience ? foreignA - foreignB : 0) || getFit(position, getEvaluation(evaluations, position.code, b)) - getFit(position, getEvaluation(evaluations, position.code, a)) || candidateA.appliedPositionCodes.length - candidateB.appliedPositionCodes.length;
+    })[0];
+    if (!candidateId) continue;
+    used.add(candidateId);
+    assignedByEntity.set(position.entity, (assignedByEntity.get(position.entity) ?? 0) + 1);
     choices.push({ id: choiceId(candidateId, position.code), candidateId, positionId: position.code });
   }
   return choices;
@@ -402,10 +477,10 @@ const CandidateChoice = ({ candidate, position, evaluation, selected, occupied, 
   }).length;
   const fit = getFit(position, evaluation);
   const evaluationLabel = evaluation?.status === "reserve" ? "Riserva" : evaluation?.status === "selected" ? "Già selezionato" : completed === visibleRequirements.length ? "Valutazione completa" : `${completed}/${visibleRequirements.length} requisiti valutati`;
-  return <button type="button" onMouseEnter={() => onPreview(true)} onMouseLeave={() => onPreview(false)} onFocus={() => onPreview(true)} onBlur={() => onPreview(false)} onClick={onChoose} className={`group relative min-w-[180px] max-w-[260px] rounded-xl border p-2.5 text-left transition-all ${selected ? "border-blue-600 bg-blue-600 text-white shadow-sm" : occupied ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-white hover:border-blue-400 hover:shadow-sm"}`}>
-    <span className="flex items-start justify-between gap-2"><span className="min-w-0"><span className="block truncate text-xs font-bold">{candidate.nominativo}</span><span className={`mt-0.5 block truncate text-[10px] ${selected ? "text-blue-100" : "text-slate-500"}`}>{candidate.rank || "Grado n.d."} · {candidate.role || candidate.category || "Ruolo n.d."}</span></span>{selected && <Check className="h-4 w-4 shrink-0" />}</span>
+  return <button type="button" onMouseEnter={() => onPreview(true)} onMouseLeave={() => onPreview(false)} onFocus={() => onPreview(true)} onBlur={() => onPreview(false)} onClick={onChoose} className={`group relative min-w-[220px] max-w-[300px] rounded-xl border p-3 text-left transition-all ${selected ? "border-blue-600 bg-blue-600 text-white shadow-sm" : occupied ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-white hover:border-blue-400 hover:shadow-sm"}`}>
+    <span className="flex items-start justify-between gap-2"><span className="min-w-0"><span className={`block text-[9px] font-bold uppercase tracking-wide ${selected ? "text-blue-100" : "text-slate-400"}`}>Ente</span><span className="block truncate text-xs font-bold">{position.entity || "Ente n.d."}</span><span className={`mt-1 block text-[9px] font-bold uppercase tracking-wide ${selected ? "text-blue-100" : "text-slate-400"}`}>Posizione</span><span className="block truncate text-[11px]">{position.code} · {position.title}</span></span>{selected && <Check className="h-4 w-4 shrink-0" />}</span>
     <span className="mt-2 flex items-center gap-2"><span className={`h-1.5 flex-1 overflow-hidden rounded-full ${selected ? "bg-blue-400" : "bg-slate-100"}`}><span className={`block h-full rounded-full ${fit >= 75 ? "bg-emerald-500" : fit >= 45 ? "bg-amber-500" : "bg-rose-500"}`} style={{ width: `${fit}%` }} /></span><span className="text-[10px] font-bold">{fit}%</span></span>
-    <span className={`mt-1 block text-[9px] ${selected ? "text-blue-100" : "text-slate-400"}`}>{selected ? "Clicca per togliere" : evaluationLabel}</span>
+    <span className={`mt-1 block text-[9px] ${selected ? "text-blue-100" : "text-slate-400"}`}><b>Disamina requisiti:</b> {selected ? "Clicca per togliere" : evaluationLabel}</span>
     <span role="tooltip" className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 hidden w-64 -translate-x-1/2 rounded-xl bg-slate-950 p-3 text-left text-[11px] font-normal leading-relaxed text-white shadow-xl group-hover:block group-focus:block">
       <strong className="block text-xs">Perché {fit}%</strong><span className="mt-1 block text-slate-300">Compatibilità calcolata sui requisiti già valutati: sì = pieno, parziale = 45%, no o pendente = 0%.</span><span className="mt-2 block">{evaluationLabel} · Stato: {evaluation?.status ?? "non valutato"}</span><span className="mt-1 block">{candidate.rank || "Grado n.d."} · {candidate.serviceEntity || "Ente n.d."}</span>
     </span>
@@ -457,6 +532,10 @@ export const SimulationDashboard = ({ candidates, positions, evaluations, resear
   const [previewChoice, setPreviewChoice] = useState<SimulationChoice | null>(null);
   const [compareOpen, setCompareOpen] = useState(false);
   const [pendingReplacement, setPendingReplacement] = useState<SimulationChoice | null>(null);
+  const [configOpen, setConfigOpen] = useState(false);
+  const [draftConfig, setDraftConfig] = useState<ScenarioConfig>(defaultScenarioConfig);
+  const [candidateEntityFilter, setCandidateEntityFilter] = useState("");
+  const [candidateRoleFilter, setCandidateRoleFilter] = useState("");
 
   useEffect(() => {
     localStorage.setItem(storageKey(researchId), JSON.stringify(scenarios));
@@ -542,11 +621,24 @@ export const SimulationDashboard = ({ candidates, positions, evaluations, resear
     setScenarios(current => [...current, { ...activeScenario, id, name: `${activeScenario.name} · copia`, kind: "custom", choices: activeChoices.map(choice => ({ ...choice })) }]);
     setActiveId(id);
   };
+  const generateProposal = () => {
+    const id = `scenario-${Date.now()}`;
+    const choices = buildConfiguredChoices(draftConfig, candidates, positions, evaluations);
+    setScenarios(current => [...current, { id, name: `Proposta ${current.length + 1}`, description: `Proposta automatica su ${choices.length} posizioni`, kind: "custom", choices, positionStatuses: {}, config: draftConfig }]);
+    setActiveId(id);
+    setConfigOpen(false);
+  };
+  const deleteScenario = (id: string) => {
+    setScenarios(current => current.filter(scenario => scenario.id !== id));
+    if (activeId === id) setActiveId("preset-balanced");
+  };
 
   const normalizedSearch = search.trim().toLocaleLowerCase("it");
   const visibleCandidates = candidates.filter(candidate => {
+    if (candidateEntityFilter && candidate.serviceEntity !== candidateEntityFilter) return false;
+    if (candidateRoleFilter && candidate.role !== candidateRoleFilter) return false;
     if (!normalizedSearch) return true;
-    return [candidate.nominativo, candidate.id, candidate.rank, candidate.serviceEntity].join(" ").toLocaleLowerCase("it").includes(normalizedSearch);
+    return [candidate.nominativo, candidate.id, candidate.rank, candidate.serviceEntity, candidate.role, candidate.category, candidate.specialty, candidate.languages.map(item => item.language).join(" ")].join(" ").toLocaleLowerCase("it").includes(normalizedSearch);
   });
   const visiblePositions = positions.filter(position => {
     if (!normalizedSearch) return true;
@@ -568,14 +660,17 @@ export const SimulationDashboard = ({ candidates, positions, evaluations, resear
           {scenarioMenuOpen && <div className="absolute left-0 top-full z-40 mt-2 w-80 rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl">
             <div className="px-3 pb-2 pt-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">Scenari predefiniti</div>
             {presets.map(scenario => <button key={scenario.id} onClick={() => { setActiveId(scenario.id); setScenarioMenuOpen(false); setSelectedChoiceId(null); }} className={`w-full rounded-xl px-3 py-2.5 text-left ${scenario.id === activeId ? "bg-blue-50" : "hover:bg-slate-50"}`}><div className="flex items-center justify-between"><span className="text-sm font-semibold text-slate-800">{scenario.name}</span>{scenario.id === activeId && <Check className="h-4 w-4 text-blue-600" />}</div><p className="mt-0.5 text-xs text-slate-500">{scenario.description}</p></button>)}
-            {scenarios.length > 0 && <><div className="mt-2 border-t border-slate-100 px-3 pb-2 pt-3 text-[10px] font-bold uppercase tracking-wider text-slate-400">Scenari personali</div>{scenarios.map(scenario => <button key={scenario.id} onClick={() => { setActiveId(scenario.id); setScenarioMenuOpen(false); setSelectedChoiceId(null); }} className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm font-semibold ${scenario.id === activeId ? "bg-blue-50 text-blue-800" : "text-slate-700 hover:bg-slate-50"}`}><span className="truncate">{scenario.name}</span>{scenario.id === activeId && <Check className="h-4 w-4 text-blue-600" />}</button>)}</>}
+            {scenarios.length > 0 && <><div className="mt-2 border-t border-slate-100 px-3 pb-2 pt-3 text-[10px] font-bold uppercase tracking-wider text-slate-400">Scenari personali</div>{scenarios.map(scenario => <div key={scenario.id} className={`group flex items-center rounded-xl ${scenario.id === activeId ? "bg-blue-50 text-blue-800" : "text-slate-700 hover:bg-slate-50"}`}><button onClick={() => { setActiveId(scenario.id); setScenarioMenuOpen(false); setSelectedChoiceId(null); }} className="min-w-0 flex-1 px-3 py-2 text-left text-sm font-semibold"><span className="block truncate">{scenario.name}</span></button><button aria-label={`Elimina ${scenario.name}`} title="Elimina scenario" onClick={() => deleteScenario(scenario.id)} className="mr-2 rounded-lg p-1 text-slate-400 hover:bg-rose-100 hover:text-rose-600"><X className="h-4 w-4" /></button></div>)}</>}
             <button onClick={createCustom} className="mt-2 flex w-full items-center gap-2 rounded-xl border border-dashed border-slate-300 px-3 py-2.5 text-sm font-semibold text-blue-700 hover:bg-blue-50"><Plus className="h-4 w-4" /> Nuovo scenario vuoto</button>
           </div>}
         </div>
         <button onClick={duplicateActive} className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50"><Copy className="h-4 w-4" /> Duplica</button>
+        <button onClick={() => setConfigOpen(value => !value)} className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${configOpen ? "border-violet-300 bg-violet-50 text-violet-700" : "border-slate-200 text-slate-600"}`}><SlidersHorizontal className="h-4 w-4" /> Genera proposta</button>
         <button onClick={() => setCompareOpen(value => !value)} className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${compareOpen ? "border-blue-200 bg-blue-50 text-blue-700" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}><GitCompareArrows className="h-4 w-4" /> Confronta</button>
         <div className="ml-auto flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700"><Lock className="h-3.5 w-3.5" /> Dati reali protetti</div>
       </header>
+
+      {configOpen && <div className="border-b border-violet-100 bg-white px-6 py-4"><div className="mx-auto grid max-w-6xl gap-4 lg:grid-cols-[1fr_1fr_1fr_auto]"><label className="text-xs font-bold text-slate-600">Cluster posizioni<input value={draftConfig.positionQuery} onChange={event => setDraftConfig(config => ({ ...config, positionQuery: event.target.value }))} placeholder="es. Genio, pilota, OSC…" className="mt-1 block w-full rounded-lg border border-slate-200 px-3 py-2 font-normal" /></label><label className="text-xs font-bold text-slate-600">Soglia minima enti ({draftConfig.minimumEntityCoverage}%)<input type="range" min="0" max="100" step="5" value={draftConfig.minimumEntityCoverage} onChange={event => setDraftConfig(config => ({ ...config, minimumEntityCoverage: Number(event.target.value) }))} className="mt-3 block w-full" /></label><div className="space-y-2 text-xs text-slate-700"><label className="flex gap-2"><input type="checkbox" checked={draftConfig.preferNoForeignExperience} onChange={event => setDraftConfig(config => ({ ...config, preferNoForeignExperience: event.target.checked }))} /> Priorità senza esperienze estere</label><label className="flex gap-2"><input type="checkbox" checked={draftConfig.prioritizeEntityLevel} onChange={event => setDraftConfig(config => ({ ...config, prioritizeEntityLevel: event.target.checked }))} /> Priorità livello ente (3 &gt; 2 &gt; 1)</label><p className="text-slate-400">Il cluster cerca in codice, posizione, ente, ruolo e Cat/Spec/Qual.</p></div><button onClick={generateProposal} className="self-end rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-violet-700"><Sparkles className="mr-2 inline h-4 w-4" />Crea proposta</button></div></div>}
 
       {compareOpen && <div className="border-b border-slate-200 bg-white px-6 py-4"><div className="flex gap-3 overflow-x-auto pb-1">{allScenarios.map(scenario => {
         const metrics = analyzeScenario(scenario.choices, candidates, positions, evaluations, scenario.positionStatuses).metrics;
@@ -625,7 +720,7 @@ export const SimulationDashboard = ({ candidates, positions, evaluations, resear
       {pickerOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-5 backdrop-blur-sm" onMouseDown={event => { if (event.target === event.currentTarget) { setPickerOpen(false); setPreviewChoice(null); } }}><div className="flex h-[88vh] w-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-white/40 bg-white shadow-2xl">
         <div className="flex items-center gap-4 border-b border-slate-200 px-6 py-4"><div><h2 className="text-lg font-bold text-slate-900">Aggiungi una scelta</h2><p className="text-xs text-slate-400">Compatibilità e valutazioni sono già incluse. Riclicca una scelta attiva per toglierla.</p></div><div className="ml-auto flex rounded-xl bg-slate-100 p-1"><button onClick={() => setPickerMode("people")} className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-bold ${pickerMode === "people" ? "bg-white shadow-sm" : "text-slate-500"}`}><Users className="h-4 w-4" /> Persone</button><button onClick={() => setPickerMode("positions")} className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-bold ${pickerMode === "positions" ? "bg-white shadow-sm" : "text-slate-500"}`}><Building2 className="h-4 w-4" /> Posizioni</button></div><button onClick={() => { setPickerOpen(false); setPreviewChoice(null); }} className="rounded-xl p-2 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
         <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(0,1fr)_280px]">
-          <div className="flex min-h-0 min-w-0 flex-col border-r border-slate-200"><div className="p-4"><label className="relative block"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input autoFocus value={search} onChange={event => setSearch(event.target.value)} placeholder={pickerMode === "people" ? "Cerca persona, matricola o ente…" : "Cerca posizione o ente…"} className="w-full rounded-xl border border-slate-200 py-2.5 pl-10 pr-4 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100" /></label></div><div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-4 pb-4">
+          <div className="flex min-h-0 min-w-0 flex-col border-r border-slate-200"><div className="space-y-2 p-4"><label className="relative block"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input autoFocus value={search} onChange={event => setSearch(event.target.value)} placeholder={pickerMode === "people" ? "Cerca persona, matricola o ente…" : "Cerca posizione o ente…"} className="w-full rounded-xl border border-slate-200 py-2.5 pl-10 pr-4 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100" /></label>{pickerMode === "people" && <div className="flex gap-2"><select value={candidateEntityFilter} onChange={event => setCandidateEntityFilter(event.target.value)} className="min-w-0 flex-1 rounded-lg border border-slate-200 px-2 py-1.5 text-xs"><option value="">Tutti gli enti di provenienza</option>{Array.from(new Set(candidates.map(candidate => candidate.serviceEntity).filter(Boolean))).sort().map(value => <option key={value}>{value}</option>)}</select><select value={candidateRoleFilter} onChange={event => setCandidateRoleFilter(event.target.value)} className="min-w-0 flex-1 rounded-lg border border-slate-200 px-2 py-1.5 text-xs"><option value="">Tutti i ruoli</option>{Array.from(new Set(candidates.map(candidate => candidate.role).filter(Boolean))).sort().map(value => <option key={value}>{value}</option>)}</select></div>}</div><div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-4 pb-4">
             {pickerMode === "people" ? visibleCandidates.map(candidate => {
               const applicable = positions.filter(position => {
                 const evaluation = getEvaluation(evaluations, position.code, candidate.id);
@@ -633,7 +728,7 @@ export const SimulationDashboard = ({ candidates, positions, evaluations, resear
                 return evaluation && !blockedStatuses.has(evaluation.status) && snapshot && !snapshot.isInactive && !snapshot.isRealCovered;
               });
               if (!applicable.length) return null;
-              return <div key={candidate.id} className="rounded-2xl border border-slate-200 p-3"><div className="flex items-center gap-3"><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100"><UserRound className="h-4 w-4 text-slate-500" /></div><div className="min-w-0"><div className="truncate text-sm font-bold text-slate-800">{candidate.nominativo}</div><div className="truncate text-xs text-slate-400">{candidate.rank} · {candidate.serviceEntity}</div></div></div><div className="mt-3 flex flex-wrap gap-2">{applicable.map(position => { const current = activeChoices.find(choice => choice.positionId === position.code); const evaluation = getEvaluation(evaluations, position.code, candidate.id); return <div key={position.code} className="min-w-[200px]"><div className="mb-1 flex items-center gap-2 px-1"><span className="font-mono text-[10px] font-bold text-blue-700">{position.code}</span><span className="truncate text-[10px] text-slate-400">{position.title}</span></div><CandidateChoice candidate={candidate} position={position} evaluation={evaluation} selected={current?.candidateId === candidate.id} occupied={!!current && current.candidateId !== candidate.id} onPreview={active => setPreviewChoice(active ? { id: choiceId(candidate.id, position.code), candidateId: candidate.id, positionId: position.code } : null)} onChoose={() => requestChoice(candidate.id, position.code)} /></div>; })}</div></div>;
+              return <div key={candidate.id} className="rounded-2xl border border-slate-200 p-3"><div className="flex items-start gap-3"><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100"><UserRound className="h-4 w-4 text-slate-500" /></div><div className="min-w-0 flex-1"><div className="truncate text-sm font-bold text-slate-800">{candidate.nominativo} <span className="font-mono text-[10px] font-normal text-slate-400">{candidate.id}</span></div><div className="mt-1 flex flex-wrap gap-1 text-[10px] text-slate-600">{[candidate.rank, candidate.role, [candidate.category, candidate.specialty].filter(Boolean).join("/"), candidate.serviceEntity, candidate.languages.map(language => `${language.language} ${language.level}`).join(", ")].filter(Boolean).map(value => <span key={value} className="rounded bg-slate-100 px-1.5 py-0.5">{value}</span>)}</div><div className="mt-1 text-[10px] text-slate-400">Esperienze estere: {candidate.internationalMandates || "nessuna"}</div></div></div><div className="mt-3 flex flex-wrap gap-2">{applicable.map(position => { const current = activeChoices.find(choice => choice.positionId === position.code); const evaluation = getEvaluation(evaluations, position.code, candidate.id); return <CandidateChoice key={position.code} candidate={candidate} position={position} evaluation={evaluation} selected={current?.candidateId === candidate.id} occupied={!!current && current.candidateId !== candidate.id} onPreview={active => setPreviewChoice(active ? { id: choiceId(candidate.id, position.code), candidateId: candidate.id, positionId: position.code } : null)} onChoose={() => requestChoice(candidate.id, position.code)} />; })}</div></div>;
             }) : visiblePositions.map(position => {
               const snapshot = committedAnalysis.snapshots.get(position.code);
               if (!snapshot || snapshot.isRealCovered || (snapshot.isInactive && !activePositionStatuses[position.code])) return null;

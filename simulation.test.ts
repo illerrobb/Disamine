@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyzeScenario, sortPositionSnapshots, type SimulationChoice } from "./simulation";
+import { analyzeScenario, buildConfiguredChoices, sortPositionSnapshots, type SimulationChoice } from "./simulation";
 import type { Candidate, Evaluation, Position } from "./index";
 
 const position = (code: string, entity: string, overrides: Partial<Position> = {}): Position => ({
@@ -97,5 +97,15 @@ describe("scenario simulation", () => {
     expect(analysis.snapshots.get("P1")?.baseAvailableCandidateIds).toEqual(["C1"]);
     expect(analysis.snapshots.get("P2")?.isInactive).toBe(true);
     expect(analysis.metrics.uncovered).toBe(0);
+  });
+
+  it("generates proposals only inside the selected position cluster", () => {
+    const positions = [position("GEN-1", "Elevatissimo 3", { title: "Genio" }), position("OPS-1", "Elevatissimo 2", { title: "Operazioni" })];
+    const candidates = [candidate("C1", ["GEN-1", "OPS-1"]), candidate("C2", ["OPS-1"])];
+    const evaluations = { "GEN-1_C1": evaluation("C1", "GEN-1"), "OPS-1_C1": evaluation("C1", "OPS-1"), "OPS-1_C2": evaluation("C2", "OPS-1") };
+    const choices = buildConfiguredChoices({ preferNoForeignExperience: true, prioritizeEntityLevel: true, minimumEntityCoverage: 70, positionQuery: "Genio", entities: [], roles: [] }, candidates, positions, evaluations);
+
+    expect(choices).toHaveLength(1);
+    expect(choices[0].positionId).toBe("GEN-1");
   });
 });
