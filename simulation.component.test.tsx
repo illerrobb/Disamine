@@ -72,6 +72,31 @@ describe("SimulationDashboard preview isolation", () => {
     expect(screen.getByText("0 scelte · Personale")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Assegna Candidato C1 allo scenario per P1" })).toBeTruthy();
   });
+
+  it("applica più ruoli all'intero Lab e alle statistiche senza creare una proposta", () => {
+    const naviganti = makePosition("NAV-1", "Ente A");
+    naviganti.role = "Naviganti";
+    const genio = makePosition("GEN-1", "Ente B");
+    genio.role = "Genio";
+    const commissari = makePosition("COM-1", "Ente C");
+    commissari.role = "Commissari";
+    render(<SimulationDashboard candidates={[]} positions={[naviganti, genio, commissari]} evaluations={{}} researchId="role-scope-test" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Genera proposta" }));
+    fireEvent.click(screen.getByRole("button", { name: "Tutti i ruoli" }));
+    fireEvent.click(screen.getByLabelText(/Genio/));
+    fireEvent.click(screen.getByLabelText(/Commissari/));
+
+    expect(screen.queryByTestId("position-row-NAV-1")).toBeNull();
+    expect(screen.getByTestId("position-row-GEN-1")).toBeTruthy();
+    expect(screen.getByTestId("position-row-COM-1")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Genera proposta · 2 ruoli/ })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Impatto" }));
+    const uncoveredCard = screen.getByText("Scoperte").parentElement!;
+    expect(uncoveredCard.textContent).toContain("2");
+    expect(uncoveredCard.textContent).toContain("posizioni attive");
+  });
 });
 
 describe("PositionDetailPanel", () => {
