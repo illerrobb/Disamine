@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import * as XLSX from "xlsx-js-style";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
+import { SimulationDashboard } from "./simulation";
 import {
   Upload,
   FileSpreadsheet,
@@ -41,7 +42,8 @@ import {
   Target,
   Plus,
   FolderSearch,
-  MoreVertical
+  MoreVertical,
+  Network
 } from "lucide-react";
 
 // --- Types ---
@@ -142,7 +144,7 @@ interface ResearchStore {
 
 type PositionStatus = 'todo' | 'inprogress' | 'completed';
 type PositionAdministrativeStatus = 'non-alimentazione' | 'estensione-mandato-titolare' | 'reiterazione';
-type AppView = 'upload' | 'researches' | 'dashboard' | 'favorites' | 'position_detail' | 'candidates_list' | 'candidate_detail' | 'overlap_kanban' | 'reiteration_analysis';
+type AppView = 'upload' | 'researches' | 'dashboard' | 'favorites' | 'position_detail' | 'candidates_list' | 'candidate_detail' | 'overlap_kanban' | 'reiteration_analysis' | 'simulation';
 type NavigationState = {
   researchId: string;
   view: AppView;
@@ -7316,7 +7318,8 @@ const RecruitmentApp = () => {
               candidates_list: 'Persone',
               candidate_detail: candidate?.nominativo ?? 'Persona',
               overlap_kanban: 'Overlap Kanban',
-              reiteration_analysis: 'Reiterazioni'
+              reiteration_analysis: 'Reiterazioni',
+              simulation: 'Scenario Lab'
             };
             const label = `${viewLabel[tab.navigation.view]} · ${research.cycle.name}`;
             return (
@@ -7413,6 +7416,14 @@ const RecruitmentApp = () => {
           >
             <TableIcon className="w-5 h-5" />
             Overlap Kanban
+          </button>
+          <button
+            onClick={() => navigate('simulation')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${renderedView === 'simulation' ? 'bg-blue-600 text-white shadow-sm' : 'hover:bg-slate-800 text-slate-400'}`}
+          >
+            <Network className="w-5 h-5" />
+            Scenario Lab
+            <span className="ml-auto rounded bg-blue-500/20 px-1.5 py-0.5 text-[9px] font-bold uppercase text-blue-200">Beta</span>
           </button>
           <button
             onClick={() => navigate('reiteration_analysis')}
@@ -7707,6 +7718,16 @@ const RecruitmentApp = () => {
             onOpenPosition={(positionCode) => {
               navigate('position_detail', { selectedPositionId: positionCode, positionsReturnView: 'dashboard' });
             }}
+          />
+        )}
+
+        {renderedView === 'simulation' && (
+          <SimulationDashboard
+            key={appData.cycle.id}
+            candidates={appData.candidates}
+            positions={appData.positions}
+            evaluations={appData.evaluations}
+            researchId={appData.cycle.id}
           />
         )}
       </main>

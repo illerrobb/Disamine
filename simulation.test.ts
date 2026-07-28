@@ -1,0 +1,57 @@
+import { describe, expect, it } from "vitest";
+import { analyzeScenario, type SimulationChoice } from "./simulation";
+import type { Candidate, Evaluation, Position } from "./index";
+
+const position = (code: string, entity: string, overrides: Partial<Position> = {}): Position => ({
+  code, entity, title: code, requirements: [], englishReq: "", nosReq: "", rankReq: "",
+  catSpecQualReq: "", ofcn: "", poInterest: "", incumbent: "", role: "",
+  plannedPersonnel: "", turnoverDate: "", originalData: {}, ...overrides
+});
+
+const candidate = (id: string, appliedPositionCodes: string[]): Candidate => ({
+  id, nominativo: id, firstName: id, lastName: "", rank: "", role: "", category: "",
+  specialty: "", serviceEntity: "", nosLevel: "", nosQual: "", nosExpiry: "",
+  internationalMandates: "", feoDate: "", mixDescription: "", languages: [],
+  rawAppliedString: appliedPositionCodes.join(","), appliedPositionCodes, commanderOpinion: "",
+  specificAssignments: "", ofcnSuitability: "", globalNotes: "", originalData: {}
+});
+
+const evaluation = (candidateId: string, positionId: string, status: Evaluation["status"] = "pending"): Evaluation => ({
+  candidateId, positionId, status, reqEvaluations: {}, notes: ""
+});
+
+describe("scenario simulation", () => {
+  it("uses scenario choices without mutating the completed evaluations", () => {
+    const positions = [position("P1", "Ente A"), position("P2", "Ente B")];
+    const candidates = [candidate("C1", ["P1", "P2"]), candidate("C2", ["P1"])];
+    const evaluations = {
+      P1_C1: evaluation("C1", "P1"), P2_C1: evaluation("C1", "P2"), P1_C2: evaluation("C2", "P1")
+    };
+    const original = JSON.stringify(evaluations);
+    const choices: SimulationChoice[] = [{ id: "C1::P1", candidateId: "C1", positionId: "P1" }];
+    const analysis = analyzeScenario(choices, candidates, positions, evaluations);
+
+    expect(analysis.snapshots.get("P1")?.isSimulatedCovered).toBe(true);
+    expect(analysis.snapshots.get("P2")?.availableCandidateIds).toEqual([]);
+    expect(JSON.stringify(evaluations)).toBe(original);
+  });
+
+  it("keeps real selections locked and excludes unavailable work states", () => {
+    const positions = [
+      position("P1", "Ente A"),
+      position("P2", "Ente A", { administrativeStatus: "non-alimentazione" })
+    ];
+    const candidates = [candidate("C1", ["P1"]), candidate("C2", ["P1"]), candidate("C3", ["P1"])];
+    const evaluations = {
+      P1_C1: evaluation("C1", "P1", "selected"),
+      P1_C2: evaluation("C2", "P1", "excluded"),
+      P1_C3: evaluation("C3", "P1", "withdrawn")
+    };
+    const analysis = analyzeScenario([], candidates, positions, evaluations);
+
+    expect(analysis.snapshots.get("P1")?.realCandidateId).toBe("C1");
+    expect(analysis.snapshots.get("P1")?.baseAvailableCandidateIds).toEqual(["C1"]);
+    expect(analysis.snapshots.get("P2")?.isInactive).toBe(true);
+    expect(analysis.metrics.uncovered).toBe(0);
+  });
+});
