@@ -52,6 +52,7 @@ export interface ScenarioConfig {
   positionQuery: string;
   entities: string[];
   roles: string[];
+  proposeNoFeeding?: boolean;
 }
 
 const defaultScenarioConfig: ScenarioConfig = {
@@ -60,7 +61,8 @@ const defaultScenarioConfig: ScenarioConfig = {
   minimumEntityCoverage: 70,
   positionQuery: "",
   entities: [],
-  roles: []
+  roles: [],
+  proposeNoFeeding: true
 };
 
 interface ScenarioMetrics {
@@ -333,6 +335,19 @@ export const buildConfiguredChoices = (
   return choices;
 };
 
+/** Positions for which non-alimentazione is worth an explicit human review.
+ * The suggestion is deliberately conservative: it only includes active, uncovered
+ * positions with no usable candidate, so it never frees a person by silently
+ * changing an appointment decision. */
+export const buildNoFeedingRecommendations = (
+  choices: SimulationChoice[],
+  candidates: Candidate[],
+  positions: Position[],
+  evaluations: Record<string, Evaluation>
+) => Array.from(analyzeScenario(choices, candidates, positions, evaluations).snapshots.values())
+  .filter(snapshot => !snapshot.isInactive && !snapshot.isCovered && snapshot.baseAvailableCandidateIds.length === 0)
+  .map(snapshot => snapshot.position.code);
+
 const createInitialScenarios = (candidates: Candidate[], positions: Position[], evaluations: Record<string, Evaluation>): SimulationScenario[] => [
   {
     id: "preset-balanced", name: "Equilibrio enti", description: "Distribuisce la copertura fra gli enti.", kind: "preset",
@@ -505,6 +520,54 @@ const ImpactPanel = ({ before, after, title, subtitle }: { before: ScenarioAnaly
   );
 };
 
+const ScenarioComparison = ({ scenarios, candidates, positions, evaluations, candidateById }: {
+  scenarios: SimulationScenario[];
+  candidates: Candidate[];
+  positions: Position[];
+  evaluations: Record<string, Evaluation>;
+  candidateById: Map<string, Candidate>;
+}) => {
+  const columns = scenarios.map(scenario => ({
+    scenario,
+    analysis: analyzeScenario(scenario.choices, candidates, positions, evaluations, scenario.positionStatuses)
+  }));
+  const entityNames = Array.from(new Set(positions.map(position => position.entity || "Ente non indicato"))).sort((a, b) => a.localeCompare(b, "it"));
+  const maxActive = Math.max(1, ...columns.map(({ analysis }) => analysis.metrics.covered + analysis.metrics.uncovered));
+  const assignmentLabel = (snapshot?: PositionSnapshot) => {
+    if (!snapshot) return "—";
+    if (snapshot.manualStatus === "non-alimentazione") return "Non alimentata";
+    if (snapshot.manualStatus === "estensione-mandato-titolare") return "Mandato esteso";
+    const candidate = candidateById.get(snapshot.realCandidateId ?? snapshot.simulatedCandidateId ?? "");
+    return candidate?.nominativo ?? (snapshot.isFragile ? "Scoperta · fragile" : "Scoperta");
+  };
+
+  return <div className="space-y-5">
+    <div className="grid gap-3 xl:grid-cols-3">{columns.map(({ scenario, analysis }) => {
+      const total = analysis.metrics.covered + analysis.metrics.uncovered;
+      const coverage = total ? Math.round(analysis.metrics.covered / total * 100) : 100;
+      return <div key={scenario.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex items-start justify-between gap-3"><div><div className="font-bold text-slate-900">{scenario.name}</div><div className="text-xs text-slate-400">{scenario.description}</div></div><span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-700">{coverage}%</span></div>
+        <div className="mt-4 flex h-3 overflow-hidden rounded-full bg-slate-100" title={`${analysis.metrics.covered} ripianate, ${analysis.metrics.uncovered} scoperte`}><span className="bg-emerald-500" style={{ width: `${analysis.metrics.covered / maxActive * 100}%` }} /><span className="bg-rose-300" style={{ width: `${analysis.metrics.uncovered / maxActive * 100}%` }} /></div>
+        <div className="mt-3 grid grid-cols-4 gap-2 text-center"><div><b className="block text-emerald-700">{analysis.metrics.covered}</b><span className="text-[10px] text-slate-400">ripianate</span></div><div><b className="block text-rose-700">{analysis.metrics.uncovered}</b><span className="text-[10px] text-slate-400">scoperte</span></div><div><b className="block text-amber-700">{analysis.metrics.fragile}</b><span className="text-[10px] text-slate-400">fragili</span></div><div><b className="block text-slate-600">{Array.from(analysis.snapshots.values()).filter(item => item.isInactive).length}</b><span className="text-[10px] text-slate-400">non attive</span></div></div>
+      </div>;
+    })}</div>
+
+    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+      <div className="border-b border-slate-100 p-4"><h3 className="font-bold text-slate-900">Copertura per ente</h3><p className="text-xs text-slate-500">La barra confronta ripianate e posizioni attive; le non alimentate sono indicate a parte.</p></div>
+      <div className="overflow-auto"><table className="min-w-full text-xs"><thead><tr className="bg-slate-50 text-left text-[10px] uppercase tracking-wide text-slate-400"><th className="sticky left-0 z-10 bg-slate-50 px-4 py-3">Ente</th>{columns.map(({ scenario }) => <th key={scenario.id} className="min-w-52 px-4 py-3">{scenario.name}</th>)}</tr></thead><tbody>{entityNames.map(entity => <tr key={entity} className="border-t border-slate-100"><th className="sticky left-0 z-10 bg-white px-4 py-3 text-left font-semibold text-slate-700">{entity}</th>{columns.map(({ scenario, analysis }) => { const row = analysis.entityRows.find(item => item.entity === entity); const coverage = row?.total ? row.covered / row.total * 100 : 100; return <td key={scenario.id} className="px-4 py-3"><div className="flex items-center justify-between"><b className="text-slate-700">{row?.covered ?? 0}/{row?.total ?? 0}</b><span className="text-[10px] text-slate-400">{Math.round(coverage)}% · {row?.inactive ?? 0} non attive</span></div><div className="mt-1.5 h-2 overflow-hidden rounded-full bg-rose-100"><div className="h-full rounded-full bg-emerald-500" style={{ width: `${coverage}%` }} /></div></td>; })}</tr>)}</tbody></table></div>
+    </div>
+
+    <div className="space-y-3">{entityNames.map(entity => {
+      const entityPositions = positions.filter(position => (position.entity || "Ente non indicato") === entity);
+      return <details key={entity} className="overflow-hidden rounded-2xl border border-slate-200 bg-white" open={entityNames.length <= 4}><summary className="cursor-pointer bg-slate-50 px-4 py-3 font-bold text-slate-800">{entity} <span className="ml-2 text-xs font-normal text-slate-400">{entityPositions.length} posizioni</span></summary><div className="overflow-auto"><table className="min-w-full text-xs"><thead><tr className="text-left text-[10px] uppercase tracking-wide text-slate-400"><th className="min-w-56 px-4 py-2">Posizione</th>{columns.map(({ scenario }) => <th key={scenario.id} className="min-w-52 px-4 py-2">{scenario.name}</th>)}</tr></thead><tbody>{entityPositions.map(position => {
+        const labels = columns.map(({ analysis }) => assignmentLabel(analysis.snapshots.get(position.code)));
+        const differs = new Set(labels).size > 1;
+        return <tr key={position.code} className={`border-t border-slate-100 ${differs ? "bg-amber-50/40" : ""}`}><td className="px-4 py-3"><div className="font-mono font-bold text-blue-700">{position.code}</div><div className="max-w-64 truncate text-slate-500">{position.title}</div>{differs && <span className="mt-1 inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold uppercase text-amber-700">Cambia tra scenari</span>}</td>{columns.map(({ scenario, analysis }, index) => { const snapshot = analysis.snapshots.get(position.code); const label = labels[index]; return <td key={scenario.id} className="px-4 py-3"><div className={`font-semibold ${snapshot?.isInactive ? "text-slate-500" : snapshot?.isCovered ? "text-emerald-700" : "text-rose-700"}`}>{label}</div><div className="mt-0.5 text-[10px] text-slate-400">{snapshot?.isRealCovered ? "Scelta reale" : snapshot?.isSimulatedCovered ? "Scelta scenario" : snapshot?.isInactive ? "Decisione amministrativa" : `${snapshot?.availableCandidateIds.length ?? 0} alternative disponibili`}</div></td>; })}</tr>;
+      })}</tbody></table></div></details>;
+    })}</div>
+  </div>;
+};
+
 export const SimulationDashboard = ({ candidates, positions, evaluations, researchId }: {
   key?: React.Key;
   candidates: Candidate[];
@@ -624,7 +687,9 @@ export const SimulationDashboard = ({ candidates, positions, evaluations, resear
   const generateProposal = () => {
     const id = `scenario-${Date.now()}`;
     const choices = buildConfiguredChoices(draftConfig, candidates, positions, evaluations);
-    setScenarios(current => [...current, { id, name: `Proposta ${current.length + 1}`, description: `Proposta automatica su ${choices.length} posizioni`, kind: "custom", choices, positionStatuses: {}, config: draftConfig }]);
+    const noFeeding = draftConfig.proposeNoFeeding ? buildNoFeedingRecommendations(choices, candidates, positions, evaluations) : [];
+    const positionStatuses = Object.fromEntries(noFeeding.map(code => [code, "non-alimentazione" as const]));
+    setScenarios(current => [...current, { id, name: `Proposta ${current.length + 1}`, description: `Proposta automatica: ${choices.length} ripianamenti${noFeeding.length ? ` · ${noFeeding.length} non alimentazioni da validare` : ""}`, kind: "custom", choices, positionStatuses, config: draftConfig }]);
     setActiveId(id);
     setConfigOpen(false);
   };
@@ -670,14 +735,10 @@ export const SimulationDashboard = ({ candidates, positions, evaluations, resear
         <div className="ml-auto flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700"><Lock className="h-3.5 w-3.5" /> Dati reali protetti</div>
       </header>
 
-      {configOpen && <div className="border-b border-violet-100 bg-white px-6 py-4"><div className="mx-auto grid max-w-6xl gap-4 lg:grid-cols-[1fr_1fr_1fr_auto]"><label className="text-xs font-bold text-slate-600">Cluster posizioni<input value={draftConfig.positionQuery} onChange={event => setDraftConfig(config => ({ ...config, positionQuery: event.target.value }))} placeholder="es. Genio, pilota, OSC…" className="mt-1 block w-full rounded-lg border border-slate-200 px-3 py-2 font-normal" /></label><label className="text-xs font-bold text-slate-600">Soglia minima enti ({draftConfig.minimumEntityCoverage}%)<input type="range" min="0" max="100" step="5" value={draftConfig.minimumEntityCoverage} onChange={event => setDraftConfig(config => ({ ...config, minimumEntityCoverage: Number(event.target.value) }))} className="mt-3 block w-full" /></label><div className="space-y-2 text-xs text-slate-700"><label className="flex gap-2"><input type="checkbox" checked={draftConfig.preferNoForeignExperience} onChange={event => setDraftConfig(config => ({ ...config, preferNoForeignExperience: event.target.checked }))} /> Priorità senza esperienze estere</label><label className="flex gap-2"><input type="checkbox" checked={draftConfig.prioritizeEntityLevel} onChange={event => setDraftConfig(config => ({ ...config, prioritizeEntityLevel: event.target.checked }))} /> Priorità livello ente (3 &gt; 2 &gt; 1)</label><p className="text-slate-400">Il cluster cerca in codice, posizione, ente, ruolo e Cat/Spec/Qual.</p></div><button onClick={generateProposal} className="self-end rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-violet-700"><Sparkles className="mr-2 inline h-4 w-4" />Crea proposta</button></div></div>}
+      {configOpen && <div className="border-b border-violet-100 bg-white px-6 py-4"><div className="mx-auto grid max-w-6xl gap-4 lg:grid-cols-[1fr_1fr_1fr_auto]"><label className="text-xs font-bold text-slate-600">Cluster posizioni<input value={draftConfig.positionQuery} onChange={event => setDraftConfig(config => ({ ...config, positionQuery: event.target.value }))} placeholder="es. Genio, pilota, OSC…" className="mt-1 block w-full rounded-lg border border-slate-200 px-3 py-2 font-normal" /></label><label className="text-xs font-bold text-slate-600">Soglia minima enti ({draftConfig.minimumEntityCoverage}%)<input type="range" min="0" max="100" step="5" value={draftConfig.minimumEntityCoverage} onChange={event => setDraftConfig(config => ({ ...config, minimumEntityCoverage: Number(event.target.value) }))} className="mt-3 block w-full" /></label><div className="space-y-2 text-xs text-slate-700"><label className="flex gap-2"><input type="checkbox" checked={draftConfig.preferNoForeignExperience} onChange={event => setDraftConfig(config => ({ ...config, preferNoForeignExperience: event.target.checked }))} /> Priorità senza esperienze estere</label><label className="flex gap-2"><input type="checkbox" checked={draftConfig.prioritizeEntityLevel} onChange={event => setDraftConfig(config => ({ ...config, prioritizeEntityLevel: event.target.checked }))} /> Priorità livello ente (3 &gt; 2 &gt; 1)</label><label className="flex gap-2"><input type="checkbox" checked={draftConfig.proposeNoFeeding ?? true} onChange={event => setDraftConfig(config => ({ ...config, proposeNoFeeding: event.target.checked }))} /> Proponi non alimentazione se non esistono candidati utilizzabili</label><p className="text-slate-400">Le non alimentazioni restano visibili e devono essere validate: non vengono conteggiate come posizioni ripianate.</p></div><button onClick={generateProposal} className="self-end rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-violet-700"><Sparkles className="mr-2 inline h-4 w-4" />Crea proposta</button></div></div>}
 
-      {compareOpen && <div className="border-b border-slate-200 bg-white px-6 py-4"><div className="flex gap-3 overflow-x-auto pb-1">{allScenarios.map(scenario => {
-        const metrics = analyzeScenario(scenario.choices, candidates, positions, evaluations, scenario.positionStatuses).metrics;
-        return <button key={scenario.id} onClick={() => setActiveId(scenario.id)} className={`min-w-52 rounded-xl border p-3 text-left ${scenario.id === activeId ? "border-blue-300 bg-blue-50 shadow-sm" : "border-slate-200 bg-white hover:border-slate-300"}`}><div className="text-sm font-bold text-slate-800">{scenario.name}</div><div className="mt-2 grid grid-cols-2 gap-2 text-xs"><span className="text-slate-500">Ripianate <b className="text-emerald-700">{metrics.covered}</b></span><span className="text-slate-500">Scoperte <b className="text-rose-700">{metrics.uncovered}</b></span><span className="text-slate-500">Enti <b className="text-blue-700">{metrics.fullyCoveredEntities}</b></span><span className="text-slate-500">Fragili <b className="text-amber-700">{metrics.fragile}</b></span></div></button>;
-      })}</div></div>}
-
-      <div className="flex min-h-0 flex-1 gap-4 p-4">
+      <div className={`min-h-0 flex-1 p-4 ${compareOpen ? "overflow-auto" : "flex gap-4"}`}>
+        {compareOpen ? <ScenarioComparison scenarios={allScenarios} candidates={candidates} positions={positions} evaluations={evaluations} candidateById={candidateById} /> : <>
         <aside className="flex w-72 shrink-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-100 p-4"><div className="flex items-center justify-between"><div><h2 className="text-sm font-bold text-slate-900">Scelte dello scenario</h2><p className="mt-0.5 text-xs text-slate-400">Clicca per isolare l’impatto</p></div><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-600">{activeChoices.length}</span></div></div>
           <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3" onClick={event => { if (event.target === event.currentTarget) setSelectedChoiceId(null); }}>
@@ -715,6 +776,7 @@ export const SimulationDashboard = ({ candidates, positions, evaluations, resear
         <aside className="hidden w-72 shrink-0 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-sm xl:block">
           {previewChoice ? <ImpactPanel before={committedAnalysis} after={analysis} title="Anteprima" subtitle={`${candidateById.get(previewChoice.candidateId)?.nominativo} → ${previewChoice.positionId}`} /> : selectedChoice ? <ImpactPanel before={selectedChoiceBase} after={committedAnalysis} title={`${candidateById.get(selectedChoice.candidateId)?.nominativo} → ${selectedChoice.positionId}`} subtitle="Impatto isolato della scelta nello scenario." /> : selectedSnapshot ? <div><div className="text-xs font-bold uppercase tracking-wider text-blue-600">Posizione</div><h3 className="mt-1 text-xl font-bold text-slate-900">{selectedSnapshot.position.code}</h3><p className="text-sm text-slate-600">{selectedSnapshot.position.title}</p><p className="mt-1 text-xs text-slate-400">{selectedSnapshot.position.entity}</p><div className="mt-4 grid grid-cols-2 gap-2"><div className="rounded-xl bg-slate-50 p-3"><div className="text-[10px] uppercase text-slate-400">Utilizzabili</div><div className="text-xl font-bold text-slate-800">{selectedSnapshot.availableCandidateIds.length}</div></div><div className="rounded-xl bg-slate-50 p-3"><div className="text-[10px] uppercase text-slate-400">Stato</div><div className="mt-1 text-xs font-bold text-slate-700">{selectedSnapshot.isRealCovered ? "Ripianata" : selectedSnapshot.isSimulatedCovered ? "Scenario" : selectedSnapshot.manualStatus === "estensione-mandato-titolare" ? "Estensione mandato" : selectedSnapshot.isInactive ? "Non alimentata" : "Scoperta"}</div></div></div><div className="mt-5 text-xs font-bold uppercase tracking-wider text-slate-400">Persone segnalate</div><div className="mt-2 space-y-2">{selectedSnapshot.baseAvailableCandidateIds.map(candidateId => { const candidate = candidateById.get(candidateId); const evalItem = getEvaluation(evaluations, selectedSnapshot.position.code, candidateId); return <button key={candidateId} onMouseEnter={() => setPreviewChoice({ id: choiceId(candidateId, selectedSnapshot.position.code), candidateId, positionId: selectedSnapshot.position.code })} onMouseLeave={() => setPreviewChoice(null)} onClick={() => requestChoice(candidateId, selectedSnapshot.position.code)} className="flex w-full items-center gap-2 rounded-xl border border-slate-200 p-2 text-left hover:border-blue-300 hover:bg-blue-50"><div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100"><UserRound className="h-4 w-4 text-slate-500" /></div><div className="min-w-0 flex-1"><div className="truncate text-xs font-bold text-slate-800">{candidate?.nominativo}</div><div className="text-[10px] text-slate-400">Compatibilità {getFit(selectedSnapshot.position, evalItem)}%</div></div><Plus className="h-4 w-4 text-blue-600" /></button>; })}</div></div> : selectedEntity ? <div><div className="text-xs font-bold uppercase tracking-wider text-blue-600">Ente</div><h3 className="mt-1 text-lg font-bold text-slate-900">{selectedEntity.entity}</h3><div className="mt-5 grid grid-cols-2 gap-2">{[["Ripianate", selectedEntity.covered], ["Da ripianare", selectedEntity.total], ["Fragili", selectedEntity.fragile], ["Non alimentate", selectedEntity.inactive]].map(([label, value]) => <div key={String(label)} className="rounded-xl bg-slate-50 p-3"><div className="text-[10px] uppercase text-slate-400">{label}</div><div className="text-xl font-bold text-slate-800">{value}</div></div>)}</div></div> : <ImpactPanel before={baseAnalysis} after={analysis} title="Scenario completo" subtitle="Clicca una scelta, un ente o una posizione per approfondire." />}
         </aside>
+        </>}
       </div>
 
       {pickerOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-5 backdrop-blur-sm" onMouseDown={event => { if (event.target === event.currentTarget) { setPickerOpen(false); setPreviewChoice(null); } }}><div className="flex h-[88vh] w-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-white/40 bg-white shadow-2xl">
