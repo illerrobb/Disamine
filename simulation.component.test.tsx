@@ -54,6 +54,24 @@ describe("SimulationDashboard preview isolation", () => {
     expect(main.textContent).toBe(contentBefore);
     expect(main.scrollTop).toBe(137);
   });
+
+  it("separa l'approfondimento dall'azione che modifica lo scenario", () => {
+    const positions = [makePosition("P1", "Ente A")];
+    const candidates = [makeCandidate("C1", ["P1"])];
+    const evaluations = { P1_C1: makeEvaluation("C1", "P1") };
+    render(<SimulationDashboard candidates={candidates} positions={positions} evaluations={evaluations} researchId="inspect-test" />);
+
+    fireEvent.click(screen.getByTestId("position-row-P1"));
+    expect(screen.getByText("1 scelte · Predefinito")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Anteprima Candidato C1 per P1" }));
+
+    expect(screen.getByTestId("candidate-detail-panel")).toBeTruthy();
+    expect(screen.getByText("Candidato selezionato")).toBeTruthy();
+    expect(screen.getByText("1 scelte · Predefinito")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("candidate-detail-panel").querySelector('[aria-label="Rimuovi Candidato C1 dallo scenario per P1"]')!);
+    expect(screen.getByText("0 scelte · Personale")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Assegna Candidato C1 allo scenario per P1" })).toBeTruthy();
+  });
 });
 
 describe("PositionDetailPanel", () => {
