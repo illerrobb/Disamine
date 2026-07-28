@@ -74,7 +74,7 @@ interface ScenarioMetrics {
   uncertain: number;
 }
 
-interface PositionSnapshot {
+export interface PositionSnapshot {
   position: Position;
   realCandidateId: string | null;
   simulatedCandidateId: string | null;
@@ -502,6 +502,81 @@ const CandidateChoice = ({ candidate, position, evaluation, selected, occupied, 
   </button>;
 };
 
+const requirementSummary = (position: Position, evaluation?: Evaluation) => {
+  const counts = { yes: 0, partial: 0, no: 0, pending: 0 };
+  position.requirements.filter(requirement => !requirement.hidden).forEach(requirement => {
+    counts[evaluation?.reqEvaluations[requirement.id] ?? "pending"] += 1;
+  });
+  return `sì ${counts.yes} · parziale ${counts.partial} · no ${counts.no} · pendente ${counts.pending}`;
+};
+
+const administrativeStatusLabel = (snapshot: PositionSnapshot) => {
+  if (snapshot.manualStatus === "estensione-mandato-titolare") return "Estensione mandato titolare";
+  if (snapshot.isInactive) return "Non alimentazione";
+  if (snapshot.isRealCovered) return "Ripianata";
+  if (snapshot.isSimulatedCovered) return "Ripianata nello scenario";
+  return snapshot.position.administrativeStatus || "Attiva · scoperta";
+};
+
+export const PositionDetailPanel = ({ snapshot, candidates, positions, evaluations, activeChoices, scenario, previewChoice, previewAnalysis, committedAnalysis, onPreview, onChoose }: {
+  snapshot: PositionSnapshot;
+  candidates: Candidate[];
+  positions: Position[];
+  evaluations: Record<string, Evaluation>;
+  activeChoices: SimulationChoice[];
+  scenario?: SimulationScenario;
+  previewChoice: SimulationChoice | null;
+  previewAnalysis: ScenarioAnalysis | null;
+  committedAnalysis: ScenarioAnalysis;
+  onPreview: (choice: SimulationChoice | null) => void;
+  onChoose: (candidateId: string, positionId: string) => void;
+}) => {
+  const { position } = snapshot;
+  const assignedId = snapshot.realCandidateId ?? snapshot.simulatedCandidateId;
+  const assigned = candidates.find(candidate => candidate.id === assignedId);
+  const simulatedChoice = snapshot.simulatedCandidateId
+    ? activeChoices.find(choice => choice.positionId === position.code && choice.candidateId === snapshot.simulatedCandidateId)
+    : undefined;
+  const scenarioOrigin = scenario?.kind === "preset" ? "Preset / proposta automatica" : scenario?.config ? "Proposta automatica" : "Scenario manuale";
+  const simulatedEvaluation = snapshot.simulatedCandidateId ? getEvaluation(evaluations, position.code, snapshot.simulatedCandidateId) : undefined;
+  const realSelections = new Map<string, string>();
+  Object.values(evaluations).forEach(evaluation => { if (evaluation.status === "selected") realSelections.set(evaluation.candidateId, evaluation.positionId); });
+  const simulatedByCandidate = new Map(activeChoices.map(choice => [choice.candidateId, choice.positionId]));
+  const candidateRows = candidates.map(candidate => {
+    const evaluation = getEvaluation(evaluations, position.code, candidate.id);
+    const occupiedAt = realSelections.get(candidate.id) ?? simulatedByCandidate.get(candidate.id);
+    const assignedHere = candidate.id === assignedId;
+    const blocked = !!evaluation && blockedStatuses.has(evaluation.status);
+    const incomplete = isEvaluationIncomplete(position, evaluation);
+    const usable = snapshot.availableCandidateIds.includes(candidate.id);
+    const category = assignedHere ? "Assegnato" : blocked ? "Escluso / non compatibile" : occupiedAt && occupiedAt !== position.code ? "Occupato altrove" : incomplete ? "Valutazione incompleta" : usable ? "Utilizzabile" : "Escluso / non compatibile";
+    const actionable = snapshot.baseAvailableCandidateIds.includes(candidate.id) && !snapshot.isInactive && !snapshot.isRealCovered;
+    return { candidate, evaluation, category, usable: actionable };
+  }).sort((a, b) => {
+    const order = ["Assegnato", "Utilizzabile", "Valutazione incompleta", "Occupato altrove", "Escluso / non compatibile"];
+    return order.indexOf(a.category) - order.indexOf(b.category) || b.candidate.id.localeCompare(a.candidate.id);
+  });
+  const requirements = position.requirements.filter(requirement => !requirement.hidden);
+  const explanation = snapshot.realCandidateId
+    ? "La posizione deriva dalla selezione amministrativa registrata; le euristiche di scenario non modificano la scelta reale."
+    : snapshot.simulatedCandidateId && assigned
+      ? `Scelta deterministica: compatibilità requisiti ${getFit(position, simulatedEvaluation)}%; candidato disponibile in modo esclusivo nello scenario; ${assigned.appliedPositionCodes.length} posizioni contendibili. ${scenario?.config?.preferNoForeignExperience ? `Preferenza esperienze estere applicata (${assigned.internationalMandates.trim() ? "presenti" : "assenti"}). ` : ""}${scenario?.kind === "preset" ? `Il preset ordina per disponibilità${scenario.id === "preset-balanced" ? " e copertura dell’ente" : ""}. ` : ""}${scenario?.config ? `Copertura minima ente ${scenario.config.minimumEntityCoverage}%${scenario.config.prioritizeEntityLevel ? ` e livello ente ${entityLevel(position.entity)}` : ""}.` : ""}`
+      : "Nessuna assegnazione: dopo compatibilità dei requisiti e disponibilità esclusiva, nessun candidato utilizzabile soddisfa i criteri oppure le alternative sono state occupate altrove.";
+
+  return <div data-testid="position-detail-panel" className="space-y-5">
+    <div><div className="text-xs font-bold uppercase tracking-wider text-blue-600">Posizione</div><h3 className="mt-1 text-xl font-bold text-slate-900">{position.code}</h3><p className="text-sm font-semibold text-slate-700">{position.title || "Titolo non indicato"}</p></div>
+    <dl className="space-y-2 text-xs"><div><dt className="font-bold uppercase text-slate-400">Ente</dt><dd className="text-slate-700">{position.entity || "Non indicato"}</dd></div><div><dt className="font-bold uppercase text-slate-400">Ruolo</dt><dd className="text-slate-700">{position.role || "Non indicato"}</dd></div><div><dt className="font-bold uppercase text-slate-400">Stato amministrativo</dt><dd className="font-semibold text-slate-700">{administrativeStatusLabel(snapshot)}</dd></div><div><dt className="font-bold uppercase text-slate-400">Requisiti principali</dt><dd className="mt-1 text-slate-600">{requirements.length ? requirements.map(requirement => requirement.text).join(" · ") : [position.rankReq, position.catSpecQualReq, position.englishReq, position.nosReq].filter(Boolean).join(" · ") || "Nessun requisito indicato"}</dd></div></dl>
+    {snapshot.realCandidateId && <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3"><div className="text-[10px] font-bold uppercase text-emerald-700">Scelta reale</div><div className="mt-1 text-sm font-bold text-slate-800">{assigned?.nominativo ?? snapshot.realCandidateId}</div></div>}
+    {simulatedChoice && <div className="rounded-xl border border-blue-100 bg-blue-50 p-3"><div className="text-[10px] font-bold uppercase text-blue-700">Scelta scenario</div><div className="mt-1 text-sm font-bold text-slate-800">{assigned?.nominativo ?? simulatedChoice.candidateId}</div><div className="mt-1 text-[10px] text-blue-700">Origine: {scenarioOrigin}</div></div>}
+    <div className="rounded-xl border border-violet-100 bg-violet-50 p-3"><div className="text-[10px] font-bold uppercase text-violet-700">Perché questa scelta</div><p className="mt-1 text-xs leading-relaxed text-slate-700">{explanation}</p></div>
+    <div><div className="text-xs font-bold uppercase tracking-wider text-slate-400">Candidati considerati</div><p className="mt-1 text-[10px] text-slate-500">Elenco completo delle valutazioni. Il bacino utilizzabile di base non è un insieme esaustivo di persone segnalate.</p><div className="mt-2 space-y-2">{candidateRows.length ? candidateRows.map(({ candidate, evaluation, category, usable }) => {
+      const choice = { id: choiceId(candidate.id, position.code), candidateId: candidate.id, positionId: position.code };
+      return <button type="button" disabled={!usable} aria-label={`Anteprima ${candidate.nominativo} per ${position.code}`} key={candidate.id} onPointerEnter={() => usable && onPreview(choice)} onPointerLeave={() => onPreview(null)} onFocus={() => usable && onPreview(choice)} onBlur={() => onPreview(null)} onClick={() => usable && onChoose(candidate.id, position.code)} className="w-full rounded-xl border border-slate-200 p-2 text-left enabled:hover:border-blue-300 enabled:hover:bg-blue-50 disabled:cursor-default"><div className="flex items-center justify-between gap-2"><span className="truncate text-xs font-bold text-slate-800">{candidate.nominativo}</span><span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-bold text-slate-600">{category}</span></div><div className="mt-1 text-[10px] text-slate-500">Compatibilità {getFit(position, evaluation)}% · {requirementSummary(position, evaluation)}</div></button>;
+    }) : <div className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-500">Nessun candidato disponibile o valutato per questa posizione.</div>}</div></div>
+    {previewChoice && previewAnalysis && <div className="border-t border-slate-200 pt-5" data-testid="position-preview-impact"><ImpactPanel before={committedAnalysis} after={previewAnalysis} title="Anteprima" subtitle={`${candidates.find(candidate => candidate.id === previewChoice.candidateId)?.nominativo} → ${previewChoice.positionId}`} /></div>}
+  </div>;
+};
+
 const ImpactPanel = ({ before, after, title, subtitle }: { before: ScenarioAnalysis; after: ScenarioAnalysis; title: string; subtitle: string }) => {
   const delta = describeDelta(before.metrics, after.metrics);
   const changedEntities = after.entityRows.map(row => {
@@ -789,7 +864,7 @@ export const SimulationDashboard = ({ candidates, positions, evaluations, resear
         </section>
 
         <aside className="hidden w-72 shrink-0 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-sm xl:block">
-          {selectedChoice ? <ImpactPanel before={selectedChoiceBase} after={committedAnalysis} title={`${candidateById.get(selectedChoice.candidateId)?.nominativo} → ${selectedChoice.positionId}`} subtitle="Impatto isolato della scelta nello scenario." /> : selectedSnapshot ? <div><div className="text-xs font-bold uppercase tracking-wider text-blue-600">Posizione</div><h3 className="mt-1 text-xl font-bold text-slate-900">{selectedSnapshot.position.code}</h3><p className="text-sm text-slate-600">{selectedSnapshot.position.title}</p><p className="mt-1 text-xs text-slate-400">{selectedSnapshot.position.entity}</p><div className="mt-4 grid grid-cols-2 gap-2"><div className="rounded-xl bg-slate-50 p-3"><div className="text-[10px] uppercase text-slate-400">Utilizzabili</div><div className="text-xl font-bold text-slate-800">{selectedSnapshot.availableCandidateIds.length}</div></div><div className="rounded-xl bg-slate-50 p-3"><div className="text-[10px] uppercase text-slate-400">Stato</div><div className="mt-1 text-xs font-bold text-slate-700">{selectedSnapshot.isRealCovered ? "Ripianata" : selectedSnapshot.isSimulatedCovered ? "Scenario" : selectedSnapshot.manualStatus === "estensione-mandato-titolare" ? "Estensione mandato" : selectedSnapshot.isInactive ? "Non alimentata" : "Scoperta"}</div></div></div><div className="mt-5 text-xs font-bold uppercase tracking-wider text-slate-400">Persone segnalate</div><div className="mt-2 space-y-2">{selectedSnapshot.baseAvailableCandidateIds.map(candidateId => { const candidate = candidateById.get(candidateId); const evalItem = getEvaluation(evaluations, selectedSnapshot.position.code, candidateId); return <button aria-label={`Anteprima ${candidate?.nominativo} per ${selectedSnapshot.position.code}`} key={candidateId} onPointerEnter={() => setPreviewChoice({ id: choiceId(candidateId, selectedSnapshot.position.code), candidateId, positionId: selectedSnapshot.position.code })} onPointerLeave={() => setPreviewChoice(null)} onFocus={() => setPreviewChoice({ id: choiceId(candidateId, selectedSnapshot.position.code), candidateId, positionId: selectedSnapshot.position.code })} onBlur={() => setPreviewChoice(null)} onClick={() => requestChoice(candidateId, selectedSnapshot.position.code)} className="flex w-full items-center gap-2 rounded-xl border border-slate-200 p-2 text-left hover:border-blue-300 hover:bg-blue-50"><div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100"><UserRound className="h-4 w-4 text-slate-500" /></div><div className="min-w-0 flex-1"><div className="truncate text-xs font-bold text-slate-800">{candidate?.nominativo}</div><div className="text-[10px] text-slate-400">Compatibilità {getFit(selectedSnapshot.position, evalItem)}%</div></div><Plus className="h-4 w-4 text-blue-600" /></button>; })}</div>{previewChoice && previewAnalysis && <div className="mt-5 border-t border-slate-200 pt-5" data-testid="position-preview-impact"><ImpactPanel before={committedAnalysis} after={previewAnalysis} title="Anteprima" subtitle={`${candidateById.get(previewChoice.candidateId)?.nominativo} → ${previewChoice.positionId}`} /></div>}</div> : selectedEntity ? <div><div className="text-xs font-bold uppercase tracking-wider text-blue-600">Ente</div><h3 className="mt-1 text-lg font-bold text-slate-900">{selectedEntity.entity}</h3><div className="mt-5 grid grid-cols-2 gap-2">{[["Ripianate", selectedEntity.covered], ["Da ripianare", selectedEntity.total], ["Fragili", selectedEntity.fragile], ["Non alimentate", selectedEntity.inactive]].map(([label, value]) => <div key={String(label)} className="rounded-xl bg-slate-50 p-3"><div className="text-[10px] uppercase text-slate-400">{label}</div><div className="text-xl font-bold text-slate-800">{value}</div></div>)}</div></div> : <ImpactPanel before={baseAnalysis} after={committedAnalysis} title="Scenario completo" subtitle="Clicca una scelta, un ente o una posizione per approfondire." />}
+          {selectedChoice ? <ImpactPanel before={selectedChoiceBase} after={committedAnalysis} title={`${candidateById.get(selectedChoice.candidateId)?.nominativo} → ${selectedChoice.positionId}`} subtitle="Impatto isolato della scelta nello scenario." /> : selectedSnapshot ? <PositionDetailPanel snapshot={selectedSnapshot} candidates={candidates} positions={positions} evaluations={evaluations} activeChoices={activeChoices} scenario={activeScenario} previewChoice={previewChoice} previewAnalysis={previewAnalysis} committedAnalysis={committedAnalysis} onPreview={setPreviewChoice} onChoose={requestChoice} /> : selectedEntity ? <div><div className="text-xs font-bold uppercase tracking-wider text-blue-600">Ente</div><h3 className="mt-1 text-lg font-bold text-slate-900">{selectedEntity.entity}</h3><div className="mt-5 grid grid-cols-2 gap-2">{[["Ripianate", selectedEntity.covered], ["Da ripianare", selectedEntity.total], ["Fragili", selectedEntity.fragile], ["Non alimentate", selectedEntity.inactive]].map(([label, value]) => <div key={String(label)} className="rounded-xl bg-slate-50 p-3"><div className="text-[10px] uppercase text-slate-400">{label}</div><div className="text-xl font-bold text-slate-800">{value}</div></div>)}</div></div> : <ImpactPanel before={baseAnalysis} after={committedAnalysis} title="Scenario completo" subtitle="Clicca una scelta, un ente o una posizione per approfondire." />}
         </aside>
         </>}
       </div>
