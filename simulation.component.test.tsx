@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
-import { SimulationDashboard } from "./simulation";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { analyzeScenario, PositionDetailPanel, SimulationDashboard, type SimulationChoice } from "./simulation";
 import type { Candidate, Evaluation, Position } from "./index";
 
 const makePosition = (code: string, entity: string): Position => ({
@@ -19,6 +19,8 @@ const makeCandidate = (id: string, appliedPositionCodes: string[]): Candidate =>
 const makeEvaluation = (candidateId: string, positionId: string): Evaluation => ({
   candidateId, positionId, status: "pending", reqEvaluations: {}, notes: ""
 });
+
+afterEach(cleanup);
 
 describe("SimulationDashboard preview isolation", () => {
   beforeEach(() => localStorage.clear());
@@ -51,5 +53,52 @@ describe("SimulationDashboard preview isolation", () => {
     expect(screen.getByRole("heading", { name: "P1" })).toBeTruthy();
     expect(main.textContent).toBe(contentBefore);
     expect(main.scrollTop).toBe(137);
+  });
+});
+
+describe("PositionDetailPanel", () => {
+  const renderPanel = ({ position = makePosition("P1", "Ente elevato 2"), candidates = [makeCandidate("C1", ["P1"])], evaluations = { P1_C1: makeEvaluation("C1", "P1") } as Record<string, Evaluation>, choices = [] as SimulationChoice[], scenario = { id: "manual", name: "Manuale", description: "Scenario manuale", kind: "custom", choices: [] } }: any = {}) => {
+    position.role = "Direttivo";
+    position.rankReq = "Grado OF-3";
+    const analysis = analyzeScenario(choices, candidates, [position], evaluations);
+    render(<PositionDetailPanel snapshot={analysis.snapshots.get(position.code)!} candidates={candidates} positions={[position]} evaluations={evaluations} activeChoices={choices} scenario={{ ...scenario, choices }} previewChoice={null} previewAnalysis={null} committedAnalysis={analysis} onPreview={() => undefined} onChoose={() => undefined} />);
+  };
+
+  it("mostra identità e candidato per una posizione reale", () => {
+    const evaluation = { ...makeEvaluation("C1", "P1"), status: "selected" as const };
+    renderPanel({ evaluations: { P1_C1: evaluation } });
+    expect(screen.getByText("Scelta reale")).toBeTruthy();
+    expect(screen.getAllByText("Candidato C1").length).toBeGreaterThan(0);
+    expect(screen.getByText("Direttivo")).toBeTruthy();
+    expect(screen.getByText("Grado OF-3")).toBeTruthy();
+  });
+
+  it("indica una scelta generata da preset e i criteri deterministici", () => {
+    const choices = [{ id: "C1::P1", candidateId: "C1", positionId: "P1" }];
+    renderPanel({ choices, scenario: { id: "preset-balanced", name: "Equilibrio", description: "Preset", kind: "preset" } });
+    expect(screen.getByText("Scelta scenario")).toBeTruthy();
+    expect(screen.getByText(/Origine: Preset \/ proposta automatica/)).toBeTruthy();
+    expect(screen.getByText(/compatibilità requisiti/)).toBeTruthy();
+    expect(screen.getByText(/posizioni contendibili/)).toBeTruthy();
+  });
+
+  it("distingue una scelta manuale", () => {
+    const choices = [{ id: "C1::P1", candidateId: "C1", positionId: "P1" }];
+    renderPanel({ choices });
+    expect(screen.getByText("Origine: Scenario manuale")).toBeTruthy();
+  });
+
+  it("descrive una posizione scoperta e classifica i candidati esclusi", () => {
+    const evaluation = { ...makeEvaluation("C1", "P1"), status: "non-compatible" as const };
+    renderPanel({ evaluations: { P1_C1: evaluation } });
+    expect(screen.getByText("Attiva · scoperta")).toBeTruthy();
+    expect(screen.getByText("Escluso / non compatibile")).toBeTruthy();
+    expect(screen.getByText(/Nessuna assegnazione/)).toBeTruthy();
+  });
+
+  it("gestisce una posizione senza candidati", () => {
+    renderPanel({ candidates: [], evaluations: {} });
+    expect(screen.getByText("Nessun candidato disponibile o valutato per questa posizione.")).toBeTruthy();
+    expect(screen.getByText(/bacino utilizzabile di base/)).toBeTruthy();
   });
 });
