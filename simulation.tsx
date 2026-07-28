@@ -65,6 +65,16 @@ const defaultScenarioConfig: ScenarioConfig = {
   proposeNoFeeding: true
 };
 
+const positionsInConfigScope = (positions: Position[], config?: ScenarioConfig) => {
+  if (!config) return positions;
+  const query = config.positionQuery.trim().toLocaleLowerCase("it");
+  return positions.filter(position =>
+    (!config.entities?.length || config.entities.includes(position.entity)) &&
+    (!config.roles?.length || config.roles.includes(position.role)) &&
+    (!query || [position.code, position.title, position.entity, position.role, position.catSpecQualReq].join(" ").toLocaleLowerCase("it").includes(query))
+  );
+};
+
 interface ScenarioMetrics {
   covered: number;
   uncovered: number;
@@ -294,12 +304,7 @@ export const buildConfiguredChoices = (
   positions: Position[],
   evaluations: Record<string, Evaluation>
 ) => {
-  const query = config.positionQuery.trim().toLocaleLowerCase("it");
-  const scoped = positions.filter(position =>
-    (!config.entities.length || config.entities.includes(position.entity)) &&
-    (!config.roles.length || config.roles.includes(position.role)) &&
-    (!query || [position.code, position.title, position.entity, position.role, position.catSpecQualReq].join(" ").toLocaleLowerCase("it").includes(query))
-  );
+  const scoped = positionsInConfigScope(positions, config);
   const realSelections = new Map<string, string>();
   Object.values(evaluations).forEach(evaluation => { if (evaluation.status === "selected") realSelections.set(evaluation.candidateId, evaluation.positionId); });
   const used = new Set<string>();
@@ -700,6 +705,7 @@ export const SimulationDashboard = ({ candidates, positions, evaluations, resear
   const [pendingReplacement, setPendingReplacement] = useState<SimulationChoice | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
   const [draftConfig, setDraftConfig] = useState<ScenarioConfig>(defaultScenarioConfig);
+  const [roleMenuOpen, setRoleMenuOpen] = useState(false);
   const [candidateEntityFilter, setCandidateEntityFilter] = useState("");
   const [candidateRoleFilter, setCandidateRoleFilter] = useState("");
 
@@ -713,15 +719,16 @@ export const SimulationDashboard = ({ candidates, positions, evaluations, resear
   const activeScenario = allScenarios.find(scenario => scenario.id === activeId) ?? allScenarios[0];
   const activeChoices = activeScenario?.choices ?? [];
   const activePositionStatuses = activeScenario?.positionStatuses ?? {};
-  const baseAnalysis = useMemo(() => analyzeScenario([], candidates, positions, evaluations), [candidates, positions, evaluations]);
-  const committedAnalysis = useMemo(() => analyzeScenario(activeChoices, candidates, positions, evaluations, activePositionStatuses), [activeChoices, candidates, positions, evaluations, activePositionStatuses]);
+  const scenarioPositions = useMemo(() => positionsInConfigScope(positions, activeScenario?.config), [positions, activeScenario?.config]);
+  const baseAnalysis = useMemo(() => analyzeScenario([], candidates, scenarioPositions, evaluations), [candidates, scenarioPositions, evaluations]);
+  const committedAnalysis = useMemo(() => analyzeScenario(activeChoices, candidates, scenarioPositions, evaluations, activePositionStatuses), [activeChoices, candidates, scenarioPositions, evaluations, activePositionStatuses]);
   const previewAnalysis = useMemo(() => previewChoice
-    ? analyzeScenario(applyChoice(activeChoices, previewChoice), candidates, positions, evaluations, activePositionStatuses)
-    : null, [previewChoice, activeChoices, candidates, positions, evaluations, activePositionStatuses]);
+    ? analyzeScenario(applyChoice(activeChoices, previewChoice), candidates, scenarioPositions, evaluations, activePositionStatuses)
+    : null, [previewChoice, activeChoices, candidates, scenarioPositions, evaluations, activePositionStatuses]);
   const selectedChoice = activeChoices.find(choice => choice.id === selectedChoiceId) ?? null;
   const selectedChoiceBase = useMemo(() => selectedChoice
-    ? analyzeScenario(activeChoices.filter(choice => choice.id !== selectedChoice.id), candidates, positions, evaluations, activePositionStatuses)
-    : baseAnalysis, [selectedChoice, activeChoices, candidates, positions, evaluations, activePositionStatuses, baseAnalysis]);
+    ? analyzeScenario(activeChoices.filter(choice => choice.id !== selectedChoice.id), candidates, scenarioPositions, evaluations, activePositionStatuses)
+    : baseAnalysis, [selectedChoice, activeChoices, candidates, scenarioPositions, evaluations, activePositionStatuses, baseAnalysis]);
   const changedPositionIds = useMemo(() => {
     const set = new Set<string>();
     committedAnalysis.snapshots.forEach((snapshot, code) => {
@@ -799,7 +806,8 @@ export const SimulationDashboard = ({ candidates, positions, evaluations, resear
   const generateProposal = () => {
     const id = `scenario-${Date.now()}`;
     const choices = buildConfiguredChoices(draftConfig, candidates, positions, evaluations);
-    const noFeeding = draftConfig.proposeNoFeeding ? buildNoFeedingRecommendations(choices, candidates, positions, evaluations) : [];
+    const scopedPositions = positionsInConfigScope(positions, draftConfig);
+    const noFeeding = draftConfig.proposeNoFeeding ? buildNoFeedingRecommendations(choices, candidates, scopedPositions, evaluations) : [];
     const positionStatuses = Object.fromEntries(noFeeding.map(code => [code, "non-alimentazione" as const]));
     setScenarios(current => [...current, { id, name: `Proposta ${current.length + 1}`, description: `Proposta automatica: ${choices.length} ripianamenti${noFeeding.length ? ` · ${noFeeding.length} non alimentazioni da validare` : ""}`, kind: "custom", choices, positionStatuses, config: draftConfig }]);
     setActiveId(id);
@@ -817,7 +825,7 @@ export const SimulationDashboard = ({ candidates, positions, evaluations, resear
     if (!normalizedSearch) return true;
     return [candidate.nominativo, candidate.id, candidate.rank, candidate.serviceEntity, candidate.role, candidate.category, candidate.specialty, candidate.languages.map(item => item.language).join(" ")].join(" ").toLocaleLowerCase("it").includes(normalizedSearch);
   });
-  const visiblePositions = positions.filter(position => {
+  const visiblePositions = scenarioPositions.filter(position => {
     if (!normalizedSearch) return true;
     return [position.code, position.title, position.entity].join(" ").toLocaleLowerCase("it").includes(normalizedSearch);
   });
@@ -841,6 +849,7 @@ export const SimulationDashboard = ({ candidates, positions, evaluations, resear
   const selectedSnapshot = selectedGraphId && graphMode === "positions" ? committedAnalysis.snapshots.get(selectedGraphId) : null;
   const selectedEntity = selectedGraphId && graphMode === "entities" ? committedAnalysis.entityRows.find(row => row.entity === selectedGraphId) : null;
   const snapshotList = Array.from(committedAnalysis.snapshots.values()) as PositionSnapshot[];
+  const positionRoles = useMemo(() => Array.from(new Set(positions.map(position => position.role).filter(Boolean))).sort((a, b) => a.localeCompare(b, "it")), [positions]);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-slate-100">
@@ -863,7 +872,11 @@ export const SimulationDashboard = ({ candidates, positions, evaluations, resear
         <div className="ml-auto flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700"><Lock className="h-3.5 w-3.5" /> Dati reali protetti</div>
       </header>
 
-      {configOpen && <div className="border-b border-violet-100 bg-white px-6 py-4"><div className="mx-auto grid max-w-6xl gap-4 lg:grid-cols-[1fr_1fr_1fr_auto]"><label className="text-xs font-bold text-slate-600">Cluster posizioni<input value={draftConfig.positionQuery} onChange={event => setDraftConfig(config => ({ ...config, positionQuery: event.target.value }))} placeholder="es. Genio, pilota, OSC…" className="mt-1 block w-full rounded-lg border border-slate-200 px-3 py-2 font-normal" /></label><label className="text-xs font-bold text-slate-600">Soglia minima enti ({draftConfig.minimumEntityCoverage}%)<input type="range" min="0" max="100" step="5" value={draftConfig.minimumEntityCoverage} onChange={event => setDraftConfig(config => ({ ...config, minimumEntityCoverage: Number(event.target.value) }))} className="mt-3 block w-full" /></label><div className="space-y-2 text-xs text-slate-700"><label className="flex gap-2"><input type="checkbox" checked={draftConfig.preferNoForeignExperience} onChange={event => setDraftConfig(config => ({ ...config, preferNoForeignExperience: event.target.checked }))} /> Priorità senza esperienze estere</label><label className="flex gap-2"><input type="checkbox" checked={draftConfig.prioritizeEntityLevel} onChange={event => setDraftConfig(config => ({ ...config, prioritizeEntityLevel: event.target.checked }))} /> Priorità livello ente (3 &gt; 2 &gt; 1)</label><label className="flex gap-2"><input type="checkbox" checked={draftConfig.proposeNoFeeding ?? true} onChange={event => setDraftConfig(config => ({ ...config, proposeNoFeeding: event.target.checked }))} /> Proponi non alimentazione se non esistono candidati utilizzabili</label><p className="text-slate-400">Le non alimentazioni restano visibili e devono essere validate: non vengono conteggiate come posizioni ripianate.</p></div><button onClick={generateProposal} className="self-end rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-violet-700"><Sparkles className="mr-2 inline h-4 w-4" />Crea proposta</button></div></div>}
+      {configOpen && <div className="border-b border-violet-100 bg-white px-6 py-4"><div className="mx-auto grid max-w-7xl gap-4 lg:grid-cols-[1fr_1fr_1fr_1fr_auto]">
+        <label className="text-xs font-bold text-slate-600">Cluster posizioni<input value={draftConfig.positionQuery} onChange={event => setDraftConfig(config => ({ ...config, positionQuery: event.target.value }))} placeholder="es. Genio, pilota, OSC…" className="mt-1 block w-full rounded-lg border border-slate-200 px-3 py-2 font-normal" /></label>
+        <div className="relative text-xs font-bold text-slate-600"><span>Ruolo posizione</span><button type="button" aria-expanded={roleMenuOpen} onClick={() => setRoleMenuOpen(value => !value)} className="mt-1 flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-left font-normal"><span className="truncate">{draftConfig.roles.length ? `${draftConfig.roles.length} selezionati` : "Tutti i ruoli"}</span><ChevronDown className="h-4 w-4 text-slate-400" /></button>{roleMenuOpen && <div className="absolute z-50 mt-1 max-h-64 w-full min-w-56 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 shadow-xl"><button type="button" onClick={() => setDraftConfig(config => ({ ...config, roles: [] }))} className="mb-1 w-full rounded-lg px-2 py-1.5 text-left font-semibold text-violet-700 hover:bg-violet-50">Tutti i ruoli</button>{positionRoles.map(role => <label key={role} className="flex cursor-pointer items-start gap-2 rounded-lg px-2 py-1.5 font-normal text-slate-700 hover:bg-slate-50"><input type="checkbox" checked={draftConfig.roles.includes(role)} onChange={() => setDraftConfig(config => ({ ...config, roles: config.roles.includes(role) ? config.roles.filter(value => value !== role) : [...config.roles, role] }))} /><span>{role}</span></label>)}</div>}<p className="mt-1 font-normal text-slate-400">Lo scenario includerà solo questi tipi di posizione.</p></div>
+        <label className="text-xs font-bold text-slate-600">Soglia minima enti ({draftConfig.minimumEntityCoverage}%)<input type="range" min="0" max="100" step="5" value={draftConfig.minimumEntityCoverage} onChange={event => setDraftConfig(config => ({ ...config, minimumEntityCoverage: Number(event.target.value) }))} className="mt-3 block w-full" /></label>
+        <div className="space-y-2 text-xs text-slate-700"><label className="flex gap-2"><input type="checkbox" checked={draftConfig.preferNoForeignExperience} onChange={event => setDraftConfig(config => ({ ...config, preferNoForeignExperience: event.target.checked }))} /> Priorità senza esperienze estere</label><label className="flex gap-2"><input type="checkbox" checked={draftConfig.prioritizeEntityLevel} onChange={event => setDraftConfig(config => ({ ...config, prioritizeEntityLevel: event.target.checked }))} /> Priorità livello ente (3 &gt; 2 &gt; 1)</label><label className="flex gap-2"><input type="checkbox" checked={draftConfig.proposeNoFeeding ?? true} onChange={event => setDraftConfig(config => ({ ...config, proposeNoFeeding: event.target.checked }))} /> Proponi non alimentazione se non esistono candidati utilizzabili</label><p className="text-slate-400">Le non alimentazioni restano visibili e devono essere validate.</p></div><button onClick={generateProposal} className="self-end rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-violet-700"><Sparkles className="mr-2 inline h-4 w-4" />Crea proposta</button></div></div>}
 
       <div className={`min-h-0 flex-1 p-4 ${compareOpen ? "overflow-auto" : "flex gap-4"}`}>
         {compareOpen ? <ScenarioComparison scenarios={allScenarios} candidates={candidates} positions={positions} evaluations={evaluations} candidateById={candidateById} /> : <>
@@ -910,7 +923,7 @@ export const SimulationDashboard = ({ candidates, positions, evaluations, resear
         <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(0,1fr)_280px]">
           <div className="flex min-h-0 min-w-0 flex-col border-r border-slate-200"><div className="space-y-2 p-4"><label className="relative block"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input autoFocus value={search} onChange={event => setSearch(event.target.value)} placeholder={pickerMode === "people" ? "Cerca persona, matricola o ente…" : "Cerca posizione o ente…"} className="w-full rounded-xl border border-slate-200 py-2.5 pl-10 pr-4 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100" /></label>{pickerMode === "people" && <div className="flex gap-2"><select value={candidateEntityFilter} onChange={event => setCandidateEntityFilter(event.target.value)} className="min-w-0 flex-1 rounded-lg border border-slate-200 px-2 py-1.5 text-xs"><option value="">Tutti gli enti di provenienza</option>{Array.from(new Set(candidates.map(candidate => candidate.serviceEntity).filter(Boolean))).sort().map(value => <option key={value}>{value}</option>)}</select><select value={candidateRoleFilter} onChange={event => setCandidateRoleFilter(event.target.value)} className="min-w-0 flex-1 rounded-lg border border-slate-200 px-2 py-1.5 text-xs"><option value="">Tutti i ruoli</option>{Array.from(new Set(candidates.map(candidate => candidate.role).filter(Boolean))).sort().map(value => <option key={value}>{value}</option>)}</select></div>}</div><div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-4 pb-4">
             {pickerMode === "people" ? visibleCandidates.map(candidate => {
-              const applicable = positions.filter(position => {
+              const applicable = scenarioPositions.filter(position => {
                 const evaluation = getEvaluation(evaluations, position.code, candidate.id);
                 const snapshot = committedAnalysis.snapshots.get(position.code);
                 return evaluation && !blockedStatuses.has(evaluation.status) && snapshot && !snapshot.isInactive && !snapshot.isRealCovered;

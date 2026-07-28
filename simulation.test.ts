@@ -109,6 +109,15 @@ describe("scenario simulation", () => {
     expect(choices[0].positionId).toBe("GEN-1");
   });
 
+  it("generates proposals only for the selected position roles", () => {
+    const positions = [position("P1", "Ente A", { role: "Naviganti" }), position("P2", "Ente A", { role: "Genio" })];
+    const candidates = [candidate("C1", ["P1"]), candidate("C2", ["P2"])];
+    const evaluations = { P1_C1: evaluation("C1", "P1"), P2_C2: evaluation("C2", "P2") };
+    const choices = buildConfiguredChoices({ preferNoForeignExperience: true, prioritizeEntityLevel: true, minimumEntityCoverage: 70, positionQuery: "", entities: [], roles: ["Genio"] }, candidates, positions, evaluations);
+
+    expect(choices.map(choice => choice.positionId)).toEqual(["P2"]);
+  });
+
   it("suggests non-alimentazione only for uncovered positions without usable candidates", () => {
     const positions = [position("P1", "Ente A"), position("P2", "Ente A"), position("P3", "Ente B")];
     const candidates = [candidate("C1", ["P1"]), candidate("C2", ["P2"])];

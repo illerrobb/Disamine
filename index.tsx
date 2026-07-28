@@ -6237,6 +6237,7 @@ const RecruitmentApp = () => {
   const [backupSuccess, setBackupSuccess] = useState("");
   const [lastImportStats, setLastImportStats] = useState<ImportStats | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => localStorage.getItem('disamine-sidebar-collapsed') === 'true');
   const [settingsFileError, setSettingsFileError] = useState("");
   const [settingsFileSuccess, setSettingsFileSuccess] = useState("");
   const [isSettingsProcessing, setIsSettingsProcessing] = useState(false);
@@ -7367,17 +7368,18 @@ const RecruitmentApp = () => {
         </div>
       <div className="flex min-h-0 flex-1">
       {/* Sidebar */}
-      <aside className="w-64 bg-slate-900 text-slate-300 flex flex-col flex-shrink-0">
-        <div className="p-6 border-b border-slate-800">
+      <aside className={`${isSidebarCollapsed ? 'w-20' : 'w-64'} bg-slate-900 text-slate-300 flex flex-col flex-shrink-0 transition-[width] duration-200`}>
+        <div className={`${isSidebarCollapsed ? 'p-3' : 'p-6'} border-b border-slate-800`}>
+          <button type="button" onClick={() => setIsSidebarCollapsed(value => { localStorage.setItem('disamine-sidebar-collapsed', String(!value)); return !value; })} className="mb-4 flex h-9 w-full items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white" title={isSidebarCollapsed ? 'Espandi navigazione' : 'Comprimi navigazione'} aria-label={isSidebarCollapsed ? 'Espandi navigazione' : 'Comprimi navigazione'}>{isSidebarCollapsed ? <ChevronRight className="h-5 w-5" /> : <ChevronLeft className="h-5 w-5" />}</button>
           <h2 className="text-white font-bold text-xl flex items-center gap-2">
-            <div className="w-8 h-8 bg-blue-600 rounded flex items-center justify-center">SD</div>
-            SchedaDisamina
+            <div className="w-8 h-8 shrink-0 bg-blue-600 rounded flex items-center justify-center">SD</div>
+            {!isSidebarCollapsed && 'SchedaDisamina'}
           </h2>
-          <p className="mt-2 text-xs text-slate-400">
+          {!isSidebarCollapsed && <p className="mt-2 text-xs text-slate-400">
             Ciclo di disamina: <span className="text-slate-200">{appData.cycle.name}</span>
-          </p>
+          </p>}
         </div>
-        <nav className="flex-1 p-4 space-y-2">
+        <nav className={`${isSidebarCollapsed ? 'p-3 text-[0px] [&_span]:hidden [&>button]:justify-center [&>button]:gap-0 [&>button]:px-2' : 'p-4'} flex-1 space-y-2`}>
           <button
             onClick={() => navigate('researches')}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400 ${renderedView === 'researches' ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 text-slate-300'}`}
@@ -7433,10 +7435,11 @@ const RecruitmentApp = () => {
             Reiterazioni
           </button>
         </nav>
-        <div className="p-4 border-t border-slate-800">
+        <div className={`${isSidebarCollapsed ? 'p-3' : 'p-4'} border-t border-slate-800`}>
           <button
             onClick={() => setIsSettingsOpen(true)}
-            className="w-full flex items-center gap-2 text-slate-200 hover:text-white text-sm px-3 py-2 rounded-md bg-slate-800/60 hover:bg-slate-800"
+            title="Impostazioni"
+            className={`w-full flex items-center text-slate-200 hover:text-white rounded-md bg-slate-800/60 hover:bg-slate-800 ${isSidebarCollapsed ? 'justify-center p-2 text-[0px]' : 'gap-2 px-3 py-2 text-sm'}`}
           >
             <Menu className="w-4 h-4" /> Impostazioni
           </button>
