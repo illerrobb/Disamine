@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { analyzeScenario, buildConfiguredChoices, buildNoFeedingRecommendations, sortPositionSnapshots, type SimulationChoice } from "./simulation";
 import type { Candidate, Evaluation, Position } from "./index";
+import { buildOverlapCell, buildOverlapItems, calculateContentionPercentage, calculatePoolSizes, calculateSharedUsableCandidates } from "./overlap-map";
 
 const position = (code: string, entity: string, overrides: Partial<Position> = {}): Position => ({
   code, entity, title: code, requirements: [], englishReq: "", nosReq: "", rankReq: "",
@@ -21,6 +22,24 @@ const evaluation = (candidateId: string, positionId: string, status: Evaluation[
 });
 
 describe("scenario simulation", () => {
+  it("calcola bacini, candidati condivisi e percentuale sul bacino minore", () => {
+    expect(calculateSharedUsableCandidates(["C1", "C2", "C2"], ["C2", "C3"])).toEqual(["C2"]);
+    expect(calculatePoolSizes(["C1", "C2"], ["C2"])).toEqual({ poolA: 2, poolB: 1 });
+    expect(calculateContentionPercentage(1, 2, 1)).toBe(100);
+    expect(calculateContentionPercentage(0, 0, 1)).toBe(0);
+  });
+
+  it("aggrega i bacini per ente, deduplica le persone e ordina per rischio", () => {
+    const positions = [position("P1", "Ente A"), position("P2", "Ente A"), position("P3", "Ente B")];
+    const candidates = [candidate("C1", ["P1", "P2", "P3"]), candidate("C2", ["P1"]), candidate("C3", ["P3"])];
+    const evaluations = { P1_C1: evaluation("C1", "P1"), P2_C1: evaluation("C1", "P2"), P3_C1: evaluation("C1", "P3"), P1_C2: evaluation("C2", "P1"), P3_C3: evaluation("C3", "P3") };
+    const analysis = analyzeScenario([], candidates, positions, evaluations);
+    const items = buildOverlapItems(analysis.snapshots, "entities");
+    expect(items.find(item => item.id === "Ente A")?.candidateIds).toEqual(["C1", "C2"]);
+    const cell = buildOverlapCell(items[0], items[1]);
+    expect(cell.sharedCandidateIds).toEqual(["C1"]);
+    expect(cell.percentage).toBe(50);
+  });
   it("uses scenario choices without mutating the completed evaluations", () => {
     const positions = [position("P1", "Ente A"), position("P2", "Ente B")];
     const candidates = [candidate("C1", ["P1", "P2"]), candidate("C2", ["P1"])];
