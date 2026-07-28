@@ -13,7 +13,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "d3-force": "^3.0.0",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.8",
     "lucide-react": "^0.562.0",
@@ -22,7 +21,6 @@
     "xlsx-js-style": "^1.2.0"
   },
   "devDependencies": {
-    "@types/d3-force": "^3.0.10",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
     "electron": "^41.7.1",
