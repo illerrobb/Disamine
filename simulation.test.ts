@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyzeScenario, buildConfiguredChoices, sortPositionSnapshots, type SimulationChoice } from "./simulation";
+import { analyzeScenario, buildConfiguredChoices, buildNoFeedingRecommendations, sortPositionSnapshots, type SimulationChoice } from "./simulation";
 import type { Candidate, Evaluation, Position } from "./index";
 
 const position = (code: string, entity: string, overrides: Partial<Position> = {}): Position => ({
@@ -107,5 +107,17 @@ describe("scenario simulation", () => {
 
     expect(choices).toHaveLength(1);
     expect(choices[0].positionId).toBe("GEN-1");
+  });
+
+  it("suggests non-alimentazione only for uncovered positions without usable candidates", () => {
+    const positions = [position("P1", "Ente A"), position("P2", "Ente A"), position("P3", "Ente B")];
+    const candidates = [candidate("C1", ["P1"]), candidate("C2", ["P2"])];
+    const evaluations = {
+      P1_C1: evaluation("C1", "P1", "excluded"),
+      P2_C2: evaluation("C2", "P2")
+    };
+    const choices: SimulationChoice[] = [{ id: "C2::P2", candidateId: "C2", positionId: "P2" }];
+
+    expect(buildNoFeedingRecommendations(choices, candidates, positions, evaluations)).toEqual(["P1", "P3"]);
   });
 });
