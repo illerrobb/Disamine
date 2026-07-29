@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { analyzeScenario, PositionDetailPanel, SimulationDashboard, type SimulationChoice } from "./simulation";
 import type { Candidate, Evaluation, Position } from "./index";
@@ -25,7 +25,7 @@ afterEach(cleanup);
 describe("SimulationDashboard preview isolation", () => {
   beforeEach(() => localStorage.clear());
 
-  it("keeps position order, scroll, selection and main content stable while previewing a candidate", () => {
+  it("keeps position order, scroll, selection and main content stable while previewing a candidate", async () => {
     const positions = [makePosition("P1", "Ente A"), makePosition("P2", "Ente B")];
     const candidates = [makeCandidate("C1", ["P1", "P2"]), makeCandidate("C2", ["P1"])];
     const evaluations = {
@@ -53,7 +53,11 @@ describe("SimulationDashboard preview isolation", () => {
     expect(screen.getByTestId("position-row-P1").className).toContain("bg-blue-50");
 
     fireEvent.pointerLeave(sourceButton);
-    expect(screen.queryByTestId("position-preview-impact")).toBeNull();
+    expect(screen.getByTestId("position-preview-impact")).toBeTruthy();
+    fireEvent.pointerEnter(popover);
+    expect(screen.getByTestId("scenario-recalculation").textContent).toContain("Scenario ricalcolato per intero");
+    fireEvent.pointerLeave(popover);
+    await waitFor(() => expect(screen.queryByTestId("position-preview-impact")).toBeNull());
     expect(screen.getByRole("heading", { name: "P1" })).toBeTruthy();
     expect(main.textContent).toBe(contentBefore);
     expect(main.scrollTop).toBe(137);

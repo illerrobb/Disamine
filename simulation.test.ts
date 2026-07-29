@@ -163,5 +163,10 @@ describe("compareScenarioAnalyses", () => {
     expect(comparison.effects.some(effect => effect.kind === "freed" && effect.positionId === "P1")).toBe(true);
     expect(comparison.effects.some(effect => effect.kind === "covered" && effect.positionId === "P2")).toBe(true);
     expect(comparison.effects.findIndex(effect => effect.severity === "critical")).toBeLessThan(comparison.effects.findIndex(effect => effect.severity === "positive"));
+    expect(comparison.assignmentChanges).toEqual([
+      { positionId: "P1", from: "C1", to: null },
+      { positionId: "P2", from: null, to: "C1" }
+    ]);
+    expect(comparison.candidateDestinations).toEqual([{ candidateId: "C1", from: "P1", to: "P2" }]);
   });
 });
