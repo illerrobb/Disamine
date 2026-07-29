@@ -107,6 +107,25 @@ describe("SimulationDashboard preview isolation", () => {
     expect(uncoveredCard.textContent).toContain("2");
     expect(uncoveredCard.textContent).toContain("posizioni attive");
   });
+
+  it("separa il quadro globale dagli impatti contestuali e mantiene neutra la sidebar vuota", () => {
+    const positions = [makePosition("P1", "Ente A")];
+    const candidates = [makeCandidate("C1", ["P1"])];
+    const evaluations = { P1_C1: makeEvaluation("C1", "P1") };
+    render(<SimulationDashboard candidates={candidates} positions={positions} evaluations={evaluations} researchId="global-impact-test" />);
+
+    const sidebar = screen.getByTestId("scenario-sidebar-empty");
+    expect(sidebar.textContent).toContain("Seleziona una scelta, un ente o una posizione");
+    expect(sidebar.textContent).not.toContain("Effetti deterministici");
+    expect(sidebar.textContent).not.toContain("P1");
+    expect(sidebar.textContent).not.toContain("utilizzabili");
+    expect(screen.queryByText("Scenario completo")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Impatto" }));
+    expect(screen.getByRole("heading", { name: "Quadro generale dello scenario" })).toBeTruthy();
+    expect(screen.queryByText("Scenario completo")).toBeNull();
+    expect(screen.queryByTestId("deterministic-effects")).toBeNull();
+  });
 });
 
 describe("PositionDetailPanel", () => {
