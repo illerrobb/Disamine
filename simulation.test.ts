@@ -137,6 +137,25 @@ describe("scenario simulation", () => {
     expect(choices.map(choice => choice.positionId)).toEqual(["P2"]);
   });
 
+  it("keeps current scenario decisions and generates only compatible additions", () => {
+    const positions = [position("P1", "Ente A"), position("P2", "Ente A"), position("P3", "Ente B")];
+    const candidates = [candidate("C1", ["P1", "P2"]), candidate("C2", ["P2"]), candidate("C3", ["P3"])];
+    const evaluations = {
+      P1_C1: evaluation("C1", "P1"), P2_C1: evaluation("C1", "P2"),
+      P2_C2: evaluation("C2", "P2"), P3_C3: evaluation("C3", "P3")
+    };
+    const existing = [{ id: "C1::P1", candidateId: "C1", positionId: "P1" }];
+    const choices = buildConfiguredChoices(
+      { preferNoForeignExperience: true, prioritizeEntityLevel: true, minimumEntityCoverage: 70, positionQuery: "", entities: [], roles: [] },
+      candidates, positions, evaluations, existing, { P3: "estensione-mandato-titolare" }
+    );
+
+    expect(choices).toContainEqual(existing[0]);
+    expect(choices).toContainEqual({ id: "C2::P2", candidateId: "C2", positionId: "P2" });
+    expect(choices.some(choice => choice.positionId === "P3")).toBe(false);
+    expect(choices.filter(choice => choice.candidateId === "C1")).toHaveLength(1);
+  });
+
   it("suggests non-alimentazione only for uncovered positions without usable candidates", () => {
     const positions = [position("P1", "Ente A"), position("P2", "Ente A"), position("P3", "Ente B")];
     const candidates = [candidate("C1", ["P1"]), candidate("C2", ["P2"])];
