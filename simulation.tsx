@@ -147,6 +147,8 @@ const storageKey = (researchId: string) => `disamine-simulation-scenarios-${rese
 const choiceId = (candidateId: string, positionId: string) => `${candidateId}::${positionId}`;
 const candidateProfile = (candidate: Candidate) => [candidate.rank, candidate.role, [candidate.category, candidate.specialty].filter(Boolean).join("/")].filter(Boolean).join(" · ") || "Grado / Ruolo / CAT/SPEC/QUAL n.d.";
 const positionProfile = (position: Position) => [position.rankReq, position.role, position.catSpecQualReq].filter(Boolean).join(" · ") || "Grado / Ruolo / CAT/SPEC/QUAL n.d.";
+const candidateTooltip = (candidate: Candidate) => `${candidate.nominativo}\n${candidateProfile(candidate)}\nEnte: ${candidate.serviceEntity || "Non indicato"}`;
+const positionTooltip = (position: Position) => `${position.code} · ${position.title || "Posizione senza nome"}\n${positionProfile(position)}\nEnte: ${position.entity || "Non indicato"}`;
 
 const getEvaluation = (evaluations: Record<string, Evaluation>, positionId: string, candidateId: string) =>
   evaluations[`${positionId}_${candidateId}`];
@@ -341,17 +343,32 @@ export const buildConfiguredChoices = (
   config: ScenarioConfig,
   candidates: Candidate[],
   positions: Position[],
-  evaluations: Record<string, Evaluation>
+  evaluations: Record<string, Evaluation>,
+  existingChoices: SimulationChoice[] = [],
+  positionStatuses: Record<string, ManualPositionStatus> = {}
 ) => {
   const scoped = positionsInConfigScope(positions, config);
   const realSelections = new Map<string, string>();
   Object.values(evaluations).forEach(evaluation => { if (evaluation.status === "selected") realSelections.set(evaluation.candidateId, evaluation.positionId); });
-  const used = new Set<string>();
+  // Automatic generation is an extension of the current scenario, not a reset:
+  // decisions already made stay locked and constrain every following assignment.
+  const retainedChoices = existingChoices.filter(choice => !positionStatuses[choice.positionId]);
+  const used = new Set(retainedChoices.map(choice => choice.candidateId));
+  const occupiedPositions = new Set(retainedChoices.map(choice => choice.positionId));
   const assignedByEntity = new Map<string, number>();
   const totalsByEntity = new Map<string, number>();
   scoped.forEach(position => totalsByEntity.set(position.entity, (totalsByEntity.get(position.entity) ?? 0) + 1));
-  const open = scoped.filter(position => position.administrativeStatus !== "non-alimentazione" && !Array.from(realSelections.values()).includes(position.code));
-  const choices: SimulationChoice[] = [];
+  retainedChoices.forEach(choice => {
+    const position = positions.find(item => item.code === choice.positionId);
+    if (position && scoped.some(item => item.code === position.code)) assignedByEntity.set(position.entity, (assignedByEntity.get(position.entity) ?? 0) + 1);
+  });
+  const open = scoped.filter(position =>
+    position.administrativeStatus !== "non-alimentazione" &&
+    !positionStatuses[position.code] &&
+    !occupiedPositions.has(position.code) &&
+    !Array.from(realSelections.values()).includes(position.code)
+  );
+  const choices: SimulationChoice[] = [...retainedChoices];
 
   while (open.length) {
     open.sort((a, b) => {
@@ -387,8 +404,9 @@ export const buildNoFeedingRecommendations = (
   choices: SimulationChoice[],
   candidates: Candidate[],
   positions: Position[],
-  evaluations: Record<string, Evaluation>
-) => Array.from(analyzeScenario(choices, candidates, positions, evaluations).snapshots.values())
+  evaluations: Record<string, Evaluation>,
+  positionStatuses: Record<string, ManualPositionStatus> = {}
+) => Array.from(analyzeScenario(choices, candidates, positions, evaluations, positionStatuses).snapshots.values())
   .filter(snapshot => !snapshot.isInactive && !snapshot.isCovered && snapshot.baseAvailableCandidateIds.length === 0)
   .map(snapshot => snapshot.position.code);
 
@@ -445,10 +463,10 @@ export const ScenarioSummary = ({ committedAnalysis, choices, candidateById, onN
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{metricCards(committedAnalysis.metrics).map(card => <div key={card.label} className={`rounded-2xl border p-4 ${card.tone}`}><div className="text-xs font-bold uppercase tracking-wide opacity-75">{card.label}</div><div className="mt-1 text-3xl font-bold">{card.value}</div><div className="mt-1 text-xs opacity-70">{card.detail}</div></div>)}</div>
     <section aria-labelledby="to-manage-title"><h3 id="to-manage-title" className="text-base font-bold text-slate-900">Da gestire</h3><div className="mt-3 grid gap-3 lg:grid-cols-3">{groups.map(group => {
       const shown = expanded[group.key] ? group.items : group.items.slice(0, SUMMARY_LIST_LIMIT);
-      return <div key={group.key} className="rounded-2xl border border-slate-200 p-3"><h4 className="text-xs font-bold uppercase tracking-wide text-slate-500">{group.title} <span className="text-slate-400">({group.items.length})</span></h4>{shown.length ? <div className="mt-2 space-y-2">{shown.map(snapshot => <button key={snapshot.position.code} type="button" onClick={() => onNavigatePosition(snapshot.position.code)} className="block w-full rounded-xl bg-slate-50 p-3 text-left hover:bg-blue-50"><span className="block font-mono text-xs font-bold text-blue-700">{snapshot.position.code}</span><span className="block truncate text-sm font-semibold text-slate-800">{snapshot.position.title}</span><span className="block truncate text-xs text-slate-500">{snapshot.position.entity || "Ente non indicato"} · {snapshot.isInactive ? "Non alimentata" : snapshot.isFragile ? "Fragile" : "Scoperta"} · {snapshot.availableCandidateIds.length} candidati disponibili</span></button>)}</div> : <p className="mt-3 text-sm text-slate-500">{group.empty}</p>}{group.items.length > SUMMARY_LIST_LIMIT && <button type="button" onClick={() => setExpanded(value => ({ ...value, [group.key]: !value[group.key] }))} className="mt-3 text-xs font-bold text-blue-700">{expanded[group.key] ? "Mostra meno" : "Vedi tutte"}</button>}</div>;
+      return <div key={group.key} className="rounded-2xl border border-slate-200 p-3"><h4 className="text-xs font-bold uppercase tracking-wide text-slate-500">{group.title} <span className="text-slate-400">({group.items.length})</span></h4>{shown.length ? <div className="mt-2 space-y-2">{shown.map(snapshot => <button key={snapshot.position.code} type="button" title={positionTooltip(snapshot.position)} onClick={() => onNavigatePosition(snapshot.position.code)} className="block w-full rounded-xl bg-slate-50 p-3 text-left hover:bg-blue-50"><span className="block font-mono text-xs font-bold text-blue-700 underline decoration-blue-300 underline-offset-2">{snapshot.position.code}</span><span className="block truncate text-sm font-semibold text-slate-800">{snapshot.position.title}</span><span className="block truncate text-xs text-slate-500">{snapshot.position.entity || "Ente non indicato"} · {snapshot.isInactive ? "Non alimentata" : snapshot.isFragile ? "Fragile" : "Scoperta"} · {snapshot.availableCandidateIds.length} candidati disponibili</span></button>)}</div> : <p className="mt-3 text-sm text-slate-500">{group.empty}</p>}{group.items.length > SUMMARY_LIST_LIMIT && <button type="button" onClick={() => setExpanded(value => ({ ...value, [group.key]: !value[group.key] }))} className="mt-3 text-xs font-bold text-blue-700">{expanded[group.key] ? "Mostra meno" : "Vedi tutte"}</button>}</div>;
     })}</div></section>
     <section aria-labelledby="entities-attention-title"><h3 id="entities-attention-title" className="text-base font-bold text-slate-900">Enti da attenzionare</h3>{entities.length ? <div className="mt-3 space-y-2">{entities.map(row => { const coverage = row.total ? Math.round(row.covered / row.total * 100) : 100; return <button key={row.entity} type="button" onClick={() => onNavigateEntity(row.entity)} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 p-3 text-left hover:bg-blue-50"><Building2 className="h-4 w-4 text-slate-400" /><span className="min-w-0 flex-1 truncate text-sm font-bold text-slate-800">{row.entity}</span><span className="text-xs font-semibold text-slate-500">{row.covered}/{row.total} · {coverage}%</span></button>; })}</div> : <p className="mt-3 text-sm text-slate-500">Tutti gli enti sono completamente coperti</p>}</section>
-    <section aria-labelledby="summary-choices-title"><div className="flex items-center gap-2"><h3 id="summary-choices-title" className="text-base font-bold text-slate-900">Scelte dello scenario</h3><span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">{choices.length}</span></div>{visibleChoices.length ? <div className="mt-3 space-y-2">{visibleChoices.map(choice => <button key={choice.id} type="button" onClick={() => onSelectChoice(choice.id)} className="block w-full rounded-xl border border-slate-200 p-3 text-left hover:bg-blue-50"><span className="text-sm font-bold text-slate-800">{candidateById.get(choice.candidateId)?.nominativo ?? choice.candidateId}</span><span className="mx-2 text-blue-500">→</span><span className="font-mono text-sm font-bold text-blue-700">{choice.positionId}</span></button>)}</div> : <p className="mt-3 text-sm text-slate-500">Nessuna scelta attiva</p>}</section>
+    <section aria-labelledby="summary-choices-title"><div className="flex items-center gap-2"><h3 id="summary-choices-title" className="text-base font-bold text-slate-900">Scelte dello scenario</h3><span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">{choices.length}</span></div>{visibleChoices.length ? <div className="mt-3 space-y-2">{visibleChoices.map(choice => { const candidate = candidateById.get(choice.candidateId); const position = committedAnalysis.snapshots.get(choice.positionId)?.position; return <button key={choice.id} type="button" onClick={() => onSelectChoice(choice.id)} className="block w-full rounded-xl border border-slate-200 p-3 text-left hover:bg-blue-50"><span title={candidate ? candidateTooltip(candidate) : undefined} className="text-sm font-bold text-slate-800 decoration-dotted underline-offset-2 hover:underline">{candidate?.nominativo ?? "Persona non disponibile"}</span><span className="mx-2 text-blue-500">→</span><span title={position ? positionTooltip(position) : undefined} className="font-mono text-sm font-bold text-blue-700 underline decoration-blue-300 underline-offset-2">{choice.positionId}</span></button>; })}</div> : <p className="mt-3 text-sm text-slate-500">Nessuna scelta attiva</p>}</section>
   </div>;
 };
 
@@ -580,7 +598,7 @@ const DeterministicMap = ({
             const selected = selectedId === snapshot.position.code;
             return <button data-testid={`position-row-${snapshot.position.code}`} key={snapshot.position.code} onClick={() => onSelect(selected ? null : snapshot.position.code)} className={`grid w-full grid-cols-[42px_110px_minmax(180px,1fr)_minmax(140px,.7fr)_110px_120px] items-center gap-3 px-4 py-3 text-left text-xs transition-colors ${selected ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : "hover:bg-slate-50"}`}>
               <span className="font-mono text-slate-400">{String(index + 1).padStart(2, "0")}</span>
-              <span className="flex items-center gap-2 font-mono font-bold text-blue-700"><span className={`h-2 w-2 rounded-full ${meta.dot}`} />{snapshot.position.code}{changedPositionIds.has(snapshot.position.code) && <span className="h-1.5 w-1.5 rounded-full bg-blue-500" title="Cambiata dallo scenario" />}</span>
+              <span title={positionTooltip(snapshot.position)} className="flex items-center gap-2 font-mono font-bold text-blue-700 underline decoration-blue-300 underline-offset-2"><span className={`h-2 w-2 rounded-full ${meta.dot}`} />{snapshot.position.code}{changedPositionIds.has(snapshot.position.code) && <span className="h-1.5 w-1.5 rounded-full bg-blue-500" title="Cambiata dallo scenario" />}</span>
               <span className="truncate font-semibold text-slate-700">{snapshot.position.title || "—"}</span>
               <span className="truncate text-slate-500">{snapshot.position.entity || "Ente non indicato"}</span>
               <span className="font-semibold text-slate-600">{snapshot.availableCandidateIds.length} utilizzabili</span>
@@ -990,11 +1008,12 @@ export const SimulationDashboard = ({ candidates, positions, evaluations, resear
   };
   const generateProposal = () => {
     const id = `scenario-${Date.now()}`;
-    const choices = buildConfiguredChoices(draftConfig, candidates, positions, evaluations);
+    const choices = buildConfiguredChoices(draftConfig, candidates, positions, evaluations, activeChoices, activePositionStatuses);
     const scopedPositions = positionsInConfigScope(positions, draftConfig);
-    const noFeeding = draftConfig.proposeNoFeeding ? buildNoFeedingRecommendations(choices, candidates, scopedPositions, evaluations) : [];
-    const positionStatuses = Object.fromEntries(noFeeding.map(code => [code, "non-alimentazione" as const]));
-    setScenarios(current => [...current, { id, name: `Proposta ${current.length + 1}`, description: `Proposta automatica: ${choices.length} ripianamenti${noFeeding.length ? ` · ${noFeeding.length} non alimentazioni da validare` : ""}`, kind: "custom", choices, positionStatuses, config: draftConfig }]);
+    const noFeeding = draftConfig.proposeNoFeeding ? buildNoFeedingRecommendations(choices, candidates, scopedPositions, evaluations, activePositionStatuses) : [];
+    const positionStatuses = { ...activePositionStatuses, ...Object.fromEntries(noFeeding.map(code => [code, "non-alimentazione" as const])) };
+    const addedChoices = choices.length - activeChoices.length;
+    setScenarios(current => [...current, { id, name: `Proposta ${current.length + 1}`, description: `Proposta automatica dalle scelte correnti: ${addedChoices} nuovi ripianamenti${noFeeding.length ? ` · ${noFeeding.length} non alimentazioni da validare` : ""}`, kind: "custom", choices, positionStatuses, config: { ...draftConfig } }]);
     setActiveId(id);
     setConfigOpen(false);
   };
@@ -1072,7 +1091,7 @@ export const SimulationDashboard = ({ candidates, positions, evaluations, resear
               const candidate = candidateById.get(choice.candidateId);
               const position = positionById.get(choice.positionId);
               const selected = selectedChoiceId === choice.id;
-              return <div key={choice.id} className="group relative w-full rounded-xl border border-slate-200 p-2 pr-9 transition-all hover:border-slate-300 hover:shadow-sm"><button type="button" aria-label={`Approfondisci ${candidate?.nominativo ?? choice.candidateId} per ${choice.positionId}`} onClick={() => inspectCandidate(choice.candidateId, choice.positionId)} className="flex w-full items-start gap-2 rounded-lg p-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-blue-400"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-[10px] font-bold text-slate-500">{index + 1}</span><span className="min-w-0 flex-1"><span className="block text-[9px] font-bold uppercase text-slate-500">{candidate ? candidateProfile(candidate) : "Profilo n.d."}</span><span className="block truncate text-sm font-bold text-slate-800">{candidate?.nominativo ?? choice.candidateId}</span><span className="mt-1 block text-[9px] font-bold uppercase text-blue-600">{position ? positionProfile(position) : "Profilo posizione n.d."}</span><span className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-500"><ArrowRight className="h-3 w-3 text-blue-500" /><span className="font-mono font-bold text-blue-700">{position?.code}</span><span className="truncate">{position?.entity}</span></span></span></button><button type="button" title="Elimina scelta" aria-label={`Rimuovi ${candidate?.nominativo ?? choice.candidateId} dallo scenario per ${choice.positionId}`} onClick={() => updateActiveChoices(activeChoices.filter(item => item.id !== choice.id))} className="absolute right-2 top-2 rounded-lg p-1 text-slate-400 outline-none hover:bg-rose-50 hover:text-rose-600 focus-visible:ring-2 focus-visible:ring-rose-400"><X className="h-4 w-4" /></button></div>;
+              return <div key={choice.id} className="group relative w-full rounded-xl border border-slate-200 p-2 pr-9 transition-all hover:border-slate-300 hover:shadow-sm"><button type="button" aria-label={`Approfondisci ${candidate?.nominativo ?? choice.candidateId} per ${choice.positionId}`} onClick={() => inspectCandidate(choice.candidateId, choice.positionId)} className="flex w-full items-start gap-2 rounded-lg p-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-blue-400"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-[10px] font-bold text-slate-500">{index + 1}</span><span className="min-w-0 flex-1"><span className="block text-[9px] font-bold uppercase text-slate-500">{candidate ? candidateProfile(candidate) : "Profilo n.d."}</span><span title={candidate ? candidateTooltip(candidate) : undefined} className="block truncate text-sm font-bold text-slate-800 decoration-dotted underline-offset-2 hover:underline">{candidate?.nominativo ?? "Persona non disponibile"}</span><span className="mt-1 block text-[9px] font-bold uppercase text-blue-600">{position ? positionProfile(position) : "Profilo posizione n.d."}</span><span className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-500"><ArrowRight className="h-3 w-3 text-blue-500" /><span title={position ? positionTooltip(position) : undefined} className="font-mono font-bold text-blue-700 underline decoration-blue-300 underline-offset-2">{position?.code}</span><span className="truncate">{position?.entity}</span></span></span></button><button type="button" title="Elimina scelta" aria-label={`Rimuovi ${candidate?.nominativo ?? choice.candidateId} dallo scenario per ${choice.positionId}`} onClick={() => updateActiveChoices(activeChoices.filter(item => item.id !== choice.id))} className="absolute right-2 top-2 rounded-lg p-1 text-slate-400 outline-none hover:bg-rose-50 hover:text-rose-600 focus-visible:ring-2 focus-visible:ring-rose-400"><X className="h-4 w-4" /></button></div>;
             })}
             {!visibleActiveChoices.length && <div className="rounded-xl border border-dashed border-slate-200 p-5 text-center"><CircleDot className="mx-auto h-7 w-7 text-slate-300" /><p className="mt-2 text-sm font-semibold text-slate-600">Scenario vuoto</p><p className="mt-1 text-xs text-slate-400">Aggiungi una persona a una posizione.</p></div>}
           </div>
