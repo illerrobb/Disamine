@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyzeScenario, buildConfiguredChoices, buildNoFeedingRecommendations, sortPositionSnapshots, type SimulationChoice } from "./simulation";
+import { analyzeScenario, buildConfiguredChoices, buildNoFeedingRecommendations, compareScenarioAnalyses, sortPositionSnapshots, type SimulationChoice } from "./simulation";
 import type { Candidate, Evaluation, Position } from "./index";
 import { buildOverlapCell, buildOverlapItems, calculateContentionPercentage, calculatePoolSizes, calculateSharedUsableCandidates } from "./overlap-map";
 
@@ -147,5 +147,21 @@ describe("scenario simulation", () => {
     const choices: SimulationChoice[] = [{ id: "C2::P2", candidateId: "C2", positionId: "P2" }];
 
     expect(buildNoFeedingRecommendations(choices, candidates, positions, evaluations)).toEqual(["P1", "P3"]);
+  });
+});
+
+
+describe("compareScenarioAnalyses", () => {
+  it("descrive deterministicamente una sostituzione e ordina gli effetti critici prima dei positivi", () => {
+    const positions = [position("P1", "Ente A"), position("P2", "Ente B")];
+    const candidates = [candidate("C1", ["P1", "P2"])];
+    const evaluations = { P1_C1: evaluation("C1", "P1"), P2_C1: evaluation("C1", "P2") };
+    const before = analyzeScenario([{ id: "C1::P1", candidateId: "C1", positionId: "P1" }], candidates, positions, evaluations);
+    const after = analyzeScenario([{ id: "C1::P2", candidateId: "C1", positionId: "P2" }], candidates, positions, evaluations);
+
+    const comparison = compareScenarioAnalyses(before, after);
+    expect(comparison.effects.some(effect => effect.kind === "freed" && effect.positionId === "P1")).toBe(true);
+    expect(comparison.effects.some(effect => effect.kind === "covered" && effect.positionId === "P2")).toBe(true);
+    expect(comparison.effects.findIndex(effect => effect.severity === "critical")).toBeLessThan(comparison.effects.findIndex(effect => effect.severity === "positive"));
   });
 });

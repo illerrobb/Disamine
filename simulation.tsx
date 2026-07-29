@@ -419,6 +419,44 @@ const describeDelta = (before: ScenarioMetrics, after: ScenarioMetrics) => {
   return rows.filter(row => row.delta !== 0);
 };
 
+export type ScenarioEffectKind = "covered" | "freed" | "alternatives" | "fragile" | "uncovered" | "entity-coverage";
+export interface ScenarioEffect {
+  kind: ScenarioEffectKind;
+  severity: "critical" | "negative" | "positive";
+  positionId: string;
+  label: string;
+}
+
+/** The single deterministic diff used by every impact presentation. */
+export const compareScenarioAnalyses = (before: ScenarioAnalysis, after: ScenarioAnalysis) => {
+  const effects: ScenarioEffect[] = [];
+  after.snapshots.forEach((current, positionId) => {
+    const previous = before.snapshots.get(positionId);
+    if (!previous) return;
+    if (!previous.isCovered && current.isCovered) effects.push({ kind: "covered", severity: "positive", positionId, label: "Posizione coperta" });
+    if (previous.isCovered && !current.isCovered) {
+      const freedByReplacement = !!previous.simulatedCandidateId && !current.simulatedCandidateId;
+      effects.push({ kind: freedByReplacement ? "freed" : "uncovered", severity: "critical", positionId, label: freedByReplacement ? "Posizione liberata dalla sostituzione" : "Nuova scopertura" });
+    }
+    const alternativesDelta = current.availableCandidateIds.length - previous.availableCandidateIds.length;
+    if (alternativesDelta < 0) effects.push({ kind: "alternatives", severity: current.availableCandidateIds.length === 0 ? "critical" : "negative", positionId, label: `Alternative diminuite: ${previous.availableCandidateIds.length} → ${current.availableCandidateIds.length}` });
+    if (!previous.isFragile && current.isFragile) effects.push({ kind: "fragile", severity: "critical", positionId, label: "Nuova fragilità" });
+  });
+  after.entityRows.forEach(row => {
+    const previous = before.entityRows.find(item => item.entity === row.entity);
+    if (!previous || previous.covered === row.covered) return;
+    const positionId = Array.from(after.snapshots.values()).find(snapshot => (snapshot.position.entity || "Ente non indicato") === row.entity && before.snapshots.get(snapshot.position.code)?.isCovered !== snapshot.isCovered)?.position.code;
+    if (positionId) effects.push({ kind: "entity-coverage", severity: row.covered > previous.covered ? "positive" : "critical", positionId, label: `Copertura ente ${row.entity}: ${previous.covered}/${previous.total} → ${row.covered}/${row.total}` });
+  });
+  const order = { critical: 0, negative: 1, positive: 2 } as const;
+  effects.sort((a, b) => order[a.severity] - order[b.severity] || a.positionId.localeCompare(b.positionId, "it", { numeric: true }) || a.kind.localeCompare(b.kind));
+  return {
+    metricDelta: describeDelta(before.metrics, after.metrics),
+    changedEntities: after.entityRows.map(row => ({ ...row, delta: row.covered - (before.entityRows.find(item => item.entity === row.entity)?.covered ?? 0) })).filter(row => row.delta !== 0).sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta) || a.entity.localeCompare(b.entity, "it")),
+    effects
+  };
+};
+
 export const getPositionPriority = (snapshot: PositionSnapshot) => {
   if (snapshot.isInactive) return 5;
   if (snapshot.isRealCovered) return 4;
@@ -541,7 +579,7 @@ const CandidateChoice = ({ candidate, position, evaluation, selected, occupied, 
 };
 
 const PositionChoice = ({ candidate, position, evaluation, selected, occupied, onInspect, onChoose }: {
-  candidate: Candidate; position: Position; evaluation?: Evaluation; selected: boolean; occupied: boolean; onInspect: () => void; onChoose: () => void;
+  key?: React.Key; candidate: Candidate; position: Position; evaluation?: Evaluation; selected: boolean; occupied: boolean; onInspect: () => void; onChoose: () => void;
 }) => {
   const fit = getFit(position, evaluation);
   const requirements = position.requirements.filter(requirement => !requirement.hidden);
@@ -594,7 +632,7 @@ const CandidateDetailPanel = ({ candidate, position, evaluation, selected, onBac
   </div>;
 };
 
-export const PositionDetailPanel = ({ snapshot, candidates, positions, evaluations, activeChoices, scenario, previewChoice, previewAnalysis, committedAnalysis, onPreview, onInspect, onChoose }: {
+export const PositionDetailPanel = ({ snapshot, candidates, positions, evaluations, activeChoices, scenario, previewChoice, previewAnalysis, committedAnalysis, onPreview, onInspect, onChoose, onNavigatePosition }: {
   snapshot: PositionSnapshot;
   candidates: Candidate[];
   positions: Position[];
@@ -607,6 +645,7 @@ export const PositionDetailPanel = ({ snapshot, candidates, positions, evaluatio
   onPreview: (choice: SimulationChoice | null) => void;
   onInspect?: (candidateId: string, positionId: string) => void;
   onChoose: (candidateId: string, positionId: string) => void;
+  onNavigatePosition?: (positionId: string) => void;
 }) => {
   const [candidateQuery, setCandidateQuery] = useState("");
   const { position } = snapshot;
@@ -654,19 +693,16 @@ export const PositionDetailPanel = ({ snapshot, candidates, positions, evaluatio
       const selected = activeChoices.some(item => item.id === choice.id);
       return <div key={candidate.id} className="rounded-xl border border-slate-200 p-2"><button type="button" aria-label={`Anteprima ${candidate.nominativo} per ${position.code}`} onPointerEnter={() => usable && onPreview(choice)} onPointerLeave={() => onPreview(null)} onFocus={() => usable && onPreview(choice)} onBlur={() => onPreview(null)} onClick={() => onInspect?.(candidate.id, position.code)} className="w-full rounded-lg text-left outline-none hover:bg-blue-50 focus-visible:ring-2 focus-visible:ring-blue-400"><div className="flex items-center justify-between gap-2"><span className="min-w-0"><span className="block text-[9px] font-bold uppercase text-slate-500">{candidateProfile(candidate)}</span><span className="block truncate text-xs font-bold text-slate-800">{candidate.nominativo}</span></span><span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-bold text-slate-600">{category}</span></div><div className="mt-1 text-[10px] text-slate-600">{candidate.id}</div><div className="mt-1 text-[10px] text-slate-500">{candidate.serviceEntity || "Ente n.d."} · Compatibilità {getFit(position, evaluation)}% · {requirementSummary(position, evaluation)}</div></button>{usable && <button type="button" aria-label={`${selected ? "Rimuovi" : "Assegna"} ${candidate.nominativo} ${selected ? "dallo" : "allo"} scenario per ${position.code}`} onClick={() => onChoose(candidate.id, position.code)} className="mt-2 w-full rounded-lg border border-blue-200 px-2 py-1 text-[10px] font-bold text-blue-700 outline-none hover:bg-blue-50 focus-visible:ring-2 focus-visible:ring-blue-400">{selected ? "Rimuovi dallo scenario" : "Assegna allo scenario"}</button>}</div>;
     }) : <div className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-500">Nessun candidato disponibile o valutato per questa posizione.</div>}</div></div>
-    {previewChoice && previewAnalysis && <div className="border-t border-slate-200 pt-5" data-testid="position-preview-impact"><ImpactPanel before={committedAnalysis} after={previewAnalysis} title="Anteprima" subtitle={`${candidates.find(candidate => candidate.id === previewChoice.candidateId)?.nominativo} → ${previewChoice.positionId}`} /></div>}
+    {previewChoice && previewAnalysis && <div className="border-t border-slate-200 pt-5" data-testid="position-preview-impact"><ImpactPanel before={committedAnalysis} after={previewAnalysis} title="Anteprima" subtitle={`${candidates.find(candidate => candidate.id === previewChoice.candidateId)?.nominativo} → ${previewChoice.positionId}`} onNavigatePosition={onNavigatePosition} /></div>}
   </div>;
 };
 
-const ImpactPanel = ({ before, after, title, subtitle }: { before: ScenarioAnalysis; after: ScenarioAnalysis; title: string; subtitle: string }) => {
-  const delta = describeDelta(before.metrics, after.metrics);
-  const changedEntities = after.entityRows.map(row => {
-    const previous = before.entityRows.find(item => item.entity === row.entity);
-    return { ...row, delta: row.covered - (previous?.covered ?? 0) };
-  }).filter(row => row.delta !== 0).sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+const ImpactPanel = ({ before, after, title, subtitle, onNavigatePosition }: { before: ScenarioAnalysis; after: ScenarioAnalysis; title: string; subtitle: string; onNavigatePosition?: (positionId: string) => void }) => {
+  const { metricDelta: delta, changedEntities, effects } = compareScenarioAnalyses(before, after);
   return (
     <div className="space-y-4">
       <div><div className="text-xs font-bold uppercase tracking-[.14em] text-blue-600">Impatto</div><h3 className="mt-1 text-lg font-bold text-slate-900">{title}</h3><p className="mt-1 text-sm text-slate-500">{subtitle}</p></div>
+      {effects.length > 0 && <div data-testid="deterministic-effects"><div className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Effetti deterministici</div><div className="space-y-2">{effects.map((effect, index) => <div key={`${effect.kind}-${effect.positionId}-${index}`} className={`rounded-xl border px-3 py-2.5 ${effect.severity === "positive" ? "border-emerald-100 bg-emerald-50" : effect.severity === "critical" ? "border-rose-100 bg-rose-50" : "border-amber-100 bg-amber-50"}`}><div className="text-sm font-semibold text-slate-700">{effect.label}</div><button type="button" onClick={() => onNavigatePosition?.(effect.positionId)} disabled={!onNavigatePosition} className="mt-1 font-mono text-xs font-bold text-blue-700 underline decoration-blue-300 underline-offset-2 disabled:cursor-default">{effect.positionId}</button></div>)}</div></div>}
       {!delta.length ? <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">Nessuna variazione di copertura. La scelta può comunque cambiare la robustezza del bacino.</div> : <div className="space-y-2">{delta.map(row => {
         const good = row.positive ? row.delta > 0 : row.delta < 0;
         return <div key={row.label} className={`flex items-center justify-between rounded-xl border px-3 py-2.5 ${good ? "border-emerald-100 bg-emerald-50" : "border-amber-100 bg-amber-50"}`}><span className="text-sm font-medium text-slate-700">{row.label}</span><span className={`text-sm font-bold ${good ? "text-emerald-700" : "text-amber-700"}`}>{row.delta > 0 ? "+" : ""}{row.delta}</span></div>;
@@ -752,7 +788,6 @@ export const SimulationDashboard = ({ candidates, positions, evaluations, resear
   const [selectedGraphId, setSelectedGraphId] = useState<string | null>(null);
   const [previewChoice, setPreviewChoice] = useState<SimulationChoice | null>(null);
   const [compareOpen, setCompareOpen] = useState(false);
-  const [pendingReplacement, setPendingReplacement] = useState<SimulationChoice | null>(null);
   const [pendingConfirmation, setPendingConfirmation] = useState<SimulationChoice | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
   const [draftConfig, setDraftConfig] = useState<ScenarioConfig>(defaultScenarioConfig);
@@ -784,6 +819,9 @@ export const SimulationDashboard = ({ candidates, positions, evaluations, resear
   const previewAnalysis = useMemo(() => previewChoice
     ? analyzeScenario(applyChoice(activeChoices, previewChoice), candidates, scenarioPositions, evaluations, activePositionStatuses)
     : null, [previewChoice, activeChoices, candidates, scenarioPositions, evaluations, activePositionStatuses]);
+  const confirmationAnalysis = useMemo(() => pendingConfirmation
+    ? analyzeScenario(applyChoice(activeChoices, pendingConfirmation), candidates, scenarioPositions, evaluations, activePositionStatuses)
+    : null, [pendingConfirmation, activeChoices, candidates, scenarioPositions, evaluations, activePositionStatuses]);
   const selectedChoice = activeChoices.find(choice => choice.id === selectedChoiceId) ?? null;
   const selectedChoiceBase = useMemo(() => selectedChoice
     ? analyzeScenario(activeChoices.filter(choice => choice.id !== selectedChoice.id), candidates, scenarioPositions, evaluations, activePositionStatuses)
@@ -803,6 +841,13 @@ export const SimulationDashboard = ({ candidates, positions, evaluations, resear
     setSelectedCandidatePositionId(positionId);
     setSelectedChoiceId(null);
     setPreviewChoice(null);
+  };
+  const navigateToPosition = (positionId: string) => {
+    setView("priorities");
+    setGraphMode("positions");
+    setSelectedGraphId(positionId);
+    setPickerOpen(false);
+    setPendingConfirmation(null);
   };
   const inspectedCandidate = selectedCandidateId ? candidateById.get(selectedCandidateId) : null;
   const inspectedPosition = selectedCandidatePositionId ? positionById.get(selectedCandidatePositionId) : null;
@@ -844,9 +889,7 @@ export const SimulationDashboard = ({ candidates, positions, evaluations, resear
       setPreviewChoice(null);
       return;
     }
-    const conflict = activeChoices.some(choice => choice.candidateId === candidateId || choice.positionId === positionId);
-    if (conflict) setPendingReplacement(next);
-    else setPendingConfirmation(next);
+    setPendingConfirmation(next);
     setPreviewChoice(null);
   };
 
@@ -964,12 +1007,12 @@ export const SimulationDashboard = ({ candidates, positions, evaluations, resear
             {view === "priorities" && <DeterministicMap mode={graphMode} analysis={committedAnalysis} selectedId={selectedGraphId} changedPositionIds={changedPositionIds} onSelect={setSelectedGraphId} />}
             {view === "coverage" && <div className="space-y-3">{committedAnalysis.entityRows.map(row => <div key={row.entity} className="overflow-hidden rounded-2xl border border-slate-200"><button onClick={() => { setView("priorities"); setGraphMode("entities"); setSelectedGraphId(row.entity); }} className="flex w-full items-center gap-4 bg-slate-50 px-4 py-3 text-left"><Building2 className="h-5 w-5 text-slate-400" /><div className="min-w-0 flex-1"><div className="truncate text-sm font-bold text-slate-800">{row.entity}</div><div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-200"><div className="h-full rounded-full bg-blue-600 transition-all duration-500" style={{ width: `${row.total ? row.covered / row.total * 100 : 100}%` }} /></div></div><div className="text-right"><div className="text-sm font-bold text-slate-800">{row.covered}/{row.total}</div><div className="text-[10px] text-slate-400">ripianate</div></div></button><div className="divide-y divide-slate-100">{snapshotList.filter(snapshot => (snapshot.position.entity || "Ente non indicato") === row.entity).map(snapshot => <button key={snapshot.position.code} onClick={() => { setView("priorities"); setGraphMode("positions"); setSelectedGraphId(snapshot.position.code); }} className="grid w-full grid-cols-[90px_1fr_160px_110px] items-center gap-3 px-4 py-2.5 text-left text-xs hover:bg-blue-50/40"><span className="font-mono font-bold text-blue-700">{snapshot.position.code}</span><span className="truncate font-medium text-slate-700">{snapshot.position.title}</span><span className="truncate text-slate-500">{candidateById.get(snapshot.realCandidateId ?? snapshot.simulatedCandidateId ?? "")?.nominativo ?? "—"}</span><span className={`justify-self-end rounded-full px-2 py-1 font-bold ${snapshot.isInactive ? "bg-slate-100 text-slate-500" : snapshot.isRealCovered ? "bg-emerald-50 text-emerald-700" : snapshot.isSimulatedCovered ? "bg-blue-50 text-blue-700" : snapshot.isFragile ? "bg-amber-50 text-amber-700" : "bg-rose-50 text-rose-700"}`}>{snapshot.isInactive ? "Non alimentata" : snapshot.isRealCovered ? "Reale" : snapshot.isSimulatedCovered ? "Scenario" : snapshot.isFragile ? "Fragile" : "Scoperta"}</span></button>)}</div></div>)}</div>}
             {view === "heatmap" && <OverlapMap snapshots={committedAnalysis.snapshots} candidates={candidates} positions={scenarioPositions} evaluations={evaluations} choices={activeChoices} onNavigate={(mode, id) => { setView("priorities"); setGraphMode(mode); setSelectedGraphId(id); }} />}
-            {view === "impact" && <div className="space-y-6"><div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{metricCards(committedAnalysis.metrics).map(card => <div key={card.label} className={`rounded-2xl border p-4 ${card.tone}`}><div className="text-xs font-bold uppercase tracking-wide opacity-75">{card.label}</div><div className="mt-1 text-3xl font-bold">{card.value}</div><div className="mt-1 text-xs opacity-70">{card.detail}</div></div>)}</div><ImpactPanel before={selectedChoice ? selectedChoiceBase : baseAnalysis} after={committedAnalysis} title={selectedChoice ? `${candidateById.get(selectedChoice.candidateId)?.nominativo} → ${selectedChoice.positionId}` : "Scenario completo"} subtitle={selectedChoice ? "Effetto isolato della scelta selezionata." : "Confronto fra la situazione reale e tutte le scelte dello scenario."} /></div>}
+            {view === "impact" && <div className="space-y-6"><div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{metricCards(committedAnalysis.metrics).map(card => <div key={card.label} className={`rounded-2xl border p-4 ${card.tone}`}><div className="text-xs font-bold uppercase tracking-wide opacity-75">{card.label}</div><div className="mt-1 text-3xl font-bold">{card.value}</div><div className="mt-1 text-xs opacity-70">{card.detail}</div></div>)}</div><ImpactPanel before={selectedChoice ? selectedChoiceBase : baseAnalysis} after={committedAnalysis} title={selectedChoice ? `${candidateById.get(selectedChoice.candidateId)?.nominativo} → ${selectedChoice.positionId}` : "Scenario completo"} subtitle={selectedChoice ? "Effetto isolato della scelta selezionata." : "Confronto fra la situazione reale e tutte le scelte dello scenario."} onNavigatePosition={navigateToPosition} /></div>}
           </div>
         </section>
 
         <aside className="hidden w-72 shrink-0 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-sm xl:block">
-          {inspectedCandidate && inspectedPosition ? <CandidateDetailPanel candidate={inspectedCandidate} position={inspectedPosition} evaluation={inspectedEvaluation} selected={activeChoices.some(choice => choice.id === choiceId(inspectedCandidate.id, inspectedPosition.code))} onBack={() => { setSelectedCandidateId(null); setSelectedCandidatePositionId(null); }} onChoose={() => requestChoice(inspectedCandidate.id, inspectedPosition.code)} /> : selectedChoice ? <ImpactPanel before={selectedChoiceBase} after={committedAnalysis} title={`${candidateById.get(selectedChoice.candidateId)?.nominativo} → ${selectedChoice.positionId}`} subtitle="Impatto isolato della scelta nello scenario." /> : selectedSnapshot ? <PositionDetailPanel snapshot={selectedSnapshot} candidates={candidates} positions={positions} evaluations={evaluations} activeChoices={activeChoices} scenario={activeScenario} previewChoice={previewChoice} previewAnalysis={previewAnalysis} committedAnalysis={committedAnalysis} onPreview={setPreviewChoice} onInspect={inspectCandidate} onChoose={requestChoice} /> : selectedEntity ? <div><div className="text-xs font-bold uppercase tracking-wider text-blue-600">Ente</div><h3 className="mt-1 text-lg font-bold text-slate-900">{selectedEntity.entity}</h3><div className="mt-5 grid grid-cols-2 gap-2">{[["Ripianate", selectedEntity.covered], ["Da ripianare", selectedEntity.total], ["Fragili", selectedEntity.fragile], ["Non alimentate", selectedEntity.inactive]].map(([label, value]) => <div key={String(label)} className="rounded-xl bg-slate-50 p-3"><div className="text-[10px] uppercase text-slate-400">{label}</div><div className="text-xl font-bold text-slate-800">{value}</div></div>)}</div></div> : <ImpactPanel before={baseAnalysis} after={committedAnalysis} title="Scenario completo" subtitle="Clicca una scelta, un ente o una posizione per approfondire." />}
+          {inspectedCandidate && inspectedPosition ? <CandidateDetailPanel candidate={inspectedCandidate} position={inspectedPosition} evaluation={inspectedEvaluation} selected={activeChoices.some(choice => choice.id === choiceId(inspectedCandidate.id, inspectedPosition.code))} onBack={() => { setSelectedCandidateId(null); setSelectedCandidatePositionId(null); }} onChoose={() => requestChoice(inspectedCandidate.id, inspectedPosition.code)} /> : selectedChoice ? <ImpactPanel before={selectedChoiceBase} after={committedAnalysis} title={`${candidateById.get(selectedChoice.candidateId)?.nominativo} → ${selectedChoice.positionId}`} subtitle="Impatto isolato della scelta nello scenario." onNavigatePosition={navigateToPosition} /> : selectedSnapshot ? <PositionDetailPanel snapshot={selectedSnapshot} candidates={candidates} positions={positions} evaluations={evaluations} activeChoices={activeChoices} scenario={activeScenario} previewChoice={previewChoice} previewAnalysis={previewAnalysis} committedAnalysis={committedAnalysis} onPreview={setPreviewChoice} onInspect={inspectCandidate} onChoose={requestChoice} onNavigatePosition={navigateToPosition} /> : selectedEntity ? <div><div className="text-xs font-bold uppercase tracking-wider text-blue-600">Ente</div><h3 className="mt-1 text-lg font-bold text-slate-900">{selectedEntity.entity}</h3><div className="mt-5 grid grid-cols-2 gap-2">{[["Ripianate", selectedEntity.covered], ["Da ripianare", selectedEntity.total], ["Fragili", selectedEntity.fragile], ["Non alimentate", selectedEntity.inactive]].map(([label, value]) => <div key={String(label)} className="rounded-xl bg-slate-50 p-3"><div className="text-[10px] uppercase text-slate-400">{label}</div><div className="text-xl font-bold text-slate-800">{value}</div></div>)}</div></div> : <ImpactPanel before={baseAnalysis} after={committedAnalysis} title="Scenario completo" subtitle="Clicca una scelta, un ente o una posizione per approfondire." onNavigatePosition={navigateToPosition} />}
         </aside>
         </>}
       </div>
@@ -992,12 +1035,12 @@ export const SimulationDashboard = ({ candidates, positions, evaluations, resear
               return <div key={position.code} className="rounded-xl border border-slate-200 bg-slate-50/50 p-2.5"><div className="flex items-start gap-2"><span className="font-mono text-xs font-bold text-blue-700">{position.code}</span><div className="min-w-0 flex-1"><div className="truncate text-xs font-bold text-slate-800">{position.title}</div><div className="truncate text-[9px] text-slate-500">{position.entity} · {snapshot.baseAvailableCandidateIds.length} persone</div></div><label className="shrink-0"><span className="sr-only">Stato manuale</span><select value={activePositionStatuses[position.code] ?? ""} onChange={event => updatePositionStatus(position.code, event.target.value as ManualPositionStatus | "")} className="max-w-36 rounded-md border border-slate-200 bg-white px-1.5 py-1 text-[9px] font-semibold text-slate-600 outline-none focus:border-blue-400"><option value="">Stato posizione…</option><option value="non-alimentazione">Non alimentazione</option><option value="estensione-mandato-titolare">Estensione mandato titolare</option></select></label></div><div className="mt-2 grid gap-2 sm:grid-cols-2">{snapshot.baseAvailableCandidateIds.map(candidateId => { const candidate = candidateById.get(candidateId); const current = activeChoices.find(choice => choice.positionId === position.code); const evaluation = getEvaluation(evaluations, position.code, candidateId); if (!candidate) return null; return <CandidateChoice key={candidateId} candidate={candidate} position={position} evaluation={evaluation} selected={current?.candidateId === candidateId} occupied={!!current && current.candidateId !== candidateId} onPreview={() => undefined} onInspect={() => inspectCandidate(candidateId, position.code)} onChoose={() => requestChoice(candidateId, position.code)} />; })}</div></div>;
             })}
           </div></div>
-          <div className="overflow-y-auto bg-slate-50 p-5">{inspectedCandidate && inspectedPosition ? <CandidateDetailPanel candidate={inspectedCandidate} position={inspectedPosition} evaluation={inspectedEvaluation} selected={activeChoices.some(choice => choice.id === choiceId(inspectedCandidate.id, inspectedPosition.code))} onBack={() => { setSelectedCandidateId(null); setSelectedCandidatePositionId(null); }} onChoose={() => requestChoice(inspectedCandidate.id, inspectedPosition.code)} /> : previewChoice ? <ImpactPanel before={committedAnalysis} after={previewAnalysis!} title={`${candidateById.get(previewChoice.candidateId)?.nominativo} → ${previewChoice.positionId}`} subtitle="Anteprima: nessuna modifica ancora applicata." /> : <div className="flex h-full flex-col items-center justify-center text-center"><div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white shadow-sm"><Sparkles className="h-5 w-5 text-blue-600" /></div><h3 className="mt-4 text-sm font-bold text-slate-700">Anteprima immediata</h3><p className="mt-1 max-w-52 text-xs leading-relaxed text-slate-400">Passa su una persona o posizione per vedere cosa cambia prima di scegliere.</p></div>}</div>
+          <div className="overflow-y-auto bg-slate-50 p-5">{inspectedCandidate && inspectedPosition ? <CandidateDetailPanel candidate={inspectedCandidate} position={inspectedPosition} evaluation={inspectedEvaluation} selected={activeChoices.some(choice => choice.id === choiceId(inspectedCandidate.id, inspectedPosition.code))} onBack={() => { setSelectedCandidateId(null); setSelectedCandidatePositionId(null); }} onChoose={() => requestChoice(inspectedCandidate.id, inspectedPosition.code)} /> : previewChoice ? <ImpactPanel before={committedAnalysis} after={previewAnalysis!} title={`${candidateById.get(previewChoice.candidateId)?.nominativo} → ${previewChoice.positionId}`} subtitle="Anteprima: nessuna modifica ancora applicata." onNavigatePosition={navigateToPosition} /> : <div className="flex h-full flex-col items-center justify-center text-center"><div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white shadow-sm"><Sparkles className="h-5 w-5 text-blue-600" /></div><h3 className="mt-4 text-sm font-bold text-slate-700">Anteprima immediata</h3><p className="mt-1 max-w-52 text-xs leading-relaxed text-slate-400">Passa su una persona o posizione per vedere cosa cambia prima di scegliere.</p></div>}</div>
         </div>
       </div></div>}
 
-      {pendingReplacement && <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/40 p-4"><div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"><div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-50"><AlertTriangle className="h-5 w-5 text-amber-600" /></div><h3 className="mt-4 text-lg font-bold text-slate-900">Sostituire la scelta esistente?</h3><p className="mt-2 text-sm text-slate-500">La persona o la posizione è già usata nello scenario. La nuova scelta sostituirà automaticamente quella precedente.</p><div className="mt-4 rounded-xl bg-slate-50 p-3 text-sm"><strong>{candidateById.get(pendingReplacement.candidateId)?.nominativo}</strong><span className="mx-2 text-blue-500">→</span><strong className="font-mono text-blue-700">{pendingReplacement.positionId}</strong></div><div className="mt-6 flex justify-end gap-2"><button onClick={() => setPendingReplacement(null)} className="rounded-xl px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100">Annulla</button><button onClick={() => { updateActiveChoices(applyChoice(activeChoices, pendingReplacement)); setPendingReplacement(null); }} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700">Sostituisci</button></div></div></div>}
-      {pendingConfirmation && <div role="dialog" aria-modal="true" aria-labelledby="choice-confirm-title" className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm"><div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl"><div className="flex items-start justify-between gap-4"><div><div className="text-xs font-bold uppercase tracking-wider text-blue-600">Conferma scelta</div><h3 id="choice-confirm-title" className="mt-1 text-xl font-bold text-slate-900">Valuta le conseguenze</h3></div><button aria-label="Chiudi conferma" onClick={() => setPendingConfirmation(null)} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div><div className="mt-4 rounded-xl border border-blue-100 bg-blue-50 p-3"><div className="text-[10px] font-bold uppercase text-blue-700">{candidateById.get(pendingConfirmation.candidateId) ? candidateProfile(candidateById.get(pendingConfirmation.candidateId)!) : "Profilo n.d."}</div><div className="font-bold text-slate-900">{candidateById.get(pendingConfirmation.candidateId)?.nominativo}</div><div className="mt-2 text-[10px] font-bold uppercase text-blue-700">{positionById.get(pendingConfirmation.positionId) ? positionProfile(positionById.get(pendingConfirmation.positionId)!) : "Profilo posizione n.d."}</div><div className="font-mono font-bold text-blue-800">→ {pendingConfirmation.positionId}</div></div><div className="mt-5"><ImpactPanel before={committedAnalysis} after={analyzeScenario(applyChoice(activeChoices, pendingConfirmation), candidates, scenarioPositions, evaluations, activePositionStatuses)} title="Impatto della scelta" subtitle="Confronto prima della conferma: lo scenario non è ancora stato modificato." /></div><div className="mt-6 flex justify-end gap-2"><button onClick={() => setPendingConfirmation(null)} className="rounded-xl px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100">Annulla</button><button onClick={() => { updateActiveChoices([...activeChoices, pendingConfirmation]); setPendingConfirmation(null); }} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700">Conferma scelta</button></div></div></div>}
+
+      {pendingConfirmation && <div role="dialog" aria-modal="true" aria-labelledby="choice-confirm-title" className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm"><div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl"><div className="flex items-start justify-between gap-4"><div><div className="text-xs font-bold uppercase tracking-wider text-blue-600">Conferma scelta</div><h3 id="choice-confirm-title" className="mt-1 text-xl font-bold text-slate-900">Valuta le conseguenze</h3></div><button aria-label="Chiudi conferma" onClick={() => setPendingConfirmation(null)} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div><div className="mt-4 rounded-xl border border-blue-100 bg-blue-50 p-3"><div className="text-[10px] font-bold uppercase text-blue-700">{candidateById.get(pendingConfirmation.candidateId) ? candidateProfile(candidateById.get(pendingConfirmation.candidateId)!) : "Profilo n.d."}</div><div className="font-bold text-slate-900">{candidateById.get(pendingConfirmation.candidateId)?.nominativo}</div><div className="mt-2 text-[10px] font-bold uppercase text-blue-700">{positionById.get(pendingConfirmation.positionId) ? positionProfile(positionById.get(pendingConfirmation.positionId)!) : "Profilo posizione n.d."}</div><div className="font-mono font-bold text-blue-800">→ {pendingConfirmation.positionId}</div></div><div className="mt-5"><ImpactPanel before={committedAnalysis} after={confirmationAnalysis!} title="Impatto della scelta" subtitle="Confronto prima della conferma: lo scenario non è ancora stato modificato." onNavigatePosition={navigateToPosition} /></div><div className="mt-6 flex justify-end gap-2"><button onClick={() => setPendingConfirmation(null)} className="rounded-xl px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100">Annulla</button><button onClick={() => { updateActiveChoices(applyChoice(activeChoices, pendingConfirmation)); setPendingConfirmation(null); }} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700">Conferma scelta</button></div></div></div>}
     </div>
   );
 };
