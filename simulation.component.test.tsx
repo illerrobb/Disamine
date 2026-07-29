@@ -41,7 +41,11 @@ describe("SimulationDashboard preview isolation", () => {
     const sourceButton = screen.getByRole("button", { name: /Anteprima Candidato C1 per P1/ });
 
     fireEvent.pointerEnter(sourceButton);
-    expect(screen.getByTestId("position-preview-impact")).toBeTruthy();
+    const popover = screen.getByTestId("position-preview-impact");
+    expect(popover).toBeTruthy();
+    expect(popover.className).toContain("fixed");
+    expect(screen.getByTestId("position-detail-panel").contains(popover)).toBe(true);
+    expect(popover.textContent).toMatch(/(Persona scelta · effetto della rimozione|Altra persona · variazioni nello scenario)/);
     expect(screen.getByRole("heading", { name: "P1" })).toBeTruthy();
     expect(main.textContent).toBe(contentBefore);
     expect(main.scrollTop).toBe(137);
@@ -66,7 +70,9 @@ describe("SimulationDashboard preview isolation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Anteprima Candidato C1 per P1" }));
 
     expect(screen.getByTestId("candidate-detail-panel")).toBeTruthy();
-    expect(screen.getByText("Candidato selezionato")).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Informazioni persona" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Informazioni posizione" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Informazioni scelta" })).toBeTruthy();
     expect(screen.getByText("1 scelte · Predefinito")).toBeTruthy();
     fireEvent.click(screen.getByTestId("candidate-detail-panel").querySelector('[aria-label="Rimuovi Candidato C1 dallo scenario per P1"]')!);
     expect(screen.getByText("0 scelte · Personale")).toBeTruthy();
@@ -112,8 +118,7 @@ describe("PositionDetailPanel", () => {
     renderPanel({ evaluations: { P1_C1: evaluation } });
     expect(screen.getByText("Scelta reale")).toBeTruthy();
     expect(screen.getAllByText("Candidato C1").length).toBeGreaterThan(0);
-    expect(screen.getByText("Direttivo")).toBeTruthy();
-    expect(screen.getByText("Grado OF-3")).toBeTruthy();
+    expect(screen.getByText("Grado OF-3 · Direttivo")).toBeTruthy();
   });
 
   it("indica una scelta generata da preset e i criteri deterministici", () => {
