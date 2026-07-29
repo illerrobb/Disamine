@@ -404,6 +404,44 @@ const metricCards = (metrics: ScenarioMetrics) => [
   { label: "Fragili", value: metrics.fragile, detail: "una sola alternativa", tone: "text-amber-700 bg-amber-50 border-amber-100" }
 ];
 
+const SUMMARY_LIST_LIMIT = 3;
+
+export const ScenarioSummary = ({ committedAnalysis, choices, candidateById, onNavigatePosition, onNavigateEntity, onSelectChoice }: {
+  committedAnalysis: ScenarioAnalysis;
+  choices: SimulationChoice[];
+  candidateById: Map<string, Candidate>;
+  onNavigatePosition: (positionId: string) => void;
+  onNavigateEntity: (entity: string) => void;
+  onSelectChoice: (choiceId: string) => void;
+}) => {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const snapshots = Array.from(committedAnalysis.snapshots.values());
+  const urgency = (a: PositionSnapshot, b: PositionSnapshot) =>
+    a.availableCandidateIds.length - b.availableCandidateIds.length ||
+    b.incompleteCount - a.incompleteCount ||
+    a.position.code.localeCompare(b.position.code, "it", { numeric: true });
+  const groups = [
+    { key: "uncovered", title: "Posizioni scoperte", empty: "Nessuna posizione scoperta", items: snapshots.filter(item => !item.isInactive && !item.isCovered && !item.isFragile).sort(urgency) },
+    { key: "fragile", title: "Posizioni fragili", empty: "Nessuna posizione fragile", items: snapshots.filter(item => !item.isInactive && item.isFragile).sort(urgency) },
+    { key: "inactive", title: "Posizioni non alimentate", empty: "Nessuna posizione non alimentata", items: snapshots.filter(item => item.manualStatus === "non-alimentazione").sort(urgency) }
+  ];
+  const entities = committedAnalysis.entityRows
+    .filter(row => row.covered < row.total)
+    .sort((a, b) => (a.total ? a.covered / a.total : 1) - (b.total ? b.covered / b.total : 1) || a.entity.localeCompare(b.entity, "it"));
+  const visibleChoices = choices.slice(0, 5);
+
+  return <div className="space-y-6" data-testid="scenario-summary">
+    <div><h2 className="text-lg font-bold text-slate-900">Quadro generale dello scenario</h2><p className="mt-1 text-sm text-slate-500">Sintesi operativa dello scenario corrente.</p></div>
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{metricCards(committedAnalysis.metrics).map(card => <div key={card.label} className={`rounded-2xl border p-4 ${card.tone}`}><div className="text-xs font-bold uppercase tracking-wide opacity-75">{card.label}</div><div className="mt-1 text-3xl font-bold">{card.value}</div><div className="mt-1 text-xs opacity-70">{card.detail}</div></div>)}</div>
+    <section aria-labelledby="to-manage-title"><h3 id="to-manage-title" className="text-base font-bold text-slate-900">Da gestire</h3><div className="mt-3 grid gap-3 lg:grid-cols-3">{groups.map(group => {
+      const shown = expanded[group.key] ? group.items : group.items.slice(0, SUMMARY_LIST_LIMIT);
+      return <div key={group.key} className="rounded-2xl border border-slate-200 p-3"><h4 className="text-xs font-bold uppercase tracking-wide text-slate-500">{group.title} <span className="text-slate-400">({group.items.length})</span></h4>{shown.length ? <div className="mt-2 space-y-2">{shown.map(snapshot => <button key={snapshot.position.code} type="button" onClick={() => onNavigatePosition(snapshot.position.code)} className="block w-full rounded-xl bg-slate-50 p-3 text-left hover:bg-blue-50"><span className="block font-mono text-xs font-bold text-blue-700">{snapshot.position.code}</span><span className="block truncate text-sm font-semibold text-slate-800">{snapshot.position.title}</span><span className="block truncate text-xs text-slate-500">{snapshot.position.entity || "Ente non indicato"} · {snapshot.isInactive ? "Non alimentata" : snapshot.isFragile ? "Fragile" : "Scoperta"} · {snapshot.availableCandidateIds.length} candidati disponibili</span></button>)}</div> : <p className="mt-3 text-sm text-slate-500">{group.empty}</p>}{group.items.length > SUMMARY_LIST_LIMIT && <button type="button" onClick={() => setExpanded(value => ({ ...value, [group.key]: !value[group.key] }))} className="mt-3 text-xs font-bold text-blue-700">{expanded[group.key] ? "Mostra meno" : "Vedi tutte"}</button>}</div>;
+    })}</div></section>
+    <section aria-labelledby="entities-attention-title"><h3 id="entities-attention-title" className="text-base font-bold text-slate-900">Enti da attenzionare</h3>{entities.length ? <div className="mt-3 space-y-2">{entities.map(row => { const coverage = row.total ? Math.round(row.covered / row.total * 100) : 100; return <button key={row.entity} type="button" onClick={() => onNavigateEntity(row.entity)} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 p-3 text-left hover:bg-blue-50"><Building2 className="h-4 w-4 text-slate-400" /><span className="min-w-0 flex-1 truncate text-sm font-bold text-slate-800">{row.entity}</span><span className="text-xs font-semibold text-slate-500">{row.covered}/{row.total} · {coverage}%</span></button>; })}</div> : <p className="mt-3 text-sm text-slate-500">Tutti gli enti sono completamente coperti</p>}</section>
+    <section aria-labelledby="summary-choices-title"><div className="flex items-center gap-2"><h3 id="summary-choices-title" className="text-base font-bold text-slate-900">Scelte dello scenario</h3><span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">{choices.length}</span></div>{visibleChoices.length ? <div className="mt-3 space-y-2">{visibleChoices.map(choice => <button key={choice.id} type="button" onClick={() => onSelectChoice(choice.id)} className="block w-full rounded-xl border border-slate-200 p-3 text-left hover:bg-blue-50"><span className="text-sm font-bold text-slate-800">{candidateById.get(choice.candidateId)?.nominativo ?? choice.candidateId}</span><span className="mx-2 text-blue-500">→</span><span className="font-mono text-sm font-bold text-blue-700">{choice.positionId}</span></button>)}</div> : <p className="mt-3 text-sm text-slate-500">Nessuna scelta attiva</p>}</section>
+  </div>;
+};
+
 const applyChoice = (choices: SimulationChoice[], next: SimulationChoice) => [
   ...choices.filter(choice => choice.candidateId !== next.candidateId && choice.positionId !== next.positionId),
   next
@@ -869,6 +907,19 @@ export const SimulationDashboard = ({ candidates, positions, evaluations, resear
     setPickerOpen(false);
     setPendingConfirmation(null);
   };
+  const navigateToEntity = (entity: string) => {
+    setView("priorities");
+    setGraphMode("entities");
+    setSelectedGraphId(entity);
+    setPickerOpen(false);
+    setPendingConfirmation(null);
+  };
+  const selectSummaryChoice = (choiceId: string) => {
+    setSelectedCandidateId(null);
+    setSelectedCandidatePositionId(null);
+    setSelectedGraphId(null);
+    setSelectedChoiceId(choiceId);
+  };
   const inspectedCandidate = selectedCandidateId ? candidateById.get(selectedCandidateId) : null;
   const inspectedPosition = selectedCandidatePositionId ? positionById.get(selectedCandidatePositionId) : null;
   const inspectedEvaluation = inspectedCandidate && inspectedPosition ? getEvaluation(evaluations, inspectedPosition.code, inspectedCandidate.id) : undefined;
@@ -1027,7 +1078,7 @@ export const SimulationDashboard = ({ candidates, positions, evaluations, resear
             {view === "priorities" && <DeterministicMap mode={graphMode} analysis={committedAnalysis} selectedId={selectedGraphId} changedPositionIds={changedPositionIds} onSelect={setSelectedGraphId} />}
             {view === "coverage" && <div className="space-y-3">{committedAnalysis.entityRows.map(row => <div key={row.entity} className="overflow-hidden rounded-2xl border border-slate-200"><button onClick={() => { setView("priorities"); setGraphMode("entities"); setSelectedGraphId(row.entity); }} className="flex w-full items-center gap-4 bg-slate-50 px-4 py-3 text-left"><Building2 className="h-5 w-5 text-slate-400" /><div className="min-w-0 flex-1"><div className="truncate text-sm font-bold text-slate-800">{row.entity}</div><div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-200"><div className="h-full rounded-full bg-blue-600 transition-all duration-500" style={{ width: `${row.total ? row.covered / row.total * 100 : 100}%` }} /></div></div><div className="text-right"><div className="text-sm font-bold text-slate-800">{row.covered}/{row.total}</div><div className="text-[10px] text-slate-400">ripianate</div></div></button><div className="divide-y divide-slate-100">{snapshotList.filter(snapshot => (snapshot.position.entity || "Ente non indicato") === row.entity).map(snapshot => <button key={snapshot.position.code} onClick={() => { setView("priorities"); setGraphMode("positions"); setSelectedGraphId(snapshot.position.code); }} className="grid w-full grid-cols-[90px_1fr_160px_110px] items-center gap-3 px-4 py-2.5 text-left text-xs hover:bg-blue-50/40"><span className="font-mono font-bold text-blue-700">{snapshot.position.code}</span><span className="truncate font-medium text-slate-700">{snapshot.position.title}</span><span className="truncate text-slate-500">{candidateById.get(snapshot.realCandidateId ?? snapshot.simulatedCandidateId ?? "")?.nominativo ?? "—"}</span><span className={`justify-self-end rounded-full px-2 py-1 font-bold ${snapshot.isInactive ? "bg-slate-100 text-slate-500" : snapshot.isRealCovered ? "bg-emerald-50 text-emerald-700" : snapshot.isSimulatedCovered ? "bg-blue-50 text-blue-700" : snapshot.isFragile ? "bg-amber-50 text-amber-700" : "bg-rose-50 text-rose-700"}`}>{snapshot.isInactive ? "Non alimentata" : snapshot.isRealCovered ? "Reale" : snapshot.isSimulatedCovered ? "Scenario" : snapshot.isFragile ? "Fragile" : "Scoperta"}</span></button>)}</div></div>)}</div>}
             {view === "heatmap" && <OverlapMap snapshots={committedAnalysis.snapshots} candidates={candidates} positions={scenarioPositions} evaluations={evaluations} choices={activeChoices} onNavigate={(mode, id) => { setView("priorities"); setGraphMode(mode); setSelectedGraphId(id); }} />}
-            {view === "impact" && <div className="space-y-6"><div><h2 className="text-lg font-bold text-slate-900">Quadro generale dello scenario</h2><p className="mt-1 text-sm text-slate-500">Una sintesi complessiva della copertura. Seleziona una scelta per analizzarne separatamente l’impatto prima/dopo.</p></div><div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{metricCards(committedAnalysis.metrics).map(card => <div key={card.label} className={`rounded-2xl border p-4 ${card.tone}`}><div className="text-xs font-bold uppercase tracking-wide opacity-75">{card.label}</div><div className="mt-1 text-3xl font-bold">{card.value}</div><div className="mt-1 text-xs opacity-70">{card.detail}</div></div>)}</div>{selectedChoice && <ImpactPanel before={selectedChoiceBase} after={committedAnalysis} title={`${candidateById.get(selectedChoice.candidateId)?.nominativo} → ${selectedChoice.positionId}`} subtitle="Effetto isolato della scelta selezionata." onNavigatePosition={navigateToPosition} />}</div>}
+            {view === "impact" && <ScenarioSummary committedAnalysis={committedAnalysis} choices={visibleActiveChoices} candidateById={candidateById} onNavigatePosition={navigateToPosition} onNavigateEntity={navigateToEntity} onSelectChoice={selectSummaryChoice} />}
           </div>
         </section>
 
