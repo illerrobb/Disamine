@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { analyzeScenario, PositionDetailPanel, SimulationDashboard, type SimulationChoice } from "./simulation";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { analyzeScenario, PositionDetailPanel, ScenarioSummary, SimulationDashboard, type SimulationChoice } from "./simulation";
 import type { Candidate, Evaluation, Position } from "./index";
 
 const makePosition = (code: string, entity: string): Position => ({
@@ -21,6 +21,53 @@ const makeEvaluation = (candidateId: string, positionId: string): Evaluation => 
 });
 
 afterEach(cleanup);
+
+describe("ScenarioSummary", () => {
+  const renderSummary = (positions: Position[], candidates: Candidate[] = [], choices: SimulationChoice[] = [], evaluations: Record<string, Evaluation> = {}) => {
+    const analysis = analyzeScenario(choices, candidates, positions, evaluations);
+    const handlers = { onNavigatePosition: vi.fn(), onNavigateEntity: vi.fn(), onSelectChoice: vi.fn() };
+    render(<ScenarioSummary committedAnalysis={analysis} choices={choices} candidateById={new Map(candidates.map(candidate => [candidate.id, candidate]))} {...handlers} />);
+    return handlers;
+  };
+
+  it("mostra metriche, gruppi operativi ed espande solo su richiesta", () => {
+    const positions = Array.from({ length: 5 }, (_, index) => makePosition(`P${index + 1}`, "Ente A"));
+    renderSummary(positions);
+    expect(screen.getByTestId("scenario-summary")).toBeTruthy();
+    expect(screen.getByText("Scoperte")).toBeTruthy();
+    expect(screen.getAllByText(/candidati disponibili/)).toHaveLength(3);
+    fireEvent.click(screen.getByRole("button", { name: "Vedi tutte" }));
+    expect(screen.getAllByText(/candidati disponibili/)).toHaveLength(5);
+  });
+
+  it("rende espliciti gli stati vuoti", () => {
+    const position = makePosition("P1", "Ente A");
+    const candidate = makeCandidate("C1", ["P1"]);
+    const choice = { id: "C1::P1", candidateId: "C1", positionId: "P1" };
+    renderSummary([position], [candidate], [choice], { P1_C1: makeEvaluation("C1", "P1") });
+    expect(screen.getByText("Nessuna posizione scoperta")).toBeTruthy();
+    expect(screen.getByText("Nessuna posizione fragile")).toBeTruthy();
+    expect(screen.getByText("Nessuna posizione non alimentata")).toBeTruthy();
+    expect(screen.getByText("Tutti gli enti sono completamente coperti")).toBeTruthy();
+  });
+
+  it("naviga da posizione, ente e scelta e limita il riepilogo scelte", () => {
+    const positions = Array.from({ length: 6 }, (_, index) => makePosition(`P${index + 1}`, index ? "Ente B" : "Ente A"));
+    const candidates = positions.map((position, index) => makeCandidate(`C${index + 1}`, [position.code]));
+    const choices = positions.map((position, index) => ({ id: `C${index + 1}::${position.code}`, candidateId: `C${index + 1}`, positionId: position.code }));
+    const evaluations = Object.fromEntries(positions.map((position, index) => [`${position.code}_C${index + 1}`, makeEvaluation(`C${index + 1}`, position.code)]));
+    // Keep one entity incomplete so both position and entity actions remain available.
+    const analysisChoices = [...choices.slice(1), { id: "extra::PX", candidateId: "extra", positionId: "PX" }];
+    const handlers = renderSummary(positions, candidates, analysisChoices, evaluations);
+    fireEvent.click(screen.getByRole("button", { name: /P1/ }));
+    expect(handlers.onNavigatePosition).toHaveBeenCalledWith("P1");
+    fireEvent.click(screen.getByRole("button", { name: /Ente A0\/1/ }));
+    expect(handlers.onNavigateEntity).toHaveBeenCalledWith("Ente A");
+    expect(screen.getAllByRole("button", { name: /Candidato C[2-6]→P[2-6]/ })).toHaveLength(5);
+    fireEvent.click(screen.getByRole("button", { name: /Candidato C2→P2/ }));
+    expect(handlers.onSelectChoice).toHaveBeenCalledWith("C2::P2");
+  });
+});
 
 describe("SimulationDashboard preview isolation", () => {
   beforeEach(() => localStorage.clear());
